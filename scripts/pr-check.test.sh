@@ -15,6 +15,8 @@ case_() {
 case_ 'fix: a thing' 'Closes #12' 0
 case_ 'feat(tree): full screen' 'see #3 for the plan' 0
 case_ 'chore(master): release 0.3.0' 'Release pull request, see #1' 0
+case_ 'chore(master): release 0.12.0' 'Release pull request, maintained by release-please.' 0
+case_ 'chore(master): release notes' 'no issue here' 1
 case_ 'feat!: breaking' '#7' 0
 case_ 'fix: number in title #9' '' 0
 case_ 'docs: readme' 'Fixes #100 and #101' 0
