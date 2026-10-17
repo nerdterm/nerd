@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.3](https://github.com/nerdterm/nerd/compare/v0.12.2...v0.12.3) (2026-10-17)
+
+
+### Fixed
+
+* rows in needs you keep their order when agents finish at the same moment ([#54](https://github.com/nerdterm/nerd/issues/54)) ([b22df0b](https://github.com/nerdterm/nerd/commit/b22df0b40841da01239b80530c31a3f051d32d4c))
+
 ## [0.12.2](https://github.com/nerdterm/nerd/compare/v0.12.1...v0.12.2) (2026-10-17)
 
 
