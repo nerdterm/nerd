@@ -1649,7 +1649,7 @@ fn a_user_manifest_makes_a_new_agent_hooked_detected_and_resumed() {
     std::fs::write(&agent, "#!/bin/sh\necho \"$*\" >> \"$HOME/args.log\"\necho \"FAKE-ARGS:$(printf '%s,' \"$@\"):\"\ncmd=$(sed -n 's/.*\"command\": \"\\(.*\\)\"/\\1/p' \"$HOME/.fakeagent/hooks.json\" | sed 's/\\\\//g')\nprintf '{\"sid\":\"fk-42\"}' | eval \"$cmd\"\nwhile :; do sleep 1; done\n").unwrap();
     std::fs::set_permissions(&agent, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
 
-    let install = |answer: &str| {
+    let install = |answer: &[u8]| {
         let mut child = Command::new(env!("CARGO_BIN_EXE_nerd"))
             .arg("--install-hook")
             .env("HOME", &env.dir)
@@ -1660,18 +1660,20 @@ fn a_user_manifest_makes_a_new_agent_hooked_detected_and_resumed() {
             .stdout(std::process::Stdio::piped())
             .spawn()
             .unwrap();
-        child.stdin.take().unwrap().write_all(answer.as_bytes()).unwrap();
+        child.stdin.take().unwrap().write_all(answer).unwrap();
         let out = child.wait_with_output().unwrap();
         assert!(out.status.success());
         String::from_utf8_lossy(&out.stdout).into_owned()
     };
-    let asked = install("n\n");
+    let asked = install(b"n\n");
     assert!(asked.contains("\nFake Agent  ~/.fakeagent/hooks.json  fakeagent --again <id>\n"), "{asked}");
     assert!(asked.contains("Nothing installed") && !env.dir.join(".fakeagent/hooks.json").exists(), "a no writes nothing: {asked}");
-    let said = install("y\n");
+    let garbled = install(b"y\xd0\n");
+    assert!(garbled.contains("Nothing installed"), "an answer that is not UTF-8 is a no, not an error: {garbled}");
+    let said = install(b"y\n");
     let config = std::fs::read_to_string(env.dir.join(".fakeagent/hooks.json")).unwrap();
     assert!(said.contains("Fake Agent  ") && config.contains("nerd-agent-state.sh' idle fakeagent"), "{said}\n{config}");
-    assert!(!install("").contains("Install?"), "asked once: an agent already hooked is not asked about again");
+    assert!(!install(b"").contains("Install?"), "asked once: an agent already hooked is not asked about again");
 
     let extra = [("NERD_STATE_DIR", root.clone().into_os_string()), ("PATH", format!("{}:/usr/bin:/bin", bin.display()).into())];
     let mut daemon = spawn_daemon_in(&env, env!("CARGO_BIN_EXE_nerd").as_ref(), "xterm-256color", true, &[], &extra);

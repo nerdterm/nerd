@@ -923,15 +923,21 @@ fn remove_asking(name: &str, data: Option<bool>) -> Result<(), String> {
 }
 
 fn ask_terminal(q: &str) -> bool {
-    use std::io::{BufRead as _, IsTerminal as _, Write as _};
+    use std::io::{IsTerminal as _, Write as _};
     if !std::io::stdin().is_terminal() {
         println!("{q} No terminal to answer in: nothing changed (--yes answers yes).");
         return false;
     }
     print!("{q} [y/N] ");
     let _ = std::io::stdout().flush();
-    let mut line = String::new();
-    std::io::stdin().lock().read_line(&mut line).is_ok() && matches!(line.trim(), "y" | "Y" | "yes")
+    answered_yes(std::io::stdin().lock()).unwrap_or(false)
+}
+
+/// Read as bytes: a byte that is not UTF-8 (a key or a report the terminal sent) is a no, not an error.
+pub(crate) fn answered_yes(mut r: impl std::io::BufRead) -> std::io::Result<bool> {
+    let mut line = Vec::new();
+    r.read_until(b'\n', &mut line)?;
+    Ok(matches!(String::from_utf8_lossy(&line).trim(), "y" | "Y" | "yes"))
 }
 
 #[cfg(test)]
