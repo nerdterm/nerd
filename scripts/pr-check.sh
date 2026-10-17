@@ -3,7 +3,9 @@
 # pull request text is attacker-controlled.
 regex=$(cat "$(dirname "$0")/subject.regex")
 status=0
-if ! printf '%s\n%s\n' "$PR_TITLE" "$PR_BODY" | grep -Eq '#[0-9]+'; then
+# release-please's pull request is named by its title, not by an issue.
+release='^chore\(master\): release [0-9]+\.[0-9]+\.[0-9]+$'
+if ! printf '%s\n' "$PR_TITLE" | grep -Eq "$release" && ! printf '%s\n%s\n' "$PR_TITLE" "$PR_BODY" | grep -Eq '#[0-9]+'; then
     echo "pull request names no issue: put 'Closes #N' (or a plain '#N') in the body" >&2
     status=1
 fi
