@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.2](https://github.com/nerdterm/nerd/compare/v0.12.1...v0.12.2) (2026-10-17)
+
+
+### Added
+
+* nerd installs with curl -fsSL https://nerdterm.dev/install.sh | sh ([#50](https://github.com/nerdterm/nerd/issues/50)) ([6c48b79](https://github.com/nerdterm/nerd/commit/6c48b79e63bee6f82b2507ca7d9ea524fe1724bd))
+
 ## [0.12.1](https://github.com/nerdterm/nerd/compare/v0.12.0...v0.12.1) (2026-10-17)
 
 
