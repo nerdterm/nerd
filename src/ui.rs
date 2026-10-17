@@ -595,6 +595,8 @@ fn sidebar_data(app: &App) -> (Vec<crate::sidebar::Waiting>, Vec<crate::sidebar:
     let mut waiting = Vec::new();
     let mut spaces = Vec::new();
     let now = crate::hook::now();
+    // one instant for every row: rows whose events are microseconds apart would otherwise trade places each frame
+    let frame = std::time::Instant::now();
     let mail: Vec<MailRow> = app
         .mail
         .waiting()
@@ -619,7 +621,7 @@ fn sidebar_data(app: &App) -> (Vec<crate::sidebar::Waiting>, Vec<crate::sidebar:
                 let Some(p) = tab.panes.get(&id) else { continue };
                 let state = p.term.shown();
                 if p.agent.is_some() && matches!(state, AgentState::Done | AgentState::Blocked | AgentState::Failed) {
-                    let waited = p.term.changed_at().map(|at| at.elapsed());
+                    let waited = p.term.changed_at().map(|at| frame.saturating_duration_since(at));
                     let asks = p.activity.asking().map(str::to_string);
                     waiting.push(Waiting { pane: p.id, space: sp.label(), tab: tab_name.clone(), state, waited, asks });
                 }
