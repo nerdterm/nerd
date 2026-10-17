@@ -105,7 +105,7 @@ Each agent is described by a manifest, `plugins/<name>/plugin.json` in the sourc
 
 - [Usage](docs/usage.md): the mouse, the keys, every command, and updating in place.
 - [Isolation](docs/isolation.md): what a pane may read, write and reach, per pane, tab or space.
-- [Messages between agents](docs/messages-between-agents.md): names, routes, limits, and how each agent receives a message.
+- [Messages](docs/messages-between-agents.md): names, routes, limits, and how each agent receives a message.
 - [Plugins](docs/plugins.md): installing plugins from **Plugins…**, what a plugin can do and read (most of your files, and the command lines and environments of your other programs), and writing one.
 - [Configuration](docs/configuration.md): every key in config.json.
 - [Privacy and security](docs/privacy-and-security.md): how nerd works, what it stores, every way out of nerd, and what a program in a pane can do.

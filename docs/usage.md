@@ -70,7 +70,7 @@ The terminal must send Option as Alt. In Ghostty that is `macos-option-as-alt = 
 | `nerd --version` | The version, commit and build date. Also **About nerd…** |
 | `nerd --help` | All commands |
 
-`nerd send`, `nerd agents`, `nerd inbox` and `nerd wait` are for programs in panes: see [Messages between agents](messages-between-agents.md).
+`nerd send`, `nerd agents`, `nerd inbox` and `nerd wait` are for programs in panes: see [Messages](messages-between-agents.md).
 
 ## Updating
 
