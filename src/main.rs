@@ -156,9 +156,7 @@ fn run() -> std::io::Result<()> {
             if !first.is_empty() {
                 print!("{}", first.prompt());
                 std::io::Write::flush(&mut std::io::stdout())?;
-                let mut answer = String::new();
-                std::io::stdin().read_line(&mut answer)?;
-                let yes = matches!(answer.trim(), "y" | "Y" | "yes");
+                let yes = install::answered_yes(std::io::stdin().lock())?;
                 log::info(&format!("first hook install from the command line {}: {}", if yes { "confirmed" } else { "declined" }, first.summary()));
                 if !yes {
                     println!("Nothing installed");
