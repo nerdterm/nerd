@@ -1,0 +1,136 @@
+                                                                                
+                                                                                
+                                        ┬─ claude · Explore · f… · 1m ─ ⊡ · × ─ 
+                                        │ 3 tool calls                          
+                                        │                                       
+                                        │ ✓ Read(src/client.rs)                 
+                                        │   ⎿ fn main() {                       
+                                        │ ✕ Edit(foo.rs)                        
+                                        │   ⎿ String to replace not found       
+                                        │ ✓ Bash(cargo test)                    
+                                        │   ⎿ Done                              
+                                        │ done                                  
+                                        │                                       
+                                        │                                       
+                                        │                                       
+                                        │                                       
+                                        │                                       
+                                        │                                       
+                                        │                                       
+                                        │                                       
+                                        │                                       
+                                        │                                       
+                                        │                                       
+                                        ┴                                       
+0:0-79 Reset Reset NONE
+1:0-79 Reset Reset NONE
+2:0-39 Reset Reset NONE
+2:40-70 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+2:71-77 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
+2:78-78 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+2:79-79 Reset Reset NONE
+3:0-39 Reset Reset NONE
+3:40-40 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+3:41-41 Reset Rgb(19, 20, 23) NONE
+3:42-53 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
+3:54-78 Reset Rgb(19, 20, 23) NONE
+3:79-79 Reset Reset NONE
+4:0-39 Reset Reset NONE
+4:40-40 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+4:41-78 Reset Rgb(19, 20, 23) NONE
+4:79-79 Reset Reset NONE
+5:0-39 Reset Reset NONE
+5:40-40 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+5:41-41 Reset Rgb(19, 20, 23) NONE
+5:42-43 Rgb(110, 214, 155) Rgb(19, 20, 23) NONE
+5:44-47 Rgb(221, 224, 229) Rgb(19, 20, 23) BOLD
+5:48-62 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+5:63-78 Reset Rgb(19, 20, 23) NONE
+5:79-79 Reset Reset NONE
+6:0-39 Reset Reset NONE
+6:40-40 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+6:41-41 Reset Rgb(19, 20, 23) NONE
+6:42-56 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
+6:57-78 Reset Rgb(19, 20, 23) NONE
+6:79-79 Reset Reset NONE
+7:0-39 Reset Reset NONE
+7:40-40 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+7:41-41 Reset Rgb(19, 20, 23) NONE
+7:42-43 Rgb(239, 130, 136) Rgb(19, 20, 23) NONE
+7:44-47 Rgb(221, 224, 229) Rgb(19, 20, 23) BOLD
+7:48-55 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+7:56-78 Reset Rgb(19, 20, 23) NONE
+7:79-79 Reset Reset NONE
+8:0-39 Reset Reset NONE
+8:40-40 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+8:41-41 Reset Rgb(19, 20, 23) NONE
+8:42-72 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
+8:73-78 Reset Rgb(19, 20, 23) NONE
+8:79-79 Reset Reset NONE
+9:0-39 Reset Reset NONE
+9:40-40 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+9:41-41 Reset Rgb(19, 20, 23) NONE
+9:42-43 Rgb(110, 214, 155) Rgb(19, 20, 23) NONE
+9:44-47 Rgb(221, 224, 229) Rgb(19, 20, 23) BOLD
+9:48-59 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+9:60-78 Reset Rgb(19, 20, 23) NONE
+9:79-79 Reset Reset NONE
+10:0-39 Reset Reset NONE
+10:40-40 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+10:41-41 Reset Rgb(19, 20, 23) NONE
+10:42-49 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
+10:50-78 Reset Rgb(19, 20, 23) NONE
+10:79-79 Reset Reset NONE
+11:0-39 Reset Reset NONE
+11:40-40 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+11:41-41 Reset Rgb(19, 20, 23) NONE
+11:42-45 Rgb(110, 214, 155) Rgb(19, 20, 23) NONE
+11:46-78 Reset Rgb(19, 20, 23) NONE
+11:79-79 Reset Reset NONE
+12:0-39 Reset Reset NONE
+12:40-40 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+12:41-78 Reset Rgb(19, 20, 23) NONE
+12:79-79 Reset Reset NONE
+13:0-39 Reset Reset NONE
+13:40-40 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+13:41-78 Reset Rgb(19, 20, 23) NONE
+13:79-79 Reset Reset NONE
+14:0-39 Reset Reset NONE
+14:40-40 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+14:41-78 Reset Rgb(19, 20, 23) NONE
+14:79-79 Reset Reset NONE
+15:0-39 Reset Reset NONE
+15:40-40 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+15:41-78 Reset Rgb(19, 20, 23) NONE
+15:79-79 Reset Reset NONE
+16:0-39 Reset Reset NONE
+16:40-40 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+16:41-78 Reset Rgb(19, 20, 23) NONE
+16:79-79 Reset Reset NONE
+17:0-39 Reset Reset NONE
+17:40-40 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+17:41-78 Reset Rgb(19, 20, 23) NONE
+17:79-79 Reset Reset NONE
+18:0-39 Reset Reset NONE
+18:40-40 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+18:41-78 Reset Rgb(19, 20, 23) NONE
+18:79-79 Reset Reset NONE
+19:0-39 Reset Reset NONE
+19:40-40 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+19:41-78 Reset Rgb(19, 20, 23) NONE
+19:79-79 Reset Reset NONE
+20:0-39 Reset Reset NONE
+20:40-40 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+20:41-78 Reset Rgb(19, 20, 23) NONE
+20:79-79 Reset Reset NONE
+21:0-39 Reset Reset NONE
+21:40-40 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+21:41-78 Reset Rgb(19, 20, 23) NONE
+21:79-79 Reset Reset NONE
+22:0-39 Reset Reset NONE
+22:40-40 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+22:41-78 Reset Rgb(19, 20, 23) NONE
+22:79-79 Reset Reset NONE
+23:0-39 Reset Reset NONE
+23:40-40 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+23:41-79 Reset Reset NONE

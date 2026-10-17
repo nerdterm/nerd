@@ -1,0 +1,49 @@
+40 all [(Rect { x: 0, y: 0, width: 14, height: 1 }, 0), (Rect { x: 14, y: 0, width: 13, height: 1 }, 1)] Some(Rect { x: 27, y: 0, width: 5, height: 1 })
+  main · 7 9 ▕  logs · 界  ▕  +          
+0:0-8 Rgb(159, 208, 138) Rgb(27, 29, 33) BOLD
+0:9-9 Rgb(111, 201, 212) Rgb(27, 29, 33) BOLD
+0:10-10 Rgb(159, 208, 138) Rgb(27, 29, 33) BOLD
+0:11-11 Rgb(230, 193, 120) Rgb(27, 29, 33) BOLD
+0:12-12 Rgb(159, 208, 138) Rgb(27, 29, 33) BOLD
+0:13-13 Rgb(19, 20, 23) Rgb(27, 29, 33) BOLD
+0:14-22 Rgb(155, 160, 168) Rgb(27, 29, 33) NONE
+0:23-23 Rgb(159, 208, 138) Rgb(27, 29, 33) NONE
+0:24-24 Reset Reset NONE
+0:25-25 Rgb(155, 160, 168) Rgb(27, 29, 33) NONE
+0:26-26 Rgb(19, 20, 23) Rgb(27, 29, 33) NONE
+0:27-31 Rgb(155, 160, 168) Rgb(27, 29, 33) NONE
+0:32-39 Reset Reset NONE
+32 all [(Rect { x: 0, y: 0, width: 14, height: 1 }, 0), (Rect { x: 14, y: 0, width: 13, height: 1 }, 1)] Some(Rect { x: 27, y: 0, width: 5, height: 1 })
+  main · 7 9 ▕  logs · 界  ▕  +  
+0:0-8 Rgb(159, 208, 138) Rgb(27, 29, 33) BOLD
+0:9-9 Rgb(111, 201, 212) Rgb(27, 29, 33) BOLD
+0:10-10 Rgb(159, 208, 138) Rgb(27, 29, 33) BOLD
+0:11-11 Rgb(230, 193, 120) Rgb(27, 29, 33) BOLD
+0:12-12 Rgb(159, 208, 138) Rgb(27, 29, 33) BOLD
+0:13-13 Rgb(19, 20, 23) Rgb(27, 29, 33) BOLD
+0:14-22 Rgb(155, 160, 168) Rgb(27, 29, 33) NONE
+0:23-23 Rgb(159, 208, 138) Rgb(27, 29, 33) NONE
+0:24-24 Reset Reset NONE
+0:25-25 Rgb(155, 160, 168) Rgb(27, 29, 33) NONE
+0:26-26 Rgb(19, 20, 23) Rgb(27, 29, 33) NONE
+0:27-31 Rgb(155, 160, 168) Rgb(27, 29, 33) NONE
+31 none [(Rect { x: 0, y: 0, width: 8, height: 1 }, 0), (Rect { x: 8, y: 0, width: 8, height: 1 }, 1)] Some(Rect { x: 16, y: 0, width: 5, height: 1 })
+  main ▕  logs ▕  +            
+0:0-6 Rgb(159, 208, 138) Rgb(27, 29, 33) BOLD
+0:7-7 Rgb(19, 20, 23) Rgb(27, 29, 33) BOLD
+0:8-14 Rgb(155, 160, 168) Rgb(27, 29, 33) NONE
+0:15-15 Rgb(19, 20, 23) Rgb(27, 29, 33) NONE
+0:16-20 Rgb(155, 160, 168) Rgb(27, 29, 33) NONE
+0:21-30 Reset Reset NONE
+21 none [(Rect { x: 0, y: 0, width: 8, height: 1 }, 0), (Rect { x: 8, y: 0, width: 8, height: 1 }, 1)] Some(Rect { x: 16, y: 0, width: 5, height: 1 })
+  main ▕  logs ▕  +  
+0:0-6 Rgb(159, 208, 138) Rgb(27, 29, 33) BOLD
+0:7-7 Rgb(19, 20, 23) Rgb(27, 29, 33) BOLD
+0:8-14 Rgb(155, 160, 168) Rgb(27, 29, 33) NONE
+0:15-15 Rgb(19, 20, 23) Rgb(27, 29, 33) NONE
+0:16-20 Rgb(155, 160, 168) Rgb(27, 29, 33) NONE
+12 a tab goes [(Rect { x: 0, y: 0, width: 8, height: 1 }, 0)] None
+  main ▕    
+0:0-6 Rgb(159, 208, 138) Rgb(27, 29, 33) BOLD
+0:7-7 Rgb(19, 20, 23) Rgb(27, 29, 33) BOLD
+0:8-11 Reset Reset NONE

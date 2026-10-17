@@ -1,0 +1,8 @@
+{
+  "name": "hello",
+  "title": "Hello",
+  "exec": { "command": "sh", "args": ["plugin.sh"] },
+  "permissions": { "network": false, "write": [] },
+  "commands": [{ "id": "hello", "title": "Say hello", "where": "global" }],
+  "events": ["command", "pane_opened", "pane_closed"]
+}

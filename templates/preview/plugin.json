@@ -1,0 +1,8 @@
+{
+  "name": "logview",
+  "title": "Log viewer",
+  "exec": { "command": "sh", "args": ["plugin.sh"] },
+  "permissions": { "network": false, "write": [] },
+  "events": ["preview_request"],
+  "previews": [{ "extensions": ["log"] }]
+}

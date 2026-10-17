@@ -1,0 +1,1 @@
+{"event": {"type": "tool_execution_end", "toolCallId": "call_0", "toolName": "write", "result": {"content": [{"type": "text", "text": "Successfully wrote to hello.txt"}]}, "isError": false}, "ctx": {"sessionId": "01a12529-ce4d-7336-9465-b50d919d7195", "mode": "tui", "idle": false, "fileExists": true}}

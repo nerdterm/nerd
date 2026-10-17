@@ -1,0 +1,47 @@
+name: Bug report
+description: Something in nerd does not work as documented
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. nerd
+        2. right click a pane, Split right
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: nerd --version
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version and Mac model
+      placeholder: macOS 26.1, MacBook Pro M3
+    validations:
+      required: true
+  - type: input
+    id: terminal
+    attributes:
+      label: Terminal
+      placeholder: Ghostty 1.2, Terminal.app, iTerm2
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Server log
+      description: Relevant lines from ~/Library/Application Support/nerd/instances/1/daemon.log. Remove anything private.
+      render: text

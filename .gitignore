@@ -1,0 +1,7 @@
+/target
+.DS_Store
+/CLAUDE.local.md
+/docs/planning/
+/.claude/settings.local.json
+/.claude/*.tsv
+/.claude/*.lock

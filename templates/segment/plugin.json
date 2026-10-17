@@ -1,0 +1,9 @@
+{
+  "name": "clock",
+  "title": "Clock",
+  "exec": { "command": "sh", "args": ["plugin.sh"] },
+  "permissions": { "network": false, "write": [] },
+  "commands": [{ "id": "refresh", "title": "Refresh the clock", "where": "global" }],
+  "events": ["command"],
+  "segments": [{ "id": "clock" }]
+}

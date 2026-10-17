@@ -1,0 +1,1 @@
+{"sessionId":"becdc250-abaa-405a-b921-ec5d20ed45a5","timestamp":1790465249356,"cwd":"/private/tmp/nt/work","message":"Run command: printf '%s' hi > hello.txt && cat hello.txt","title":"Permission needed","hook_event_name":"Notification","notification_type":"permission_prompt"}

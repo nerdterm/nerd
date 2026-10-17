@@ -1,0 +1,28 @@
+{
+  "name": "gemini",
+  "title": "Gemini CLI",
+  "agent": {
+    "names": ["gemini"],
+    "config": { "path": "~/.gemini/settings.json", "shape": "nested" },
+    "mail": { "via": "hook", "form": "deny" },
+    "arg": "gemini",
+    "events": [
+      { "on": "SessionStart", "do": "idle" },
+      { "on": "SessionStart", "do": "sub-reset" },
+      { "on": "BeforeAgent", "do": "working" },
+      { "on": "AfterAgent", "do": "idle" },
+      { "on": "Notification", "do": "notify" },
+      { "on": "BeforeTool", "do": "tool-start" },
+      { "on": "AfterTool", "do": "tool-ok" }
+    ],
+    "session": { "field": "session_id", "kind": "uuid" },
+    "resume": ["gemini", "--resume", "{id}"],
+    "strip": {
+      "value": ["--resume", "-r"],
+      "flag": []
+    },
+    "data": ["~/.gemini/tmp", "~/.gemini/state.json", "~/.gemini/projects.json"],
+    "network": { "hosts": ["generativelanguage.googleapis.com", "oauth2.googleapis.com", "accounts.google.com", "cloudcode-pa.googleapis.com"], "ports": [443] },
+    "own_sandbox": "unset SEATBELT_PROFILE; nerd's limits already cover the whole agent"
+  }
+}

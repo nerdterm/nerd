@@ -1,0 +1,26 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "pull-request-header": "Release pull request, maintained by release-please. Merging it creates the tag and a draft GitHub release; then run `scripts/publish-binary.sh vX.Y.Z` from a terminal to attach the macOS binary and publish the release.",
+  "changelog-sections": [
+    { "type": "feat", "section": "Added" },
+    { "type": "fix", "section": "Fixed" },
+    { "type": "perf", "section": "Changed" },
+    { "type": "refactor", "section": "Changed" },
+    { "type": "revert", "section": "Removed" },
+    { "type": "chore", "section": "Miscellaneous", "hidden": true },
+    { "type": "docs", "section": "Documentation", "hidden": true },
+    { "type": "ci", "section": "Continuous Integration", "hidden": true },
+    { "type": "test", "section": "Tests", "hidden": true },
+    { "type": "build", "section": "Build System", "hidden": true }
+  ],
+  "draft": true,
+  "force-tag-creation": true,
+  "packages": {
+    ".": {
+      "release-type": "rust",
+      "include-component-in-tag": false,
+      "bump-minor-pre-major": true,
+      "exclude-paths": ["docs", ".github", ".claude"]
+    }
+  }
+}

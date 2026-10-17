@@ -1,0 +1,34 @@
+{
+  "name": "claude",
+  "title": "Claude Code",
+  "agent": {
+    "names": ["claude", "claude-code"],
+    "config": { "path": "~/.claude/settings.json", "shape": "nested" },
+    "mail": { "via": "inbox", "form": "block", "inbox_env": "CLAUDE_CODE_MESSAGING_SOCKET" },
+    "events": [
+      { "on": "SessionStart", "do": "idle" },
+      { "on": "UserPromptSubmit", "do": "working" },
+      { "on": "Stop", "do": "idle" },
+      { "on": "StopFailure", "do": "fail" },
+      { "on": "Notification", "matcher": "permission_prompt", "do": "blocked" },
+      { "on": "Notification", "matcher": "elicitation_dialog", "do": "blocked" },
+      { "on": "PreToolUse", "matcher": "Agent", "do": "task" },
+      { "on": "SubagentStart", "do": "sub-start" },
+      { "on": "SubagentStop", "do": "sub-stop" },
+      { "on": "SessionStart", "do": "sub-reset" },
+      { "on": "PreToolUse", "do": "tool-start" },
+      { "on": "PostToolUse", "do": "tool-ok" },
+      { "on": "PostToolUseFailure", "do": "tool-fail" }
+    ],
+    "session": { "field": "session_id", "kind": "uuid" },
+    "resume": ["claude", "--resume={id}"],
+    "strip": {
+      "value": ["--resume", "--rc"],
+      "flag": ["--continue"]
+    },
+    "blocked_text": ["Do you want", "❯ 1."],
+    "data": ["~/.claude/projects", "~/.claude/sessions", "~/.claude/file-history", "~/.claude/paste-cache", "~/.claude/todos", "~/.claude/statsig", "~/.claude/telemetry", "~/.claude/debug", "~/.claude/cache", "~/.claude/backups", "~/.claude/history.jsonl", "~/.claude/stats-cache.json"],
+    "network": { "hosts": ["api.anthropic.com", "claude.ai", "console.anthropic.com", "platform.claude.com", "statsig.anthropic.com"], "ports": [443] },
+    "own_sandbox": "turn /sandbox off; nerd's limits already cover the whole agent"
+  }
+}

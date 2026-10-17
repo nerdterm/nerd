@@ -1,0 +1,59 @@
+# cargo-deny configuration (schema 0.16+).
+
+[licenses]
+version = 2
+# Permissive only; copyleft (GPL, LGPL, AGPL, MPL, EUPL, CDDL) fails the check.
+allow = [
+    "MIT",
+    "MIT-0",
+    "0BSD",
+    "Unlicense",
+    "CC0-1.0",
+    "ISC",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "Zlib",
+    "BSL-1.0",
+    "WTFPL",
+    # Some crates license as "(MIT OR Apache-2.0) AND Unicode-*"; AND requires both parts
+    # on the allow list or cargo-deny rejects the whole crate.
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+]
+confidence-threshold = 0.8
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+deny = [
+    # None of these are in Cargo.lock right now; the ban is insurance for the future.
+    { name = "reqwest" },
+    { name = "hyper" },
+    { name = "hyper-util" },
+    { name = "tokio" },
+    { name = "tokio-util" },
+    { name = "async-std" },
+    { name = "smol" },
+    { name = "curl" },
+    { name = "ureq" },
+    { name = "native-tls" },
+    { name = "rustls" },
+    { name = "openssl" },
+    { name = "openssl-sys" },
+    { name = "socket2" },
+    { name = "h2" },
+    { name = "tonic" },
+    { name = "want" },
+    # mio is not banned: crossterm/signal-hook-mio use it only for stdin/tty readiness
+    # (SourceFd), never sockets; enforced via cackle.toml withholding its "net" api.
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+
+[advisories]
+# Unlike licenses/bans/sources, this check downloads the RustSec database over the
+# network on every run: run it deliberately, never from CI or a script by default.

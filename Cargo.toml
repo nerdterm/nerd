@@ -1,0 +1,32 @@
+[package]
+name = "nerd"
+version = "0.11.0"
+license = "MIT"
+edition = "2024"
+
+[dependencies]
+# The pane emulator: it reflows lines when a pane is resized.
+alacritty_terminal = "0.26.0"
+crossterm = { version = "0.29.0", features = ["serde"] }
+# Passing the master descriptor from the broker to the daemon (SCM_RIGHTS) and dup2 before exec.
+# The crate is already in the tree via portable-pty, so this adds no new dependency.
+nix = { version = "0.29.0", features = ["socket", "uio", "fs", "process", "signal", "poll", "hostname", "term"] }
+portable-pty = "0.9.0"
+ratatui = "0.30.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.151", features = ["preserve_order"] }
+terminput = "0.5.15"
+terminput-crossterm = "0.4.11"
+
+[dev-dependencies]
+# tests/egress.rs reads the source to find every door out of nerd; all three are already in Cargo.lock.
+proc-macro2 = { version = "1", features = ["span-locations"] }
+quote = "1"
+syn = { version = "2", features = ["full", "visit"] }
+# Reads what a client was sent in tests/daemon.rs, the way a terminal would show it.
+vt100 = "0.16.2"
+
+# Packed: on macOS unpacked debug info leaves 256 new .o files per rebuild that Cargo never deletes.
+[profile.dev]
+debug = "line-tables-only"
+split-debuginfo = "packed"

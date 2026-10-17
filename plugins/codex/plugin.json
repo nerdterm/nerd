@@ -1,0 +1,30 @@
+{
+  "name": "codex",
+  "title": "Codex",
+  "agent": {
+    "names": ["codex"],
+    "config": { "path": "~/.codex/hooks.json", "shape": "nested" },
+    "mail": { "via": "hook", "form": "block" },
+    "arg": "codex",
+    "events": [
+      { "on": "SessionStart", "do": "idle" },
+      { "on": "SessionStart", "do": "sub-reset" },
+      { "on": "UserPromptSubmit", "do": "working" },
+      { "on": "Stop", "do": "idle" },
+      { "on": "PermissionRequest", "do": "blocked" },
+      { "on": "PreToolUse", "do": "tool-start" },
+      { "on": "PostToolUse", "do": "tool-ok" },
+      { "on": "SubagentStart", "do": "sub-start" },
+      { "on": "SubagentStop", "do": "sub-stop" }
+    ],
+    "session": { "field": "session_id", "kind": "word" },
+    "resume": ["codex", "resume", "{id}"],
+    "strip": {
+      "value": ["resume"],
+      "flag": ["--last"]
+    },
+    "data": ["~/.codex/sessions", "~/.codex/log", "~/.codex/history.jsonl", "~/.codex/session_index.jsonl", "~/.codex/installation_id", "~/.codex/thread-writer-locks"],
+    "network": { "hosts": ["api.openai.com", "auth.openai.com", "chatgpt.com"], "ports": [443] },
+    "own_sandbox": "start it with --sandbox danger-full-access; nerd's limits already cover the whole agent"
+  }
+}

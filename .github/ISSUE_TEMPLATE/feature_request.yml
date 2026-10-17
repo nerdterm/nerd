@@ -1,0 +1,20 @@
+name: Feature request
+description: An idea for nerd
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: nerd stays small, with no network features beyond those listed in What leaves nerd (docs/privacy-and-security.md), and macOS only until the maintainer adds other platforms. Many ideas will be declined.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What you are trying to do and why nerd makes it hard today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+    validations:
+      required: true

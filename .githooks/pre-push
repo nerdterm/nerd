@@ -1,0 +1,27 @@
+#!/bin/sh
+# No CI builds the Rust side on pull requests (macOS minutes), so gates run here.
+# Deletions and tags skip them: nothing to build, and tags belong to the release bot.
+zero=0000000000000000000000000000000000000000
+gates=0
+top=$(git rev-parse --show-toplevel)
+while read -r local_ref local_sha remote_ref remote_sha; do
+    # Every ref, master and tags included, whatever skips the gates: what is not on the remote yet.
+    if [ "$local_sha" != "$zero" ] && ! sh "$top/scripts/privacy.sh" push "$local_sha" --not --remotes="$1"; then
+        echo "nerd: privacy check refused the push of $local_ref" >&2
+        exit 1
+    fi
+    case "$remote_ref" in
+        refs/heads/master)
+            if [ -z "$NERD_ALLOW_MASTER" ]; then
+                echo "nerd: no pushes to master, open a pull request (NERD_ALLOW_MASTER=1 overrides, once)" >&2
+                exit 1
+            fi
+            ;;
+        refs/tags/*) ;;
+        *) [ "$local_sha" = "$zero" ] || gates=1 ;;
+    esac
+done
+if [ "$gates" = 1 ] && [ -z "$NERD_SKIP_GATES" ]; then
+    echo "nerd: gates before push (NERD_SKIP_GATES=1 skips, once)" >&2
+    sh "$top/scripts/gates.sh" || { echo "nerd: gates red, push refused" >&2; exit 1; }
+fi

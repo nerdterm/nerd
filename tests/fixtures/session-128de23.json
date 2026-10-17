@@ -1,0 +1,55 @@
+{
+  "version": 2,
+  "spaces": [
+    {
+      "name": "proj",
+      "cwd": "/Users/me/proj",
+      "tabs": [
+        {
+          "name": "main",
+          "layout": {
+            "Split": {
+              "dir": "Horizontal",
+              "ratio": 0.5,
+              "first": {
+                "Pane": 1
+              },
+              "second": {
+                "Pane": 2
+              }
+            }
+          },
+          "panes": [
+            {
+              "id": 1,
+              "cwd": "/Users/me/proj",
+              "argv": [
+                "/bin/zsh"
+              ],
+              "agent_session": null,
+              "label": null,
+              "title": "title 1",
+              "cols": 100,
+              "rows": 30
+            },
+            {
+              "id": 2,
+              "cwd": "/Users/me/proj",
+              "argv": [
+                "claude"
+              ],
+              "agent_session": "abc-123",
+              "label": "agent",
+              "title": "title 2",
+              "cols": 100,
+              "rows": 30
+            }
+          ],
+          "focused": 2
+        }
+      ],
+      "active_tab": 0
+    }
+  ],
+  "active_space": 0
+}

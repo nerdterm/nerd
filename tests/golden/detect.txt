@@ -1,0 +1,22 @@
+agents: amp antigravity claude cline codex cursor devin droid gemini copilot grok hermes kilo kimi kiro maki muse opencode pi qodercli qwen
+launchers: node nodejs bun deno python python3 sh bash zsh fish env
+aliases:
+agy antigravity
+amp-local amp
+antigravity-cli antigravity
+claude-code claude
+cursor-agent cursor
+devin-cli devin
+ghcs copilot
+github-copilot copilot
+grok-build grok
+hermes-agent hermes
+kilo-code kilo
+kimi-code kimi
+kiro-cli kiro
+muse-cli muse
+muse-code muse
+open-code opencode
+qoder qodercli
+qodercn qodercli
+qwen-code qwen

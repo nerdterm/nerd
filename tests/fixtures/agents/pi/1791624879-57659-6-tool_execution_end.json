@@ -1,0 +1,1 @@
+{"event": {"type": "tool_execution_end", "toolCallId": "call_1", "toolName": "read", "result": {"content": [{"type": "text", "text": "hi"}], "structuredContent": "hi"}, "isError": false}, "ctx": {"sessionId": "01a12529-ce4d-7336-9465-b50d919d7195", "mode": "tui", "idle": false, "fileExists": true}}

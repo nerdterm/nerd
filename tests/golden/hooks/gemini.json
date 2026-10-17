@@ -1,0 +1,82 @@
+{
+  "model": "keep",
+  "hooks": {
+    "BeforeTool": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "foreign.sh"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.gemini/hooks/nerd-agent-state.sh' tool-start gemini"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.gemini/hooks/nerd-agent-state.sh' idle gemini"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.gemini/hooks/nerd-agent-state.sh' sub-reset gemini"
+          }
+        ]
+      }
+    ],
+    "BeforeAgent": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.gemini/hooks/nerd-agent-state.sh' working gemini"
+          }
+        ]
+      }
+    ],
+    "AfterAgent": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.gemini/hooks/nerd-agent-state.sh' idle gemini"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.gemini/hooks/nerd-agent-state.sh' notify gemini"
+          }
+        ]
+      }
+    ],
+    "AfterTool": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.gemini/hooks/nerd-agent-state.sh' tool-ok gemini"
+          }
+        ]
+      }
+    ]
+  }
+}

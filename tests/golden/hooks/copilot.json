@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "hooks": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "bash": "'/HOME/.copilot/hooks/nerd-agent-state.sh' sub-reset copilot"
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "type": "command",
+        "bash": "'/HOME/.copilot/hooks/nerd-agent-state.sh' working copilot"
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "bash": "'/HOME/.copilot/hooks/nerd-agent-state.sh' idle copilot"
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "type": "command",
+        "bash": "'/HOME/.copilot/hooks/nerd-agent-state.sh' blocked copilot"
+      }
+    ],
+    "notification": [
+      {
+        "type": "command",
+        "bash": "'/HOME/.copilot/hooks/nerd-agent-state.sh' notify copilot"
+      }
+    ],
+    "PreToolUse": [
+      {
+        "type": "command",
+        "bash": "'/HOME/.copilot/hooks/nerd-agent-state.sh' tool-start copilot"
+      }
+    ],
+    "PostToolUse": [
+      {
+        "type": "command",
+        "bash": "'/HOME/.copilot/hooks/nerd-agent-state.sh' tool-ok copilot"
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "type": "command",
+        "bash": "'/HOME/.copilot/hooks/nerd-agent-state.sh' tool-fail copilot"
+      }
+    ],
+    "subagentStart": [
+      {
+        "type": "command",
+        "bash": "'/HOME/.copilot/hooks/nerd-agent-state.sh' sub-start copilot"
+      }
+    ],
+    "subagentStop": [
+      {
+        "type": "command",
+        "bash": "'/HOME/.copilot/hooks/nerd-agent-state.sh' sub-stop copilot"
+      }
+    ]
+  }
+}

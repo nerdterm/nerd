@@ -1,0 +1,39 @@
+#!/bin/sh
+# /usr/bin/ssh for the remote tests in src/client.rs: its directory holds the mode, the list and the argv log.
+dir=$(dirname "$0")
+{ printf '%s\n' "$@"; echo =====; } >> "$dir/argv"
+for last in "$@"; do :; done
+mode=$(cat "$dir/mode")
+case $last in
+*"nerd --list --json")
+    case $mode in
+    refused) echo "ssh: connect to host fake-host port 22: Connection refused" >&2; exit 255 ;;
+    timeout) echo "ssh: connect to host fake-host port 22: Operation timed out" >&2; exit 255 ;;
+    nonerd) echo "zsh:1: command not found: nerd" >&2; exit 127 ;;
+    garbage) printf 'Last login: yesterday\nnerd 0.5.0\n'; exit 0 ;;
+    # Authenticated, then silent: exec, so killing ssh's pid kills the sleep.
+    hang) echo $$ > "$dir/hang.pid"; exec sleep 30 ;;
+    *) cat "$dir/list.json"; exit 0 ;;
+    esac ;;
+*"nerd --relay "*)
+    id=${last##*--relay }
+    # A test run can set these process-wide; the relay must find only the fake's state.
+    unset NERD_SOCKET NERD_INSTANCE
+    export NERD_STATE_DIR="$dir/state" HOME="$dir"
+    if [ "$mode" = lost ]; then
+        # The link drops a second in: the relay dies with no word, ssh exits 255.
+        "$dir/nerd" --relay "$id" <&0 &
+        pid=$!
+        sleep 1
+        kill -9 $pid
+        : > "$dir/ended"
+        exit 255
+    fi
+    # sshd-session: in the tests the test binary, running the relay on fds 3 and 4; in a live check nerd itself.
+    if [ -e "$dir/stand-in" ]; then
+        NERD_FAKE_SSHD="$dir/nerd" NERD_FAKE_ID="$id" NERD_FAKE_ENDED="$dir/ended" exec "$dir/sshd-session" --exact client::remote_tests::sshd_stand_in 3<&0 4>&1 </dev/null >/dev/null
+    fi
+    exec "$dir/sshd-session" --relay "$id" ;;
+esac
+echo "fake-ssh: unknown call: $last" >&2
+exit 2

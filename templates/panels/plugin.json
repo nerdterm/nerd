@@ -1,0 +1,11 @@
+{
+  "name": "notes",
+  "title": "Notes",
+  "exec": { "command": "sh", "args": ["plugin.sh"] },
+  "permissions": { "network": false, "write": [] },
+  "events": ["pane_opened", "pane_cwd", "panel_opened", "panel_item"],
+  "panels": [
+    { "id": "files", "title": "Files here", "where": "pane" },
+    { "id": "types", "title": "By type", "where": "pane" }
+  ]
+}

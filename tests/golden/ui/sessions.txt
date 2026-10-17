@@ -1,0 +1,931 @@
+== first [(Rect { x: 18, y: 11, width: 64, height: 1 }, 0), (Rect { x: 18, y: 12, width: 64, height: 1 }, 1), (Rect { x: 18, y: 13, width: 64, height: 1 }, 2), (Rect { x: 18, y: 14, width: 64, height: 1 }, 3), (Rect { x: 18, y: 15, width: 64, height: 1 }, 4), (Rect { x: 18, y: 16, width: 64, height: 1 }, 5)] Rect { x: 43, y: 22, width: 13, height: 1 }
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                ┌─ Session history ────────────────────────────────────────────────┐                
+                │ 1 session came from elsewhere: MacBook-Air, Mar 13 22:10–Mar 14  │                
+                │ 08:05.                                                           │                
+                │                                                                  │                
+                │ Since         Machine      How          Status                   │                
+                │ Mar 14 09:30  this Mac     directly     live                     │                
+                │ Mar 14 08:05  this Mac     directly     replaced at 09:30        │                
+                │ Mar 13 22:10  MacBook-Air  over ssh     closed at Mar 14 08:05   │                
+                │ Mar 13 18:00  this Mac     directly     detached at 18:40        │                
+                │ earlier       unknown      unknown      replaced at Mar 13 18:00 │                
+                │ Mar 11 23:59  this Mac     a-python-r…  lost at Mar 12 07:45     │                
+                │                                                                  │                
+                │ Opened 09:30 on Mar 14 from this-host directly (nerd). This is   │                
+                │ the live session.                                                │                
+                │                                                                  │                
+                │                                                                  │                
+                │                           [Esc] close                            │                
+                └──────────────────────────────────────────────────────────────────┘                
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+0:0-99 Reset Reset NONE
+1:0-99 Reset Reset NONE
+2:0-99 Reset Reset NONE
+3:0-99 Reset Reset NONE
+4:0-99 Reset Reset NONE
+5:0-14 Reset Reset NONE
+5:15-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+5:85-99 Reset Reset NONE
+6:0-14 Reset Reset NONE
+6:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+6:16-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+6:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+6:85-99 Reset Reset NONE
+7:0-14 Reset Reset NONE
+7:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+7:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+7:18-80 Rgb(230, 193, 120) Rgb(19, 20, 23) NONE
+7:81-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+7:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+7:85-99 Reset Reset NONE
+8:0-14 Reset Reset NONE
+8:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+8:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+8:18-23 Rgb(230, 193, 120) Rgb(19, 20, 23) NONE
+8:24-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+8:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+8:85-99 Reset Reset NONE
+9:0-14 Reset Reset NONE
+9:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+9:16-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+9:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+9:85-99 Reset Reset NONE
+10:0-14 Reset Reset NONE
+10:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+10:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+10:18-22 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
+10:23-31 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+10:32-38 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
+10:39-44 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+10:45-47 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
+10:48-57 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+10:58-63 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
+10:64-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+10:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+10:85-99 Reset Reset NONE
+11:0-14 Reset Reset NONE
+11:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+11:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+11:18-81 Rgb(19, 20, 23) Rgb(159, 208, 138) BOLD
+11:82-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+11:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+11:85-99 Reset Reset NONE
+12:0-14 Reset Reset NONE
+12:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+12:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+12:18-81 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+12:82-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+12:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+12:85-99 Reset Reset NONE
+13:0-14 Reset Reset NONE
+13:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+13:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+13:18-31 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+13:32-42 Rgb(230, 193, 120) Rgb(19, 20, 23) NONE
+13:43-44 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+13:45-52 Rgb(230, 193, 120) Rgb(19, 20, 23) NONE
+13:53-81 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+13:82-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+13:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+13:85-99 Reset Reset NONE
+14:0-14 Reset Reset NONE
+14:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+14:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+14:18-81 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+14:82-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+14:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+14:85-99 Reset Reset NONE
+15:0-14 Reset Reset NONE
+15:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+15:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+15:18-31 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+15:32-38 Rgb(116, 121, 127) Rgb(19, 20, 23) NONE
+15:39-44 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+15:45-51 Rgb(116, 121, 127) Rgb(19, 20, 23) NONE
+15:52-81 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+15:82-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+15:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+15:85-99 Reset Reset NONE
+16:0-14 Reset Reset NONE
+16:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+16:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+16:18-81 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+16:82-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+16:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+16:85-99 Reset Reset NONE
+17:0-14 Reset Reset NONE
+17:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+17:16-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+17:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+17:85-99 Reset Reset NONE
+18:0-14 Reset Reset NONE
+18:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+18:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+18:18-79 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+18:80-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+18:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+18:85-99 Reset Reset NONE
+19:0-14 Reset Reset NONE
+19:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+19:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+19:18-34 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+19:35-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+19:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+19:85-99 Reset Reset NONE
+20:0-14 Reset Reset NONE
+20:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+20:16-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+20:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+20:85-99 Reset Reset NONE
+21:0-14 Reset Reset NONE
+21:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+21:16-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+21:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+21:85-99 Reset Reset NONE
+22:0-14 Reset Reset NONE
+22:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+22:16-42 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+22:43-55 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+22:56-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+22:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+22:85-99 Reset Reset NONE
+23:0-14 Reset Reset NONE
+23:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+23:16-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+23:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+23:85-99 Reset Reset NONE
+24:0-14 Reset Reset NONE
+24:15-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+24:85-99 Reset Reset NONE
+25:0-99 Reset Reset NONE
+26:0-99 Reset Reset NONE
+27:0-99 Reset Reset NONE
+28:0-99 Reset Reset NONE
+29:0-99 Reset Reset NONE
+== remote [(Rect { x: 18, y: 11, width: 64, height: 1 }, 0), (Rect { x: 18, y: 12, width: 64, height: 1 }, 1), (Rect { x: 18, y: 13, width: 64, height: 1 }, 2), (Rect { x: 18, y: 14, width: 64, height: 1 }, 3), (Rect { x: 18, y: 15, width: 64, height: 1 }, 4), (Rect { x: 18, y: 16, width: 64, height: 1 }, 5)] Rect { x: 43, y: 22, width: 13, height: 1 }
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                ┌─ Session history ────────────────────────────────────────────────┐                
+                │ 1 session came from elsewhere: MacBook-Air, Mar 13 22:10–Mar 14  │                
+                │ 08:05.                                                           │                
+                │                                                                  │                
+                │ Since         Machine      How          Status                   │                
+                │ Mar 14 09:30  this Mac     directly     live                     │                
+                │ Mar 14 08:05  this Mac     directly     replaced at 09:30        │                
+                │ Mar 13 22:10  MacBook-Air  over ssh     closed at Mar 14 08:05   │                
+                │ Mar 13 18:00  this Mac     directly     detached at 18:40        │                
+                │ earlier       unknown      unknown      replaced at Mar 13 18:00 │                
+                │ Mar 11 23:59  this Mac     a-python-r…  lost at Mar 12 07:45     │                
+                │                                                                  │                
+                │ Opened 22:10 on Mar 13 from MacBook-Air.local over ssh           │                
+                │ (sshd-session). Its terminal closed or the link dropped at 08:05 │                
+                │ on Mar 14.                                                       │                
+                │                                                                  │                
+                │                           [Esc] close                            │                
+                └──────────────────────────────────────────────────────────────────┘                
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+0:0-99 Reset Reset NONE
+1:0-99 Reset Reset NONE
+2:0-99 Reset Reset NONE
+3:0-99 Reset Reset NONE
+4:0-99 Reset Reset NONE
+5:0-14 Reset Reset NONE
+5:15-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+5:85-99 Reset Reset NONE
+6:0-14 Reset Reset NONE
+6:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+6:16-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+6:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+6:85-99 Reset Reset NONE
+7:0-14 Reset Reset NONE
+7:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+7:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+7:18-80 Rgb(230, 193, 120) Rgb(19, 20, 23) NONE
+7:81-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+7:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+7:85-99 Reset Reset NONE
+8:0-14 Reset Reset NONE
+8:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+8:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+8:18-23 Rgb(230, 193, 120) Rgb(19, 20, 23) NONE
+8:24-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+8:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+8:85-99 Reset Reset NONE
+9:0-14 Reset Reset NONE
+9:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+9:16-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+9:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+9:85-99 Reset Reset NONE
+10:0-14 Reset Reset NONE
+10:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+10:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+10:18-22 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
+10:23-31 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+10:32-38 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
+10:39-44 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+10:45-47 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
+10:48-57 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+10:58-63 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
+10:64-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+10:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+10:85-99 Reset Reset NONE
+11:0-14 Reset Reset NONE
+11:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+11:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+11:18-81 Rgb(159, 208, 138) Rgb(19, 20, 23) BOLD
+11:82-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+11:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+11:85-99 Reset Reset NONE
+12:0-14 Reset Reset NONE
+12:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+12:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+12:18-81 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+12:82-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+12:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+12:85-99 Reset Reset NONE
+13:0-14 Reset Reset NONE
+13:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+13:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+13:18-81 Rgb(19, 20, 23) Rgb(159, 208, 138) NONE
+13:82-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+13:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+13:85-99 Reset Reset NONE
+14:0-14 Reset Reset NONE
+14:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+14:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+14:18-81 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+14:82-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+14:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+14:85-99 Reset Reset NONE
+15:0-14 Reset Reset NONE
+15:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+15:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+15:18-31 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+15:32-38 Rgb(116, 121, 127) Rgb(19, 20, 23) NONE
+15:39-44 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+15:45-51 Rgb(116, 121, 127) Rgb(19, 20, 23) NONE
+15:52-81 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+15:82-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+15:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+15:85-99 Reset Reset NONE
+16:0-14 Reset Reset NONE
+16:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+16:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+16:18-81 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+16:82-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+16:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+16:85-99 Reset Reset NONE
+17:0-14 Reset Reset NONE
+17:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+17:16-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+17:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+17:85-99 Reset Reset NONE
+18:0-14 Reset Reset NONE
+18:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+18:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+18:18-71 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+18:72-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+18:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+18:85-99 Reset Reset NONE
+19:0-14 Reset Reset NONE
+19:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+19:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+19:18-81 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+19:82-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+19:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+19:85-99 Reset Reset NONE
+20:0-14 Reset Reset NONE
+20:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+20:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+20:18-27 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+20:28-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+20:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+20:85-99 Reset Reset NONE
+21:0-14 Reset Reset NONE
+21:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+21:16-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+21:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+21:85-99 Reset Reset NONE
+22:0-14 Reset Reset NONE
+22:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+22:16-42 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+22:43-55 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+22:56-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+22:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+22:85-99 Reset Reset NONE
+23:0-14 Reset Reset NONE
+23:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+23:16-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+23:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+23:85-99 Reset Reset NONE
+24:0-14 Reset Reset NONE
+24:15-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+24:85-99 Reset Reset NONE
+25:0-99 Reset Reset NONE
+26:0-99 Reset Reset NONE
+27:0-99 Reset Reset NONE
+28:0-99 Reset Reset NONE
+29:0-99 Reset Reset NONE
+== seeded [(Rect { x: 18, y: 11, width: 64, height: 1 }, 0), (Rect { x: 18, y: 12, width: 64, height: 1 }, 1), (Rect { x: 18, y: 13, width: 64, height: 1 }, 2), (Rect { x: 18, y: 14, width: 64, height: 1 }, 3), (Rect { x: 18, y: 15, width: 64, height: 1 }, 4), (Rect { x: 18, y: 16, width: 64, height: 1 }, 5)] Rect { x: 43, y: 22, width: 13, height: 1 }
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                ┌─ Session history ────────────────────────────────────────────────┐                
+                │ 1 session came from elsewhere: MacBook-Air, Mar 13 22:10–Mar 14  │                
+                │ 08:05.                                                           │                
+                │                                                                  │                
+                │ Since         Machine      How          Status                   │                
+                │ Mar 14 09:30  this Mac     directly     live                     │                
+                │ Mar 14 08:05  this Mac     directly     replaced at 09:30        │                
+                │ Mar 13 22:10  MacBook-Air  over ssh     closed at Mar 14 08:05   │                
+                │ Mar 13 18:00  this Mac     directly     detached at 18:40        │                
+                │ earlier       unknown      unknown      replaced at Mar 13 18:00 │                
+                │ Mar 11 23:59  this Mac     a-python-r…  lost at Mar 12 07:45     │                
+                │                                                                  │                
+                │ It came over an update at 07:45 on Mar 12; when it opened and    │                
+                │ from where is unknown. Another session replaced it at 18:00 on   │                
+                │ Mar 13.                                                          │                
+                │                                                                  │                
+                │                           [Esc] close                            │                
+                └──────────────────────────────────────────────────────────────────┘                
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+0:0-99 Reset Reset NONE
+1:0-99 Reset Reset NONE
+2:0-99 Reset Reset NONE
+3:0-99 Reset Reset NONE
+4:0-99 Reset Reset NONE
+5:0-14 Reset Reset NONE
+5:15-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+5:85-99 Reset Reset NONE
+6:0-14 Reset Reset NONE
+6:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+6:16-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+6:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+6:85-99 Reset Reset NONE
+7:0-14 Reset Reset NONE
+7:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+7:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+7:18-80 Rgb(230, 193, 120) Rgb(19, 20, 23) NONE
+7:81-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+7:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+7:85-99 Reset Reset NONE
+8:0-14 Reset Reset NONE
+8:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+8:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+8:18-23 Rgb(230, 193, 120) Rgb(19, 20, 23) NONE
+8:24-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+8:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+8:85-99 Reset Reset NONE
+9:0-14 Reset Reset NONE
+9:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+9:16-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+9:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+9:85-99 Reset Reset NONE
+10:0-14 Reset Reset NONE
+10:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+10:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+10:18-22 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
+10:23-31 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+10:32-38 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
+10:39-44 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+10:45-47 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
+10:48-57 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+10:58-63 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
+10:64-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+10:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+10:85-99 Reset Reset NONE
+11:0-14 Reset Reset NONE
+11:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+11:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+11:18-81 Rgb(159, 208, 138) Rgb(19, 20, 23) BOLD
+11:82-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+11:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+11:85-99 Reset Reset NONE
+12:0-14 Reset Reset NONE
+12:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+12:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+12:18-81 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+12:82-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+12:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+12:85-99 Reset Reset NONE
+13:0-14 Reset Reset NONE
+13:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+13:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+13:18-31 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+13:32-42 Rgb(230, 193, 120) Rgb(19, 20, 23) NONE
+13:43-44 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+13:45-52 Rgb(230, 193, 120) Rgb(19, 20, 23) NONE
+13:53-81 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+13:82-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+13:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+13:85-99 Reset Reset NONE
+14:0-14 Reset Reset NONE
+14:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+14:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+14:18-81 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+14:82-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+14:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+14:85-99 Reset Reset NONE
+15:0-14 Reset Reset NONE
+15:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+15:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+15:18-81 Rgb(19, 20, 23) Rgb(159, 208, 138) NONE
+15:82-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+15:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+15:85-99 Reset Reset NONE
+16:0-14 Reset Reset NONE
+16:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+16:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+16:18-81 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+16:82-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+16:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+16:85-99 Reset Reset NONE
+17:0-14 Reset Reset NONE
+17:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+17:16-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+17:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+17:85-99 Reset Reset NONE
+18:0-14 Reset Reset NONE
+18:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+18:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+18:18-78 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+18:79-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+18:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+18:85-99 Reset Reset NONE
+19:0-14 Reset Reset NONE
+19:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+19:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+19:18-79 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+19:80-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+19:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+19:85-99 Reset Reset NONE
+20:0-14 Reset Reset NONE
+20:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+20:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+20:18-24 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+20:25-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+20:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+20:85-99 Reset Reset NONE
+21:0-14 Reset Reset NONE
+21:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+21:16-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+21:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+21:85-99 Reset Reset NONE
+22:0-14 Reset Reset NONE
+22:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+22:16-42 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+22:43-55 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+22:56-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+22:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+22:85-99 Reset Reset NONE
+23:0-14 Reset Reset NONE
+23:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+23:16-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+23:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+23:85-99 Reset Reset NONE
+24:0-14 Reset Reset NONE
+24:15-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+24:85-99 Reset Reset NONE
+25:0-99 Reset Reset NONE
+26:0-99 Reset Reset NONE
+27:0-99 Reset Reset NONE
+28:0-99 Reset Reset NONE
+29:0-99 Reset Reset NONE
+== narrow [(Rect { x: 4, y: 10, width: 32, height: 1 }, 0), (Rect { x: 4, y: 11, width: 32, height: 1 }, 1), (Rect { x: 4, y: 12, width: 32, height: 1 }, 2), (Rect { x: 4, y: 13, width: 32, height: 1 }, 3), (Rect { x: 4, y: 14, width: 32, height: 1 }, 4), (Rect { x: 4, y: 15, width: 32, height: 1 }, 5)] Rect { x: 13, y: 24, width: 13, height: 1 }
+                                        
+                                        
+                                        
+                                        
+  ┌─ Session history ────────────────┐  
+  │ 1 session came from elsewhere:   │  
+  │ MacBook-Air, Mar 13 22:10–Mar 14 │  
+  │ 08:05.                           │  
+  │                                  │  
+  │ Since             Status         │  
+  │ Mar 14 09:30      live           │  
+  │ Mar 14 08:05      replaced at 0… │  
+  │ Mar 13 22:10      closed at Mar… │  
+  │ Mar 13 18:00      detached at 1… │  
+  │ earlier           replaced at M… │  
+  │ Mar 11 23:59      lost at Mar 1… │  
+  │                                  │  
+  │ Opened 23:59 on Mar 11 from      │  
+  │ this-host                        │  
+  │ (a-python-relay-with-a-long-name │  
+  │ ).                               │  
+  │ A frame could not be written to  │  
+  │ it at 07:45 on Mar 12.           │  
+  │                                  │  
+  │           [Esc] close            │  
+  └──────────────────────────────────┘  
+                                        
+                                        
+                                        
+                                        
+0:0-39 Reset Reset NONE
+1:0-39 Reset Reset NONE
+2:0-39 Reset Reset NONE
+3:0-0 Reset Reset NONE
+3:1-38 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+3:39-39 Reset Reset NONE
+4:0-0 Reset Reset NONE
+4:1-1 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+4:2-37 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+4:38-38 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+4:39-39 Reset Reset NONE
+5:0-0 Reset Reset NONE
+5:1-1 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+5:2-3 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+5:4-33 Rgb(230, 193, 120) Rgb(19, 20, 23) NONE
+5:34-37 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+5:38-38 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+5:39-39 Reset Reset NONE
+6:0-0 Reset Reset NONE
+6:1-1 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+6:2-3 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+6:4-35 Rgb(230, 193, 120) Rgb(19, 20, 23) NONE
+6:36-37 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+6:38-38 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+6:39-39 Reset Reset NONE
+7:0-0 Reset Reset NONE
+7:1-1 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+7:2-3 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+7:4-9 Rgb(230, 193, 120) Rgb(19, 20, 23) NONE
+7:10-37 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+7:38-38 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+7:39-39 Reset Reset NONE
+8:0-0 Reset Reset NONE
+8:1-1 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+8:2-37 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+8:38-38 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+8:39-39 Reset Reset NONE
+9:0-0 Reset Reset NONE
+9:1-1 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+9:2-3 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+9:4-8 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
+9:9-21 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+9:22-27 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
+9:28-37 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+9:38-38 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+9:39-39 Reset Reset NONE
+10:0-0 Reset Reset NONE
+10:1-1 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+10:2-3 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+10:4-35 Rgb(159, 208, 138) Rgb(19, 20, 23) BOLD
+10:36-37 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+10:38-38 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+10:39-39 Reset Reset NONE
+11:0-0 Reset Reset NONE
+11:1-1 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+11:2-3 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+11:4-35 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+11:36-37 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+11:38-38 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+11:39-39 Reset Reset NONE
+12:0-0 Reset Reset NONE
+12:1-1 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+12:2-3 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+12:4-35 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+12:36-37 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+12:38-38 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+12:39-39 Reset Reset NONE
+13:0-0 Reset Reset NONE
+13:1-1 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+13:2-3 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+13:4-35 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+13:36-37 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+13:38-38 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+13:39-39 Reset Reset NONE
+14:0-0 Reset Reset NONE
+14:1-1 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+14:2-3 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+14:4-35 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+14:36-37 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+14:38-38 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+14:39-39 Reset Reset NONE
+15:0-0 Reset Reset NONE
+15:1-1 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+15:2-3 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+15:4-35 Rgb(19, 20, 23) Rgb(159, 208, 138) NONE
+15:36-37 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+15:38-38 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+15:39-39 Reset Reset NONE
+16:0-0 Reset Reset NONE
+16:1-1 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+16:2-37 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+16:38-38 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+16:39-39 Reset Reset NONE
+17:0-0 Reset Reset NONE
+17:1-1 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+17:2-3 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+17:4-30 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+17:31-37 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+17:38-38 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+17:39-39 Reset Reset NONE
+18:0-0 Reset Reset NONE
+18:1-1 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+18:2-3 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+18:4-12 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+18:13-37 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+18:38-38 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+18:39-39 Reset Reset NONE
+19:0-0 Reset Reset NONE
+19:1-1 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+19:2-3 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+19:4-35 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+19:36-37 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+19:38-38 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+19:39-39 Reset Reset NONE
+20:0-0 Reset Reset NONE
+20:1-1 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+20:2-3 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+20:4-5 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+20:6-37 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+20:38-38 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+20:39-39 Reset Reset NONE
+21:0-0 Reset Reset NONE
+21:1-1 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+21:2-3 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+21:4-34 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+21:35-37 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+21:38-38 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+21:39-39 Reset Reset NONE
+22:0-0 Reset Reset NONE
+22:1-1 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+22:2-3 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+22:4-25 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+22:26-37 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+22:38-38 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+22:39-39 Reset Reset NONE
+23:0-0 Reset Reset NONE
+23:1-1 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+23:2-37 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+23:38-38 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+23:39-39 Reset Reset NONE
+24:0-0 Reset Reset NONE
+24:1-1 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+24:2-12 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+24:13-25 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+24:26-37 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+24:38-38 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+24:39-39 Reset Reset NONE
+25:0-0 Reset Reset NONE
+25:1-1 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+25:2-37 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+25:38-38 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+25:39-39 Reset Reset NONE
+26:0-0 Reset Reset NONE
+26:1-38 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+26:39-39 Reset Reset NONE
+27:0-39 Reset Reset NONE
+28:0-39 Reset Reset NONE
+29:0-39 Reset Reset NONE
+== scrolled [(Rect { x: 18, y: 15, width: 64, height: 1 }, 5), (Rect { x: 18, y: 16, width: 64, height: 1 }, 6), (Rect { x: 18, y: 17, width: 64, height: 1 }, 7), (Rect { x: 18, y: 18, width: 64, height: 1 }, 8), (Rect { x: 18, y: 19, width: 64, height: 1 }, 9), (Rect { x: 18, y: 20, width: 64, height: 1 }, 10), (Rect { x: 18, y: 21, width: 64, height: 1 }, 11), (Rect { x: 18, y: 22, width: 64, height: 1 }, 12)] Rect { x: 43, y: 28, width: 13, height: 1 }
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                ┌─ Session history ────────────────────────────────────────────────┐                
+                │ 11 sessions came from elsewhere: studio, Mar 15 10:16–11:00 and  │                
+                │ 10 more.                                                         │                
+                │                                                                  │                
+                │ Since         Machine      How          Status                   │                
+                │ Mar 15 10:11  studio       directly     disconnected at 11:00    │                
+                │ Mar 15 10:10  studio       directly     disconnected at 11:00    │                
+                │ Mar 15 10:09  studio       directly     disconnected at 11:00    │                
+                │ Mar 15 10:08  studio       directly     disconnected at 11:00    │                
+                │ Mar 15 10:07  studio       directly     disconnected at 11:00    │                
+                │ Mar 14 09:30  this Mac     directly     live                     │                
+                │ Mar 14 08:05  this Mac     directly     replaced at 09:30        │                
+                │ Mar 13 22:10  MacBook-Air  over ssh     closed at Mar 14 08:05   │                
+                │                                                                  │                
+                │ Opened 22:10 on Mar 13 from MacBook-Air.local over ssh           │                
+                │ (sshd-session). Its terminal closed or the link dropped at 08:05 │                
+                │ on Mar 14.                                                       │                
+                │                                                                  │                
+                │                           [Esc] close                            │                
+                └──────────────────────────────────────────────────────────────────┘                
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+0:0-99 Reset Reset NONE
+1:0-99 Reset Reset NONE
+2:0-99 Reset Reset NONE
+3:0-99 Reset Reset NONE
+4:0-99 Reset Reset NONE
+5:0-99 Reset Reset NONE
+6:0-99 Reset Reset NONE
+7:0-99 Reset Reset NONE
+8:0-99 Reset Reset NONE
+9:0-14 Reset Reset NONE
+9:15-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+9:85-99 Reset Reset NONE
+10:0-14 Reset Reset NONE
+10:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+10:16-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+10:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+10:85-99 Reset Reset NONE
+11:0-14 Reset Reset NONE
+11:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+11:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+11:18-80 Rgb(230, 193, 120) Rgb(19, 20, 23) NONE
+11:81-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+11:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+11:85-99 Reset Reset NONE
+12:0-14 Reset Reset NONE
+12:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+12:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+12:18-25 Rgb(230, 193, 120) Rgb(19, 20, 23) NONE
+12:26-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+12:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+12:85-99 Reset Reset NONE
+13:0-14 Reset Reset NONE
+13:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+13:16-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+13:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+13:85-99 Reset Reset NONE
+14:0-14 Reset Reset NONE
+14:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+14:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+14:18-22 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
+14:23-31 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+14:32-38 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
+14:39-44 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+14:45-47 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
+14:48-57 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+14:58-63 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
+14:64-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+14:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+14:85-99 Reset Reset NONE
+15:0-14 Reset Reset NONE
+15:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+15:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+15:18-31 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+15:32-37 Rgb(230, 193, 120) Rgb(19, 20, 23) NONE
+15:38-44 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+15:45-52 Rgb(230, 193, 120) Rgb(19, 20, 23) NONE
+15:53-81 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+15:82-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+15:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+15:85-99 Reset Reset NONE
+16:0-14 Reset Reset NONE
+16:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+16:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+16:18-31 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+16:32-37 Rgb(230, 193, 120) Rgb(19, 20, 23) NONE
+16:38-44 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+16:45-52 Rgb(230, 193, 120) Rgb(19, 20, 23) NONE
+16:53-81 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+16:82-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+16:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+16:85-99 Reset Reset NONE
+17:0-14 Reset Reset NONE
+17:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+17:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+17:18-31 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+17:32-37 Rgb(230, 193, 120) Rgb(19, 20, 23) NONE
+17:38-44 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+17:45-52 Rgb(230, 193, 120) Rgb(19, 20, 23) NONE
+17:53-81 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+17:82-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+17:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+17:85-99 Reset Reset NONE
+18:0-14 Reset Reset NONE
+18:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+18:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+18:18-31 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+18:32-37 Rgb(230, 193, 120) Rgb(19, 20, 23) NONE
+18:38-44 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+18:45-52 Rgb(230, 193, 120) Rgb(19, 20, 23) NONE
+18:53-81 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+18:82-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+18:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+18:85-99 Reset Reset NONE
+19:0-14 Reset Reset NONE
+19:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+19:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+19:18-31 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+19:32-37 Rgb(230, 193, 120) Rgb(19, 20, 23) NONE
+19:38-44 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+19:45-52 Rgb(230, 193, 120) Rgb(19, 20, 23) NONE
+19:53-81 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+19:82-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+19:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+19:85-99 Reset Reset NONE
+20:0-14 Reset Reset NONE
+20:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+20:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+20:18-81 Rgb(159, 208, 138) Rgb(19, 20, 23) BOLD
+20:82-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+20:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+20:85-99 Reset Reset NONE
+21:0-14 Reset Reset NONE
+21:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+21:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+21:18-81 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+21:82-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+21:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+21:85-99 Reset Reset NONE
+22:0-14 Reset Reset NONE
+22:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+22:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+22:18-81 Rgb(19, 20, 23) Rgb(159, 208, 138) NONE
+22:82-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+22:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+22:85-99 Reset Reset NONE
+23:0-14 Reset Reset NONE
+23:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+23:16-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+23:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+23:85-99 Reset Reset NONE
+24:0-14 Reset Reset NONE
+24:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+24:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+24:18-71 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+24:72-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+24:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+24:85-99 Reset Reset NONE
+25:0-14 Reset Reset NONE
+25:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+25:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+25:18-81 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+25:82-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+25:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+25:85-99 Reset Reset NONE
+26:0-14 Reset Reset NONE
+26:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+26:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+26:18-27 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+26:28-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+26:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+26:85-99 Reset Reset NONE
+27:0-14 Reset Reset NONE
+27:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+27:16-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+27:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+27:85-99 Reset Reset NONE
+28:0-14 Reset Reset NONE
+28:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+28:16-42 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+28:43-55 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+28:56-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+28:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+28:85-99 Reset Reset NONE
+29:0-14 Reset Reset NONE
+29:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+29:16-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+29:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+29:85-99 Reset Reset NONE
+30:0-14 Reset Reset NONE
+30:15-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
+30:85-99 Reset Reset NONE
+31:0-99 Reset Reset NONE
+32:0-99 Reset Reset NONE
+33:0-99 Reset Reset NONE
+34:0-99 Reset Reset NONE
+35:0-99 Reset Reset NONE
+36:0-99 Reset Reset NONE
+37:0-99 Reset Reset NONE
+38:0-99 Reset Reset NONE
+39:0-99 Reset Reset NONE

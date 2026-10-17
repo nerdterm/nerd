@@ -1,0 +1,1 @@
+{"hookName":"permissionRequest","sessionId":"becdc250-abaa-405a-b921-ec5d20ed45a5","timestamp":1790465249306,"cwd":"/private/tmp/nt/work","toolName":"bash","toolInput":{"command":"printf '%s' hi > hello.txt && cat hello.txt"},"permissionSuggestions":[]}

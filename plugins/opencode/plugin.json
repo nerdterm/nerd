@@ -1,0 +1,17 @@
+{
+  "name": "opencode",
+  "title": "OpenCode",
+  "agent": {
+    "names": ["opencode", "open-code"],
+    "config": { "path": "~/.config/opencode/plugins/nerd.js", "shape": "plugin" },
+    "mail": { "via": "extension" },
+    "session": { "field": "id", "kind": "word" },
+    "resume": ["opencode", "--session", "{id}"],
+    "strip": {
+      "value": ["--session", "-s"],
+      "flag": ["--continue", "-c"]
+    },
+    "data": ["~/.local/share/opencode/log", "~/.local/share/opencode/storage", "~/.local/share/opencode/opencode.db*"],
+    "network": { "hosts": ["opencode.ai", "models.dev", "api.anthropic.com", "console.anthropic.com", "api.openai.com", "auth.openai.com", "chatgpt.com", "generativelanguage.googleapis.com"], "ports": [443] }
+  }
+}

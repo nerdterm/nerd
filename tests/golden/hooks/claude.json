@@ -1,0 +1,141 @@
+{
+  "model": "keep",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "foreign.sh"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.claude/hooks/nerd-agent-state.sh' task"
+          }
+        ],
+        "matcher": "Agent"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.claude/hooks/nerd-agent-state.sh' tool-start"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.claude/hooks/nerd-agent-state.sh' idle"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.claude/hooks/nerd-agent-state.sh' sub-reset"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.claude/hooks/nerd-agent-state.sh' working"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.claude/hooks/nerd-agent-state.sh' idle"
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.claude/hooks/nerd-agent-state.sh' fail"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.claude/hooks/nerd-agent-state.sh' blocked"
+          }
+        ],
+        "matcher": "permission_prompt"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.claude/hooks/nerd-agent-state.sh' blocked"
+          }
+        ],
+        "matcher": "elicitation_dialog"
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.claude/hooks/nerd-agent-state.sh' sub-start"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.claude/hooks/nerd-agent-state.sh' sub-stop"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.claude/hooks/nerd-agent-state.sh' tool-ok"
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.claude/hooks/nerd-agent-state.sh' tool-fail"
+          }
+        ]
+      }
+    ]
+  }
+}

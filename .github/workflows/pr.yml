@@ -1,0 +1,37 @@
+name: pr
+
+# No Rust build here: macOS runner minutes cost ten times Linux, so build/test/clippy
+# run in the pre-push hook and at release time. The job name `pr` is what the master
+# ruleset requires; renaming it means amending the ruleset in the same change.
+
+on:
+  pull_request:
+    branches: [master]
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  pr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Gate suite
+        run: sh scripts/pr-check.test.sh
+
+      - name: Privacy check
+        run: sh scripts/privacy.sh tree
+
+      # Title/body through env, never ${{ }} inside run: pull request text is attacker-controlled.
+      - name: Names an issue, conventional title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: sh scripts/pr-check.sh
+
+      - name: cargo deny
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check licenses bans sources

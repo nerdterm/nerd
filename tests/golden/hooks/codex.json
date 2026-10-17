@@ -1,0 +1,102 @@
+{
+  "model": "keep",
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "foreign.sh"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.codex/hooks/nerd-agent-state.sh' idle codex"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.codex/hooks/nerd-agent-state.sh' idle codex"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.codex/hooks/nerd-agent-state.sh' sub-reset codex"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.codex/hooks/nerd-agent-state.sh' working codex"
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.codex/hooks/nerd-agent-state.sh' blocked codex"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.codex/hooks/nerd-agent-state.sh' tool-start codex"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.codex/hooks/nerd-agent-state.sh' tool-ok codex"
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.codex/hooks/nerd-agent-state.sh' sub-start codex"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.codex/hooks/nerd-agent-state.sh' sub-stop codex"
+          }
+        ]
+      }
+    ]
+  }
+}

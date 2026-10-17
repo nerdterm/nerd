@@ -1,0 +1,122 @@
+{
+  "model": "keep",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "foreign.sh"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.qwen/hooks/nerd-agent-state.sh' tool-start qwen"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.qwen/hooks/nerd-agent-state.sh' idle qwen"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.qwen/hooks/nerd-agent-state.sh' sub-reset qwen"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.qwen/hooks/nerd-agent-state.sh' working qwen"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.qwen/hooks/nerd-agent-state.sh' idle qwen"
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.qwen/hooks/nerd-agent-state.sh' blocked qwen"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.qwen/hooks/nerd-agent-state.sh' notify qwen"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.qwen/hooks/nerd-agent-state.sh' tool-ok qwen"
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.qwen/hooks/nerd-agent-state.sh' tool-fail qwen"
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.qwen/hooks/nerd-agent-state.sh' sub-start qwen"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.qwen/hooks/nerd-agent-state.sh' sub-stop qwen"
+          }
+        ]
+      }
+    ]
+  }
+}

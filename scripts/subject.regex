@@ -1,0 +1,1 @@
+^((feat|fix|docs|chore|refactor|perf|test|build|ci|revert)(\([a-zA-Z0-9._/-]+\))?!?: .+|(fixup|squash)! .+|Merge .+|Revert ".+")$

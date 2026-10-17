@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "hooks": {
+    "afterFileEdit": [
+      {
+        "command": "./format.sh"
+      }
+    ],
+    "stop": [
+      {
+        "command": "./bell.sh"
+      },
+      {
+        "command": "'/HOME/.cursor/hooks/nerd-agent-state.sh' stop cursor"
+      }
+    ],
+    "sessionStart": [
+      {
+        "command": "'/HOME/.cursor/hooks/nerd-agent-state.sh' idle cursor"
+      },
+      {
+        "command": "'/HOME/.cursor/hooks/nerd-agent-state.sh' sub-reset cursor"
+      }
+    ],
+    "beforeSubmitPrompt": [
+      {
+        "command": "'/HOME/.cursor/hooks/nerd-agent-state.sh' working cursor"
+      }
+    ],
+    "preToolUse": [
+      {
+        "command": "'/HOME/.cursor/hooks/nerd-agent-state.sh' tool-start cursor"
+      }
+    ],
+    "postToolUse": [
+      {
+        "command": "'/HOME/.cursor/hooks/nerd-agent-state.sh' tool-ok cursor"
+      }
+    ],
+    "postToolUseFailure": [
+      {
+        "command": "'/HOME/.cursor/hooks/nerd-agent-state.sh' tool-fail cursor"
+      }
+    ],
+    "subagentStart": [
+      {
+        "command": "'/HOME/.cursor/hooks/nerd-agent-state.sh' sub-start cursor"
+      }
+    ],
+    "subagentStop": [
+      {
+        "command": "'/HOME/.cursor/hooks/nerd-agent-state.sh' sub-stop cursor"
+      }
+    ]
+  }
+}

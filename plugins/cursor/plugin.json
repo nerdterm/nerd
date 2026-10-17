@@ -1,0 +1,23 @@
+{
+  "name": "cursor",
+  "title": "Cursor",
+  "agent": {
+    "names": ["cursor-agent", "cursor"],
+    "config": { "path": "~/.cursor/hooks.json", "shape": "flat" },
+    "mail": { "via": "hook", "form": "followup" },
+    "arg": "cursor",
+    "events": [
+      { "on": "sessionStart", "do": "idle" },
+      { "on": "sessionStart", "do": "sub-reset" },
+      { "on": "beforeSubmitPrompt", "do": "working" },
+      { "on": "stop", "do": "stop" },
+      { "on": "preToolUse", "do": "tool-start" },
+      { "on": "postToolUse", "do": "tool-ok" },
+      { "on": "postToolUseFailure", "do": "tool-fail" },
+      { "on": "subagentStart", "do": "sub-start" },
+      { "on": "subagentStop", "do": "sub-stop" }
+    ],
+    "data": ["~/.cursor/chats", "~/.cursor/projects"],
+    "network": { "hosts": ["api2.cursor.sh", "api3.cursor.sh", "repo42.cursor.sh", "cursor.com", "www.cursor.com"], "ports": [443] }
+  }
+}

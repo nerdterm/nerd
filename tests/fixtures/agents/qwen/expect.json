@@ -1,0 +1,19 @@
+{
+ "state": "idle",
+ "session": "2facde5a-53df-4d5d-90f0-996f79f67243",
+ "subagents": [],
+ "after": [
+  "idle",
+  "working",
+  "blocked",
+  "blocked",
+  "blocked",
+  "working",
+  "working",
+  "working",
+  "working",
+  "working",
+  "idle",
+  "idle"
+ ]
+}

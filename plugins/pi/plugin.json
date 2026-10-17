@@ -1,0 +1,17 @@
+{
+  "name": "pi",
+  "title": "pi",
+  "agent": {
+    "names": ["pi"],
+    "config": { "path": "~/.pi/agent/extensions/nerd.js", "shape": "plugin" },
+    "mail": { "via": "extension" },
+    "session": { "field": "id", "kind": "word" },
+    "resume": ["pi", "--session", "{id}"],
+    "strip": {
+      "value": ["--session", "--session-id", "--fork", "--session-dir"],
+      "flag": ["--continue", "-c", "--resume", "-r", "--no-session"]
+    },
+    "data": ["~/.pi/agent/sessions"],
+    "network": { "hosts": ["api.anthropic.com", "console.anthropic.com", "claude.ai", "api.openai.com", "auth.openai.com", "chatgpt.com", "generativelanguage.googleapis.com"], "ports": [443] }
+  }
+}

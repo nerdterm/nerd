@@ -1,0 +1,30 @@
+{
+  "name": "copilot",
+  "title": "Copilot CLI",
+  "agent": {
+    "names": ["copilot", "ghcs", "github-copilot"],
+    "config": { "path": "~/.copilot/hooks/nerd.json", "shape": "own" },
+    "mail": { "via": "hook", "form": "block" },
+    "arg": "copilot",
+    "events": [
+      { "on": "SessionStart", "do": "sub-reset" },
+      { "on": "UserPromptSubmit", "do": "working" },
+      { "on": "Stop", "do": "idle" },
+      { "on": "PermissionRequest", "do": "blocked" },
+      { "on": "notification", "do": "notify" },
+      { "on": "PreToolUse", "do": "tool-start" },
+      { "on": "PostToolUse", "do": "tool-ok" },
+      { "on": "PostToolUseFailure", "do": "tool-fail" },
+      { "on": "subagentStart", "do": "sub-start" },
+      { "on": "subagentStop", "do": "sub-stop" }
+    ],
+    "session": { "field": "session_id", "kind": "uuid" },
+    "resume": ["copilot", "--resume", "{id}"],
+    "strip": {
+      "value": ["--resume"],
+      "flag": ["--continue"]
+    },
+    "data": ["~/.copilot/session-state", "~/.copilot/logs", "~/.copilot/sidebar-sessions-state", "~/.copilot/command-history-state.json", "~/.copilot/open-sessions-state.json", "~/.copilot/session-store.db*"],
+    "network": { "hosts": ["api.githubcopilot.com", "api.individual.githubcopilot.com", "api.business.githubcopilot.com", "api.enterprise.githubcopilot.com", "github.com", "api.github.com"], "ports": [443] }
+  }
+}

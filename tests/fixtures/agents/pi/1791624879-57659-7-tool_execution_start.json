@@ -1,0 +1,1 @@
+{"event": {"type": "tool_execution_start", "toolCallId": "call_2", "toolName": "bash", "args": {"command": "sudo -n true; echo done"}}, "ctx": {"sessionId": "01a12529-ce4d-7336-9465-b50d919d7195", "mode": "tui", "idle": false, "fileExists": true}}

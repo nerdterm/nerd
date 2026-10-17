@@ -1,0 +1,32 @@
+{
+  "name": "qwen",
+  "title": "Qwen Code",
+  "agent": {
+    "names": ["qwen", "qwen-code"],
+    "config": { "path": "~/.qwen/settings.json", "shape": "nested" },
+    "mail": { "via": "hook", "form": "block" },
+    "arg": "qwen",
+    "events": [
+      { "on": "SessionStart", "do": "idle" },
+      { "on": "SessionStart", "do": "sub-reset" },
+      { "on": "UserPromptSubmit", "do": "working" },
+      { "on": "Stop", "do": "idle" },
+      { "on": "PermissionRequest", "do": "blocked" },
+      { "on": "Notification", "do": "notify" },
+      { "on": "PreToolUse", "do": "tool-start" },
+      { "on": "PostToolUse", "do": "tool-ok" },
+      { "on": "PostToolUseFailure", "do": "tool-fail" },
+      { "on": "SubagentStart", "do": "sub-start" },
+      { "on": "SubagentStop", "do": "sub-stop" }
+    ],
+    "session": { "field": "session_id", "kind": "uuid" },
+    "resume": ["qwen", "--resume", "{id}"],
+    "strip": {
+      "value": ["--resume", "-r"],
+      "flag": ["--continue", "-c"]
+    },
+    "data": ["~/.qwen/sessions", "~/.qwen/projects", "~/.qwen/tmp", "~/.qwen/usage", "~/.qwen/tip_history.json", "~/.qwen/usage_record.jsonl"],
+    "network": { "hosts": ["chat.qwen.ai", "portal.qwen.ai", "dashscope.aliyuncs.com", "dashscope-intl.aliyuncs.com"], "ports": [443] },
+    "own_sandbox": "start it without --sandbox; nerd's limits already cover the whole agent"
+  }
+}

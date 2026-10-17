@@ -1,0 +1,8 @@
+{
+  "name": "bigfiles",
+  "title": "Big files",
+  "exec": { "command": "sh", "args": ["plugin.sh"] },
+  "permissions": { "network": false, "write": [] },
+  "events": ["pane_opened"],
+  "badges": ["tree", "tab"]
+}

@@ -1,0 +1,32 @@
+40 keys=false [(Rect { x: 0, y: 0, width: 8, height: 1 }, 0), (Rect { x: 8, y: 0, width: 8, height: 1 }, 1)] Some(Rect { x: 16, y: 0, width: 5, height: 1 })
+  main ▕  logs ▕  +                     
+0:0-6 Rgb(159, 208, 138) Rgb(27, 29, 33) BOLD
+0:7-7 Rgb(19, 20, 23) Rgb(27, 29, 33) BOLD
+0:8-14 Rgb(155, 160, 168) Rgb(27, 29, 33) NONE
+0:15-15 Rgb(19, 20, 23) Rgb(27, 29, 33) NONE
+0:16-20 Rgb(155, 160, 168) Rgb(27, 29, 33) NONE
+0:21-39 Reset Reset NONE
+40 keys=true [(Rect { x: 0, y: 0, width: 8, height: 1 }, 0), (Rect { x: 8, y: 0, width: 8, height: 1 }, 1)] Some(Rect { x: 16, y: 0, width: 5, height: 1 })
+  main ▕  logs ▕  +                     
+0:0-7 Rgb(19, 20, 23) Rgb(159, 208, 138) BOLD
+0:8-14 Rgb(155, 160, 168) Rgb(27, 29, 33) NONE
+0:15-15 Rgb(19, 20, 23) Rgb(27, 29, 33) NONE
+0:16-20 Rgb(155, 160, 168) Rgb(27, 29, 33) NONE
+0:21-39 Reset Reset NONE
+14 keys=false [(Rect { x: 0, y: 0, width: 8, height: 1 }, 0)] Some(Rect { x: 8, y: 0, width: 5, height: 1 })
+  main ▕  +   
+0:0-6 Rgb(159, 208, 138) Rgb(27, 29, 33) BOLD
+0:7-7 Rgb(19, 20, 23) Rgb(27, 29, 33) BOLD
+0:8-12 Rgb(155, 160, 168) Rgb(27, 29, 33) NONE
+0:13-13 Reset Reset NONE
+30 keys=false [(Rect { x: 0, y: 0, width: 5, height: 1 }, 0), (Rect { x: 5, y: 0, width: 5, height: 1 }, 1), (Rect { x: 10, y: 0, width: 5, height: 1 }, 2), (Rect { x: 15, y: 0, width: 10, height: 1 }, 3)] Some(Rect { x: 25, y: 0, width: 5, height: 1 })
+  1 ▕  2 ▕  3 ▕  журнал ▕  +  
+0:0-3 Rgb(159, 208, 138) Rgb(27, 29, 33) BOLD
+0:4-4 Rgb(19, 20, 23) Rgb(27, 29, 33) BOLD
+0:5-8 Rgb(155, 160, 168) Rgb(27, 29, 33) NONE
+0:9-9 Rgb(19, 20, 23) Rgb(27, 29, 33) NONE
+0:10-13 Rgb(155, 160, 168) Rgb(27, 29, 33) NONE
+0:14-14 Rgb(19, 20, 23) Rgb(27, 29, 33) NONE
+0:15-23 Rgb(155, 160, 168) Rgb(27, 29, 33) NONE
+0:24-24 Rgb(19, 20, 23) Rgb(27, 29, 33) NONE
+0:25-29 Rgb(155, 160, 168) Rgb(27, 29, 33) NONE
