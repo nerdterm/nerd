@@ -105,9 +105,9 @@ pub struct MailRow {
 }
 
 /// Agents that ask for an answer first, since they cannot go on without you; then finished ones.
-/// Newest first within each.
+/// Newest first within each; the pane breaks a tie, so equal waits keep one order.
 pub fn sort_waiting(list: &mut [Waiting]) {
-    list.sort_by_key(|w| (!matches!(w.state, AgentState::Blocked | AgentState::Failed), w.waited.unwrap_or(std::time::Duration::MAX)));
+    list.sort_by_key(|w| (!matches!(w.state, AgentState::Blocked | AgentState::Failed), w.waited.unwrap_or(std::time::Duration::MAX), w.pane));
 }
 
 /// `12s`, `3m`, `1h`, `2d`: whole units, the largest that fits.
@@ -605,6 +605,16 @@ mod tests {
         ];
         sort_waiting(&mut list);
         assert_eq!(list.iter().map(|w| w.pane).collect::<Vec<_>>(), vec![4, 2, 3, 1, 5]);
+    }
+
+    #[test]
+    fn equal_waits_keep_one_order_whatever_order_they_arrive_in() {
+        let w = |pane| Waiting { waited: Some(std::time::Duration::from_secs(12)), ..waiting(pane, "s", AgentState::Done) };
+        for arrival in [[1, 2, 3], [3, 1, 2], [2, 3, 1]] {
+            let mut list: Vec<_> = arrival.into_iter().map(w).collect();
+            sort_waiting(&mut list);
+            assert_eq!(list.iter().map(|w| w.pane).collect::<Vec<_>>(), vec![1, 2, 3], "arrived as {arrival:?}");
+        }
     }
 
     #[test]
