@@ -59,8 +59,7 @@
         "docs",
         ".github",
         ".claude"
-      ],
-      "release-as": "0.12.2"
+      ]
     }
   }
 }
