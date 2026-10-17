@@ -1,4 +1,5 @@
 #!/bin/sh
+# Usage: curl -fsSL https://nerdterm.dev/install.sh | sh
 set -eu
 
 repo=nerdterm/nerd
