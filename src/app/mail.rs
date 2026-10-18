@@ -1383,6 +1383,22 @@ mod tests {
         assert_eq!(app.pane_by_name("planner"), Some(new));
     }
 
+    #[test]
+    fn a_restarted_pane_starts_with_the_old_programs_modes_off() {
+        let mut app = app();
+        let old = &mut app.pane_mut(1).unwrap().term;
+        old.feed(b"kept above\r\n\x1b[?1049h\x1b[?1003h\x1b[?1006h\x1b[?2004h\x1b[?1h\x1b[?25l");
+        assert!(old.wants_mouse());
+        let new = app.alloc_id();
+        let pty = crate::app::snapshots::agent_pane(&app, new, crate::term::AgentState::Idle, 0).pty;
+        assert!(app.restarted(1, new, pty, None, "zsh".into()));
+        let term = &mut app.pane_mut(new).unwrap().term;
+        let s = term.screen();
+        assert!(!term.wants_mouse(), "a mouse move would be typed into the shell");
+        assert!(!s.alternate_screen() && !s.bracketed_paste() && !s.app_cursor() && !s.hide_cursor());
+        assert!(term.all_lines().iter().any(|l| l == "kept above"), "the text stays");
+    }
+
     fn req(to: &str, text: &str) -> SendReq {
         SendReq { to: to.into(), text: text.into(), reply_to: None, auto: false, ask_route: false }
     }

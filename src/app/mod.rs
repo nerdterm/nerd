@@ -3687,6 +3687,17 @@ mod tests {
     }
 
     #[test]
+    fn a_restarted_agent_starts_again_without_a_session() {
+        let zsh = vec!["/bin/zsh".to_string(), "-l".to_string()];
+        assert_eq!(super::restart_command(&zsh, None, Some("pi")), Some(vec!["pi".into()]), "the agent it ran, started fresh");
+        assert_eq!(super::restart_command(&zsh, None, None), None, "a plain shell types nothing");
+        assert_eq!(super::restart_command(&zsh, None, Some("gone")), None, "an agent with no manifest: the shell only");
+        assert_eq!(super::restart_command(&zsh, Some(("pi", "019a2b3c-4d5e-7f60-8a9b-0c1d2e3f4a5b")), Some("pi")), Some(vec!["pi".into(), "--session".into(), "019a2b3c-4d5e-7f60-8a9b-0c1d2e3f4a5b".into()]), "its session resumed");
+        let gem = vec!["gemini".to_string(), "--resume".to_string(), "x".to_string()];
+        assert_eq!(super::restart_command(&gem, None, None), Some(vec!["gemini".into()]), "a pane started as the agent");
+    }
+
+    #[test]
     fn an_option_letter_means_one_thing_everywhere() {
         // The tree answers `option` letters of its own; none of them may be a global one, or
         // the global would swallow it before the tree ever saw it.

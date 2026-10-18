@@ -494,6 +494,14 @@ impl Term {
         self.advance(b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l");
     }
 
+    /// Input modes and the alternate screen as a fresh terminal has them, text kept: for the next program in a pane.
+    pub fn modes_off(&mut self) {
+        self.mouse_off();
+        self.advance(b"\x1b[?1049l\x1b[?1l\x1b>\x1b[?2004l\x1b[?1004l\x1b[=0u\x1b[?25h\x1b[?7h\x1b[m");
+        self.theme_notify = false;
+        self.pointer = None;
+    }
+
     /// Whether the program inside the pane is requesting mouse events.
     pub fn wants_mouse(&self) -> bool {
         self.screen().mouse_protocol_mode() != MouseProtocolMode::None
