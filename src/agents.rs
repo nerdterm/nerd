@@ -77,6 +77,10 @@ pub enum Network {
     Internet { hosts: Vec<String>, ports: Vec<u16> },
 }
 
+/// A plugin's or a user's manifest; a built-in agent may name every host of its providers (pi has dozens).
+const HOSTS: usize = 16;
+const BUILTIN_HOSTS: usize = 64;
+
 const NETWORK_FORMS: &str = r#"permissions.network is "localhost" or {"hosts": [...], "ports": [...]}"#;
 
 impl<'de> Deserialize<'de> for Network {
@@ -102,8 +106,8 @@ fn network(v: &serde_json::Value) -> Result<Network, String> {
             hosts.dedup();
             ports.sort_unstable();
             ports.dedup();
-            if hosts.len() > 16 || ports.len() > 8 {
-                return Err(format!("{NETWORK_FORMS}; at most 16 hosts and 8 ports"));
+            if hosts.len() > BUILTIN_HOSTS || ports.len() > 8 {
+                return Err(format!("{NETWORK_FORMS}; at most {HOSTS} hosts and 8 ports"));
             }
             Ok(Network::Internet { hosts, ports })
         }
@@ -578,6 +582,10 @@ pub fn validate(m: &Manifest, others: &[Manifest]) -> Result<(), String> {
     if crate::slots::BUILTINS.contains(&m.name.as_str()) {
         return Err(format!("{} is a built-in's name", m.name));
     }
+    let many = |n: &Network| matches!(n, Network::Internet { hosts, .. } if hosts.len() > HOSTS);
+    if !m.builtin && (many(&m.permissions.network) || many(&a.network)) {
+        return Err(format!("{NETWORK_FORMS}; at most {HOSTS} hosts and 8 ports"));
+    }
     if let Some(o) = others.iter().find(|o| o.name == m.name) {
         return Err(format!("{} is already taken by {}", m.name, if o.builtin { "a built-in" } else { "another plugin" }));
     }
@@ -1037,11 +1045,15 @@ mod tests {
             (json!({ "data": ["~/.fake/*/x"] }), "a * only"),
             (json!({ "data": ["~/.fake/a\"b"] }), "no quote"),
             (json!({ "network": "localhost" }), "names its hosts"),
+            (json!({ "network": { "hosts": (0..17).map(|i| format!("h{i}.fake.dev")).collect::<Vec<_>>(), "ports": [443] } }), "at most 16 hosts"),
         ] {
             let e = refused(bad.clone());
             assert!(e.contains(says), "{bad}: {e}");
         }
         assert!(WORDS.contains(&"mail"));
+        let mut wide = fake(json!({ "network": { "hosts": (0..64).map(|i| format!("h{i}.fake.dev")).collect::<Vec<_>>(), "ports": [443] } }));
+        wide.builtin = true;
+        assert!(validate(&wide, &builtins()).is_ok(), "a built-in agent may name all its providers' hosts");
     }
 
     #[test]

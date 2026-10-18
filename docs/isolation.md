@@ -14,7 +14,7 @@ A pane starts with your access: its program, an agent included, can read and wri
 | Only these providers | Only the hosts and ports that the agents you choose name in their manifests, through a proxy nerd runs for that pane alone. The agent must honour `HTTPS_PROXY`; one that does not gets no network. Agents whose manifests name different ports cannot share a pane. |
 | None | No internet and no name lookups. Services on this Mac (`localhost`) stay reachable. |
 
-The hosts in the agents' `plugin.json` are a starting point: check them against what your agent contacts.
+The hosts in the agents' `plugin.json` are a starting point: check them against what your agent contacts. pi's names every provider pi ships with; Bedrock outside us-east-1 and eu-central-1, Vertex and Azure use addresses of your own account and are not in it.
 
 **This folder only** also keeps one session from planting code or instructions for another. Inside the places it may write, these stay read-only: shell, git and editor startup files, `~/.local/bin` and other folders ahead on `PATH`, agents' settings and memory, Claude Code's task list, Codex's shared databases, Qwen Code's workflow scripts, what agents source or run later from their own folders, and the caches package managers run code from (pnpm, uv, deno, Go, Playwright, Poetry, Yarn, node-gyp, pip, Cypress, SwiftPM, Copilot). When the pane's folder is your home folder, its dot files, `~/Library` and `~/bin` stay read-only too, except `~/Library/Caches` and the agents' session folders; choose a project folder for a real limit. The **Isolation** window lists what stops working.
 
