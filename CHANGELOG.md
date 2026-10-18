@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.12.4](https://github.com/nerdterm/nerd/compare/v0.12.3...v0.12.4) (2026-10-18)
+
+
+### Fixed
+
+* a message an agent has taken no longer counts as unread ([#61](https://github.com/nerdterm/nerd/issues/61)) ([2680e48](https://github.com/nerdterm/nerd/commit/2680e48e2ac7b883cb643771fd657a6ce48f582d))
+* a restarted pane also drops the old program's scroll region, origin, insert and charset ([#68](https://github.com/nerdterm/nerd/issues/68)) ([7bc0f18](https://github.com/nerdterm/nerd/commit/7bc0f18f95d69abfa46656d6a6a30e5f6c736039))
+* pi reaches every provider it ships with in an Only these providers pane ([#62](https://github.com/nerdterm/nerd/issues/62)) ([4e8a5e1](https://github.com/nerdterm/nerd/commit/4e8a5e136f00fc93e8722617890741eb4e5fe60f))
+* pi starts with its models in a pane set to this folder only ([#63](https://github.com/nerdterm/nerd/issues/63)) ([e92d5fb](https://github.com/nerdterm/nerd/commit/e92d5fbb0fff30cfa285941f573fcfdfc648eaac))
+* pi's provider list leaves out the Cloudflare hosts that relay any URL ([#69](https://github.com/nerdterm/nerd/issues/69)) ([17d833c](https://github.com/nerdterm/nerd/commit/17d833c328befd167be5b5808e13364fccd89749))
+* restarting a pane's program starts its agent again with clean terminal modes ([#64](https://github.com/nerdterm/nerd/issues/64)) ([c1e398e](https://github.com/nerdterm/nerd/commit/c1e398e59808c6435d8fa53a9d578807987486ad))
+
 ## [0.12.3](https://github.com/nerdterm/nerd/compare/v0.12.2...v0.12.3) (2026-10-17)
 
 
