@@ -936,6 +936,31 @@ mod tests {
     }
 
     #[test]
+    fn folder_only_lets_pi_take_its_locks_but_not_change_what_it_reads() {
+        let d = scratch("pi");
+        let home = d.join("home");
+        let pi = crate::agents::builtins().into_iter().find(|m| m.name == "pi").unwrap();
+        let mut p = places(&d);
+        p.data = pi.data_paths(&home);
+        p.roots = pi.dir(&home).into_iter().chain(pi.agent.data.iter().filter_map(|d| crate::agents::data_root(d)).map(|r| home.join(r))).flat_map(|r| [r.with_extension("json"), r]).collect();
+        p.hook_files = pi.config(&home).into_iter().collect();
+        std::fs::create_dir_all(home.join(".pi/agent/sessions")).unwrap();
+        let profile = text(&p, &Files::Folder, &Network::None, &d.join("work"), Path::new("/tmp/none.msock"), None).unwrap();
+        let agent = home.join(".pi/agent");
+        // pi takes `<file>.lock` as a directory before it reads the file.
+        for lock in ["settings.json.lock", "auth.json.lock", "models-store.json.lock"] {
+            let Some(rc) = sandboxed(&profile, &format!("mkdir '{0}' && rmdir '{0}'", agent.join(lock).display())) else { return };
+            assert_eq!(rc, 0, "{lock}");
+        }
+        assert_eq!(sandboxed(&profile, &format!("echo x > '{}'", agent.join("sessions/s.jsonl").display())), Some(0), "sessions");
+        for no in ["settings.json", "auth.json", "models-store.json", "mcp.json", "AGENTS.md", "extensions/x.ts", "skills/x/SKILL.md", "npm/x/index.js", "install/x", "bin/pi", "x.lock/y"] {
+            assert_ne!(sandboxed(&profile, &format!("mkdir -p \"$(dirname '{0}')\" 2>/dev/null; echo x > '{0}'", agent.join(no).display())), Some(0), "{no}");
+            assert!(!agent.join(no).exists(), "{no}");
+        }
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
     fn folder_only_cannot_read_ssh() {
         let d = scratch("read");
         let profile = text(&places(&d), &Files::Folder, &Network::None, &d.join("work"), Path::new("/tmp/none.msock"), None).unwrap();
