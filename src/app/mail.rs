@@ -195,9 +195,9 @@ impl MailState {
         self.msgs.iter().filter(|m| matches!(m.state, State::Held(_)) || (m.to == Party::You && m.state == State::Delivered))
     }
 
-    /// Queued and Delivered addressed to that pane.
+    /// Addressed to that pane and not yet in its agent's hands: a hand-over sets `via`.
     pub fn unread(&self, pane: PaneId) -> usize {
-        self.msgs.iter().filter(|m| m.to.pane() == Some(pane) && matches!(m.state, State::Queued | State::Delivered)).count()
+        self.msgs.iter().filter(|m| m.to.pane() == Some(pane) && (m.state == State::Queued || (m.state == State::Delivered && m.via.is_none()))).count()
     }
 
     /// Ends the `Wait`s whose message expired undelivered or whose time is up.
@@ -1241,6 +1241,18 @@ mod tests {
             assert_eq!(app.pane(1).unwrap().label.as_deref(), Some("planner"));
             assert!(!policy::path().exists(), "nothing written");
         });
+    }
+
+    #[test]
+    fn a_message_the_agent_has_taken_is_not_unread() {
+        let mut mail = MailState::default();
+        let m = to(Some(2), "reader", State::Delivered);
+        mail.add(m.clone());
+        assert_eq!(mail.unread(2), 1, "handed over but not taken yet");
+        mail.set(&m.id, State::Delivered, Some(Via::Extension), None);
+        assert_eq!(mail.unread(2), 0);
+        mail.add(to(Some(2), "reader", State::Queued));
+        assert_eq!(mail.unread(2), 1);
     }
 
     #[test]
