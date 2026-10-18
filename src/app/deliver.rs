@@ -237,6 +237,8 @@ impl App {
     fn requeue(&mut self, id: &str, note: &str) {
         if self.mail.get(id).is_some_and(|m| m.state == State::Delivered) {
             self.mail.set(id, State::Queued, None, Some(note.into()));
+            // The way it went is over: queued again, it counts as unread until the next hand-over.
+            self.mail.update(id, |m| m.via = None);
         }
     }
 
