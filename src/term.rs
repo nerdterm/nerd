@@ -494,10 +494,11 @@ impl Term {
         self.advance(b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l");
     }
 
-    /// Input modes and the alternate screen as a fresh terminal has them, text kept: for the next program in a pane.
+    /// Input and screen modes as a fresh terminal has them, text kept: for the next program in a pane.
+    /// The scroll region is reset between a cursor save and restore: `CSI r` moves the cursor home.
     pub fn modes_off(&mut self) {
         self.mouse_off();
-        self.advance(b"\x1b[?1049l\x1b[?1l\x1b>\x1b[?2004l\x1b[?1004l\x1b[=0u\x1b[?25h\x1b[?7h\x1b[m");
+        self.advance(b"\x1b[?1049l\x1b7\x1b[r\x1b8\x1b[?1l\x1b>\x1b[?2004l\x1b[?1004l\x1b[?6l\x1b[4l\x1b(B\x1b[?25h\x1b[?7h\x1b[m");
         self.theme_notify = false;
         self.pointer = None;
     }
@@ -778,6 +779,24 @@ impl Cell {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn modes_off_leaves_a_fresh_terminal_with_the_text_kept() {
+        use alacritty_terminal::term::TermMode;
+        let mut t = super::Term::new(20, 6, 100);
+        // Everything a TUI killed mid-redraw can leave behind: input modes, a scroll region, origin and insert modes, line drawing.
+        t.feed(b"kept\r\n\x1b[?1003h\x1b[?1006h\x1b[?2004h\x1b[?1h\x1b[?25l\x1b[2;4r\x1b[?6h\x1b[4h\x1b(0\x1b[31m");
+        assert!(t.wants_mouse() && t.term.mode().contains(TermMode::ORIGIN | TermMode::INSERT));
+        t.modes_off();
+        let mode = *t.term.mode();
+        assert!(!t.wants_mouse() && !mode.intersects(TermMode::ORIGIN | TermMode::INSERT | TermMode::BRACKETED_PASTE | TermMode::APP_CURSOR));
+        assert!(mode.contains(TermMode::SHOW_CURSOR));
+        t.feed(b"\x1b[6;1Hq");
+        assert_eq!(t.screen().cell(5, 0).map(|c| c.contents().to_string()), Some("q".into()), "the charset is ASCII again, not line drawing");
+        t.feed(b"\r\n\r\n");
+        assert_eq!(t.screen().cursor_position().0, 5, "no scroll region: the cursor scrolls at the last row, not inside rows 2-4");
+        assert!(t.all_lines().iter().any(|l| l.starts_with("kept")), "the text stays");
+    }
+
     #[test]
     fn dump_and_restore_keep_history_screen_and_modes() {
         let mut t = super::Term::new(10, 3, 100);
