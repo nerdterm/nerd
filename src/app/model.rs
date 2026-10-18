@@ -265,7 +265,8 @@ impl App {
         // The old pty's Drop asks the broker to kill this id, and the broker keys panes by id
         // alone: it has to be gone before the new shell exists, or the kill lands on the shell
         // we just started. That is how the first attempt at this closed the tab anyway.
-        let Pane { term, cwd, label, isolation, pty, .. } = old;
+        let Pane { mut term, cwd, label, isolation, pty, .. } = old;
+        term.modes_off();
         let (cols, rows) = (pty.cols, pty.rows);
         drop(pty);
         let pty = match Pty::spawn(id, &shell_argv(), &cwd, cols, rows, bell, &isolation) {
@@ -292,6 +293,7 @@ impl App {
             return false;
         }
         let ps = pane_snapshot(old);
+        let agent = old.agent.clone();
         let new = self.alloc_id();
         let mut pty = match Pty::spawn(new, &shell_argv(), &ps.cwd, ps.cols, ps.rows, self.bell.clone(), &ps.isolation) {
             Ok(pty) => pty,
@@ -302,7 +304,7 @@ impl App {
         };
         // Nobody else holds the session: nerd just stopped its holder.
         let session = ps.session().filter(|(a, _)| crate::agents::get(a).as_ref().is_some_and(crate::hook::resume_confirmed));
-        let launch = session.as_ref().and_then(|(a, sid)| super::lifecycle::restored_command(&ps.argv, Some((a, sid)), false));
+        let launch = super::lifecycle::restart_command(&ps.argv, session.as_ref().map(|(a, sid)| (a.as_str(), sid.as_str())), agent.as_deref());
         if let Some(line) = launch.as_deref().and_then(super::lifecycle::restore_line) {
             pty.write(line.as_bytes());
         }
@@ -315,7 +317,8 @@ impl App {
         let Some((si, ti)) = self.locate(id) else { return false };
         let Some(old) = self.spaces[si].tabs[ti].panes.remove(&id) else { return false };
         // The old pty drops here: the broker kills its program.
-        let Pane { term, cwd, label, isolation, .. } = old;
+        let Pane { mut term, cwd, label, isolation, .. } = old;
+        term.modes_off();
         let pane = Pane { label, isolation, command, agent_session, ..Pane::new(new, term, pty, cwd, shell_argv()) };
         let tab = &mut self.spaces[si].tabs[ti];
         tab.panes.insert(new, pane);

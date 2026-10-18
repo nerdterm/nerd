@@ -1136,6 +1136,11 @@ pub(super) fn restored_command(argv: &[String], session: Option<(&str, &str)>, l
     (!live).then(|| m.resume_argv(id)).flatten().or(stored).or_else(|| Some(vec![m.program().to_string()]))
 }
 
+/// What a restarted pane types: its session resumed, else the agent it ran started fresh; a plain shell types nothing.
+pub(super) fn restart_command(argv: &[String], session: Option<(&str, &str)>, agent: Option<&str>) -> Option<Vec<String>> {
+    restored_command(argv, session, false).or_else(|| agent.and_then(crate::agents::get).map(|m| vec![m.program().to_string()]))
+}
+
 /// The line typed into a restored pane's shell; None when an argument holds a control character.
 pub(super) fn restore_line(cmd: &[String]) -> Option<String> {
     let words = cmd.iter().map(|a| shell_word(a)).collect::<Option<Vec<_>>>()?;
