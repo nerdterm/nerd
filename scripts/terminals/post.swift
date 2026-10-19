@@ -59,13 +59,14 @@ func front(_ arg: String) {
 }
 
 /// Each modifier is pressed as a key of its own, so an app that tracks modifier state sees it go down and up.
+/// The left key's device bit (NX_DEVICEL*KEYMASK) goes with it: WezTerm tells left Option from right by it.
 func modifiers(_ s: String) -> [(CGKeyCode, CGEventFlags)] {
     s.split(separator: ",").map { m in
         switch m {
-        case "option": (58, .maskAlternate)
-        case "control": (59, .maskControl)
-        case "command": (55, .maskCommand)
-        case "shift": (56, .maskShift)
+        case "option": (58, CGEventFlags.maskAlternate.union(CGEventFlags(rawValue: 0x20)))
+        case "control": (59, CGEventFlags.maskControl.union(CGEventFlags(rawValue: 0x01)))
+        case "command": (55, CGEventFlags.maskCommand.union(CGEventFlags(rawValue: 0x08)))
+        case "shift": (56, CGEventFlags.maskShift.union(CGEventFlags(rawValue: 0x02)))
         default: fail("unknown modifier \(m)")
         }
     }

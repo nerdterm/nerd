@@ -72,6 +72,8 @@ step() {
 
 # Input trace lines from byte $1 to byte $2 of the log, shortened: "trace key char KeyModifiers(ALT)" reads "char ALT".
 since() {
+    # macOS head refuses a count of 0: nothing arrived, nothing to read.
+    [ "$2" -gt "$1" ] || return 0
     tail -c +$(($1 + 1)) "$log" | head -c $(($2 - $1)) | sed -n 's/.*trace \(key \)\{0,1\}//p' | grep -v '^frames' | sed 's/KeyModifiers(\([^)]*\))/\1/' | paste -sd' ' -
 }
 
