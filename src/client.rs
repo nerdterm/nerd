@@ -469,6 +469,8 @@ fn outgoing(ev: Event, us_option: bool) -> Option<Event> {
 }
 
 /// iTerm2 and kitty type what the layout prints for Option and a key; Ghostty and WezTerm send the key.
+/// ceiling: over ssh from kitty TERM travels, and the layout read is the remote Mac's, not the one typed on;
+/// the way past is the local client reporting its own layout.
 fn types_option_chars(term_program: Option<&str>, term: Option<&str>) -> bool {
     term_program == Some("iTerm.app") || term == Some("xterm-kitty")
 }
@@ -479,7 +481,8 @@ static US_LAYOUT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool:
 /// `defaults read com.apple.HIToolbox AppleSelectedInputSources` lists an input method (Japanese, Chinese...):
 /// the layout under it is U.S. too, but what arrives is the method's text.
 fn input_method_on(selected: &str) -> bool {
-    selected.lines().any(|l| l.trim() == "InputSourceKind = \"Input Mode\";")
+    // "Keyboard Input Method" is a method without modes; "Non Keyboard Input Method" (the accent popup) is not one.
+    selected.lines().any(|l| matches!(l.trim(), "InputSourceKind = \"Input Mode\";" | "InputSourceKind = \"Keyboard Input Method\";"))
 }
 
 /// Polled like the appearance, from one thread per process; TIS would want the main queue.
@@ -1615,6 +1618,8 @@ mod tests {
         assert!(!super::input_method_on(layout_only), "a layout and the accent popup");
         let japanese = "(\n        {\n        \"Bundle ID\" = \"com.apple.inputmethod.Kotoeri.RomajiTyping\";\n        \"Input Mode\" = \"com.apple.inputmethod.Japanese\";\n        InputSourceKind = \"Input Mode\";\n    },\n        {\n        InputSourceKind = \"Keyboard Layout\";\n        \"KeyboardLayout ID\" = 0;\n        \"KeyboardLayout Name\" = \"U.S.\";\n    }\n)\n";
         assert!(super::input_method_on(japanese), "an IME on top of the U.S. layout");
+        let modeless = "(\n        {\n        \"Bundle ID\" = \"com.example.inputmethod\";\n        InputSourceKind = \"Keyboard Input Method\";\n    }\n)\n";
+        assert!(super::input_method_on(modeless), "an input method without modes");
         assert!(!super::input_method_on(""), "defaults could not answer");
     }
 
