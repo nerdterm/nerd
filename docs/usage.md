@@ -43,9 +43,9 @@ The terminal must send Option as Alt. Some send the character the layout prints 
 | Terminal | Setting |
 |---|---|
 | Ghostty | Nothing on a U.S. Standard or U.S. International layout. Otherwise `macos-option-as-alt = left` in its config (`right` for the other key, `true` for both), then **Ghostty → Reload Configuration** |
-| Kitty | `macos_option_as_alt left` in kitty.conf (`right` or `both`), then restart Kitty: reloading the config does not change it |
+| Kitty | Nothing on a U.S., U.S. International or ABC layout: nerd turns on Kitty's keyboard protocol, which sends Option and a key as a key. Otherwise `macos_option_as_alt left` in kitty.conf (`right` or `both`), then restart Kitty: reloading the config does not change it |
 | WezTerm | The left Option key sends Alt already. For the right one: `config.send_composed_key_when_right_alt_is_pressed = false` |
-| iTerm2 | **Settings → Profiles → Keys → General**: Left Option key **Esc+**, and the right one too if you use it |
+| iTerm2 | Nothing on a U.S., U.S. International or ABC layout: nerd reads the character Option types as Option and the key. So the symbols Option types there, such as —, … and €, are not typed into panes. Option + E, I, N and U are dead keys on these layouts and reach nerd only through the menu, unless the Left Option key is set to **Esc+**. On other layouts: **Settings → Profiles → Keys → General**: Left Option key **Esc+**, and the right one too if you use it |
 
 On a non-Latin layout Ghostty 1.3.1 still drops these keys; `nerd --install-keys` binds them to the physical keys in Ghostty's config, which works on any layout.
 
