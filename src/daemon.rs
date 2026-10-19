@@ -454,6 +454,9 @@ fn serve(started: &mut bool) -> std::io::Result<()> {
                     redraw = true;
                 }
                 Inbound::Event(_, Event::Mouse(m)) => {
+                    if trace && matches!(m.kind, crossterm::event::MouseEventKind::Down(_) | crossterm::event::MouseEventKind::Up(_)) {
+                        debug(&trace_line(&Event::Mouse(m)));
+                    }
                     let screen = app.screen;
                     app.mouse(m, screen);
                     redraw = true;
@@ -911,6 +914,7 @@ fn trace_line(ev: &Event) -> String {
         Event::Key(k) if matches!(k.code, KeyCode::Char(_)) && !k.modifiers.contains(KeyModifiers::CONTROL) => format!("trace key char {:?}", k.modifiers),
         Event::Key(k) => format!("trace key {:?} {:?}", k.code, k.modifiers),
         Event::Paste(s) => format!("trace paste {} chars", s.chars().count()),
+        Event::Mouse(m) => format!("trace mouse {:?} {:?}", m.kind, m.modifiers),
         other => format!("trace {other:?}"),
     }
 }
@@ -1006,6 +1010,13 @@ mod tests {
         assert_eq!(line, "trace key char KeyModifiers(SHIFT)");
         assert_eq!(super::trace_line(&Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL))), "trace key Char('c') KeyModifiers(CONTROL)");
         assert_eq!(super::trace_line(&Event::Key(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE))), "trace key F(2) KeyModifiers(0x0)");
+    }
+
+    #[test]
+    fn a_trace_names_a_mouse_press_without_its_place() {
+        use crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+        let down = MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), column: 7, row: 3, modifiers: KeyModifiers::NONE };
+        assert_eq!(super::trace_line(&Event::Mouse(down)), "trace mouse Down(Left) KeyModifiers(0x0)");
     }
 
     #[test]
