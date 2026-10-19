@@ -35,8 +35,8 @@ pull request, `chore(master): release X.Y.Z`. Replace `N` and `X.Y.Z` below with
    ```
 
 5. From a plain terminal (gh needs the keychain), in a clean checkout, build, test and attach the binary, which
-   publishes the release. It takes several minutes and ends with `attached nerd-vX.Y.Z-macos-arm64.tar.gz to vX.Y.Z
-   and published it`:
+   publishes the release, then starts the nerdterm.dev build. It takes several minutes and ends with `attached
+   nerd-vX.Y.Z-macos-arm64.tar.gz to vX.Y.Z and published it` and `started the nerdterm.dev build`:
 
    ```sh
    scripts/publish-binary.sh vX.Y.Z
