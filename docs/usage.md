@@ -42,7 +42,7 @@ The terminal must send Option as Alt. Most send the character the layout prints 
 
 | Terminal | Setting |
 |---|---|
-| Ghostty | `macos-option-as-alt = left` in its config (`right` for the other key, `true` for both), then **Ghostty → Reload Configuration** |
+| Ghostty | Nothing on a U.S. Standard or U.S. International layout. Otherwise `macos-option-as-alt = left` in its config (`right` for the other key, `true` for both), then **Ghostty → Reload Configuration** |
 | Kitty | `macos_option_as_alt left` in kitty.conf (`right` or `both`), then restart Kitty: reloading the config does not change it |
 | WezTerm | The left Option key sends Alt already. For the right one: `config.send_composed_key_when_right_alt_is_pressed = false` |
 | iTerm2 | **Settings → Profiles → Keys → General**: Left Option key **Esc+**, and the right one too if you use it |

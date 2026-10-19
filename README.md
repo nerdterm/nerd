@@ -96,7 +96,8 @@ Each agent is described by a manifest, `plugins/<name>/plugin.json` in the sourc
 
 nerd is checked in Ghostty, Kitty, WezTerm, iTerm2 and Terminal.app.
 
-- Option shortcuts need the terminal to send Option as Alt. Ghostty, Kitty, iTerm2 and Terminal.app each need one setting for that, and WezTerm one for its right Option key; see [Keys](docs/usage.md#keys).
+- Option shortcuts need the terminal to send Option as Alt. Ghostty does on a U.S. layout; Kitty, iTerm2 and Terminal.app need one setting for it, and WezTerm one for its right Option key; see [Keys](docs/usage.md#keys).
+- nerd asks the terminal two things when it starts: whether it draws images by the Kitty graphics protocol, and its device attributes. Programs in panes get the cursor position, device attributes and colours from nerd itself, so they do not depend on the terminal.
 - WezTerm and iTerm2 show colours in Display P3, so nerd's colours look more saturated there than in the others.
 - Not checked: Alacritty, whose Homebrew cask is disabled because the app fails Gatekeeper, and Warp.
 
