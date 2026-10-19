@@ -76,6 +76,8 @@ pub struct View {
     pub draft: Option<Vec<String>>,
     pub scroll: usize,
     pub empty: bool,
+    /// The last line that can be first, from the last draw: keys stop where the wheel does.
+    pub last: std::cell::Cell<usize>,
 }
 
 const CANCEL: &str = " [Esc] cancel ";
@@ -209,7 +211,9 @@ impl IsolationWin {
             let width = crate::chrome::limits(screen).0.saturating_sub(2 * crate::chrome::DIALOG_FRAME.horizontal) as usize;
             let lines = self.view_lines(v, width, theme);
             let r = crate::messages::fit(screen, &lines, DONE.len() + 1 + BACK.len());
-            return crate::messages::draw(buf, r, "Choose providers", theme, &lines, v.scroll, &[(DONE.to_string(), Click::Done)], BACK);
+            let d = crate::messages::draw(buf, r, "Choose providers", theme, &lines, v.scroll, &[(DONE.to_string(), Click::Done)], BACK);
+            v.last.set(d.rows.saturating_sub(d.room));
+            return d;
         }
         let lines = self.lines(theme);
         let buttons = self.buttons();
@@ -235,7 +239,7 @@ impl IsolationWin {
             }
             Click::Choose(agent) => {
                 let draft = self.chosen.iter().find(|(a, _)| *a == agent).and_then(|(_, gs)| gs.clone());
-                self.view = Some(View { agent, draft, scroll: 0, empty: false });
+                self.view = Some(View { agent, draft, scroll: 0, empty: false, last: Default::default() });
             }
             Click::All | Click::Group(_) | Click::Done => self.view_click(c),
             Click::Save(restart) => return Out::Save(self.pick.clone(), restart),
@@ -278,7 +282,7 @@ impl IsolationWin {
                 Enter => self.view_click(Click::Done),
                 Esc => self.view = None,
                 Up => v.scroll = v.scroll.saturating_sub(1),
-                Down => v.scroll += 1,
+                Down => v.scroll = (v.scroll + 1).min(v.last.get()),
                 _ => {}
             }
             return Out::None;
@@ -296,7 +300,7 @@ impl IsolationWin {
         if let Some(v) = self.view.as_mut() {
             match (ev.kind, pressed(ev, d)) {
                 (ScrollUp, _) => v.scroll = v.scroll.saturating_sub(3),
-                (ScrollDown, _) => v.scroll = (v.scroll + 3).min(d.rows.saturating_sub(d.room)),
+                (ScrollDown, _) => v.scroll = (v.scroll + 3).min(v.last.get()),
                 (_, Err(_)) => self.view = None,
                 (_, Ok(Some(c))) => _ = self.click(c),
                 (_, Ok(None)) => {}
@@ -318,7 +322,8 @@ pub fn known(saved: &[String], providers: &[String], groups: &[(String, AgentNet
     let mut out = Vec::new();
     for (a, gs) in chosen {
         if !providers.contains(&a) {
-            stale.push(format!("{a}: no such agent is installed"));
+            let why = if crate::agents::get(&a).is_some() { "names no hosts to choose from" } else { "no such agent is installed" };
+            stale.push(format!("{a}: {why}"));
             continue;
         }
         let Some(gs) = gs else {
@@ -546,6 +551,56 @@ mod tests {
         click_on(&mut w, "[Esc] back");
         assert!(w.view.is_none(), "the back button");
         assert_eq!(click_on(&mut w, "[Enter] save"), Out::Save(Some(Isolation { files: Files::Everything, network: Network::Providers(vec!["claude".into(), "fake".into()]) }), false));
+    }
+
+    #[test]
+    fn the_only_agent_s_chip_keeps_its_providers() {
+        let mut w = IsolationWin { chosen: vec![("fake".into(), Some(vec!["alpha".into()]))], ..grouped() };
+        w.pick = Some(Isolation { files: Files::Everything, network: Network::Providers(vec!["fake/alpha".into()]) });
+        click_on(&mut w, " fake ");
+        assert_eq!(saved(&w), ["fake/alpha"], "the last chip stays, and never as all of the agent");
+    }
+
+    #[test]
+    fn leaving_the_view_by_mouse_keeps_the_choice() {
+        let mut w = grouped();
+        w.click(Click::Provider("fake".into()));
+        w.click(Click::Choose("fake".into()));
+        w.click(Click::Group("alpha".into()));
+        w.click(Click::Done);
+        assert_eq!(saved(&w), ["claude", "fake/alpha"]);
+        click_on(&mut w, "[Choose providers…]");
+        click_on(&mut w, "beta");
+        click_on(&mut w, "[Esc] back");
+        assert_eq!((w.view.as_ref(), saved(&w)), (None, vec!["claude".to_string(), "fake/alpha".into()]), "the back button drops the ticks");
+        click_on(&mut w, "[Choose providers…]");
+        click_on(&mut w, "all (3 hosts)");
+        let screen = Rect::new(0, 0, 100, 40);
+        let d = w.draw(&mut Buffer::empty(screen), screen, &Theme::dark());
+        assert!(!d.frame.contains(ratatui::layout::Position::new(0, 0)));
+        w.mouse(MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), column: 0, row: 0, modifiers: KeyModifiers::NONE }, &d);
+        assert_eq!((w.view.as_ref(), saved(&w)), (None, vec!["claude".to_string(), "fake/alpha".into()]), "a click outside drops the ticks");
+    }
+
+    #[test]
+    fn keys_scroll_the_view_no_further_than_the_wheel() {
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let many: Vec<(String, Vec<String>)> = (0..60).map(|i| (format!("p{i:02}"), s(&[&format!("h{i}.dev")]))).collect();
+        let hosts = many.iter().flat_map(|(_, h)| h.clone()).collect();
+        let net = AgentNetwork { net: crate::agents::Network::Internet { hosts, ports: vec![443] }, providers: many };
+        let mut w = IsolationWin { groups: vec![("fake".into(), net)], ..grouped() };
+        w.click(Click::Provider("fake".into()));
+        w.click(Click::Choose("fake".into()));
+        shown(&w);
+        let last = w.view.as_ref().unwrap().last.get();
+        assert!(last > 0, "60 providers do not fit 40 rows");
+        let key = |w: &mut IsolationWin, c| _ = w.key(KeyEvent::new(c, KeyModifiers::NONE));
+        for _ in 0..200 {
+            key(&mut w, KeyCode::Down);
+        }
+        assert_eq!(w.view.as_ref().unwrap().scroll, last);
+        key(&mut w, KeyCode::Up);
+        assert_eq!(w.view.as_ref().unwrap().scroll, last - 1, "one Up moves the view at once");
     }
 
     #[test]

@@ -202,7 +202,7 @@ const CELL: usize = 9;
 /// A card's height: the border, the name, the agent, the isolation, the border.
 const CH: usize = 5;
 /// The widest a card's isolation line grows, so one pane's long list does not widen every card.
-const CARD_WORDS: usize = 36;
+const CARD_WORDS: usize = 44;
 /// Between columns: the exit cell, six lanes, and the next column's exit cell.
 const GX: usize = 8;
 /// Between card rows: two lanes and the arrow row.
@@ -1445,7 +1445,9 @@ mod tests {
         assert_eq!(card_text(&short).2, "this folder only, only pi (deepseek)");
         let long = card("reader", Some(3), "main", Some("pi"), iso(&["claude", "pi/deepseek", "pi/openai", "pi/xai", "pi/zai"]));
         let l3 = card_text(&long).2;
-        assert_eq!((l3.chars().count(), l3.as_str()), (CARD_WORDS, "this folder only, only claude, pi (…"));
+        assert_eq!((l3.chars().count(), l3.as_str()), (CARD_WORDS, "this folder only, only claude, pi (deepseek…"));
+        let two = card("reader", Some(3), "main", Some("gemini"), iso(&["claude", "gemini"]));
+        assert_eq!(card_text(&two).2, "this folder only, only claude, gemini", "a list that fit before still fits");
         assert_eq!(card_width(&long), 4 + CARD_WORDS);
     }
 

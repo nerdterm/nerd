@@ -136,7 +136,7 @@ pub struct AgentNetwork {
 }
 
 const GROUPS: usize = 64;
-const AGENT_NETWORK_FORMS: &str = r#"agent.network is {"hosts": [...], "ports": [...]} or {"providers": {"name": [hosts], ...}, "ports": [...]}"#;
+const AGENT_NETWORK_FORMS: &str = r#"agent.network is {"hosts": [...], "ports": [...]} (built-in agents may group their hosts as {"providers": {"name": [hosts], ...}, "ports": [...]})"#;
 
 impl<'de> Deserialize<'de> for AgentNetwork {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
