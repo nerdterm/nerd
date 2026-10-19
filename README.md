@@ -89,15 +89,23 @@ Each agent is described by a manifest, `plugins/<name>/plugin.json` in the sourc
 - **macOS.** nerd relies on macOS for its sandbox, clipboard, sounds, image conversion and login item. Linux and Windows are planned by the maintainer; pull requests for them are not accepted.
 - **Apple Silicon** for the prebuilt binary. Intel Macs can build from source; this is not tested.
 - Any terminal with mouse support and 24-bit colour.
-- Full-quality image previews need a terminal with the Kitty graphics protocol (Ghostty, Kitty, WezTerm). Elsewhere they are drawn in coloured blocks, and nerd says so under the image.
+- Full-quality image previews need a terminal with the Kitty graphics protocol (Ghostty, Kitty, WezTerm, iTerm2). Elsewhere, Terminal.app among them, they are drawn in coloured blocks, and nerd says so under the image.
 - To build from source: Rust 1.88 or newer.
+
+## Terminals
+
+nerd is checked in Ghostty, Kitty, WezTerm, iTerm2 and Terminal.app.
+
+- Option shortcuts need the terminal to send Option as Alt. Ghostty, Kitty, iTerm2 and Terminal.app each need one setting for that, and WezTerm one for its right Option key; see [Keys](docs/usage.md#keys).
+- WezTerm and iTerm2 show colours in Display P3, so nerd's colours look more saturated there than in the others.
+- Not checked: Alacritty, whose Homebrew cask is disabled because the app fails Gatekeeper, and Warp.
 
 ## Limitations
 
 - nerd is early software (0.x). Configuration and behaviour may change between releases.
 - The binary is not notarized by Apple. The installer removes the download quarantine; for an archive downloaded by hand, run `xattr -d com.apple.quarantine nerd`.
 - The installer adds `~/.local/bin` to `PATH` in `~/.zshrc` only. With another shell, add it yourself.
-- Inside tmux or screen, image previews fall back to coloured blocks: neither passes a graphics protocol on. nerd offers to open itself in a new window of the same terminal instead.
+- Inside tmux or screen, image previews fall back to coloured blocks: neither passes a graphics protocol on. In Ghostty, Kitty and WezTerm, nerd offers to open itself in a new window of the same terminal instead.
 - Exact agent states come from the hook, for the supported agents. For other agents the state is read from their output: it can lag, be wrong, or miss "waiting for you".
 - After a restart, pane text and layout come back; running processes do not. Pane text is lost if the server is killed with `kill -9` or the Mac loses power.
 

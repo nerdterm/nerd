@@ -13,7 +13,7 @@
 
 ## Keys
 
-Every key repeats a menu item or a click. The shortcuts start with `⌥` (Option) and are read from the key itself, not from what the keyboard layout prints on it, so they work the same on a Cyrillic layout once the terminal sends them (see Ghostty below). **Keys and mouse…** in the main menu lists them all.
+Every key repeats a menu item or a click. The shortcuts start with `⌥` (Option) and are read from the key itself, not from what the keyboard layout prints on it, so they work the same on a Cyrillic layout once the terminal sends them (see below). **Keys and mouse…** in the main menu lists them all.
 
 | Key | Action |
 |---|---|
@@ -38,7 +38,19 @@ Every key repeats a menu item or a click. The shortcuts start with `⌥` (Option
 
 **Settings… → tmux-style prefix** turns on `⌃`+`B` or `⌃`+`A`; after it, a key without `⌥` does what `⌥` and that key do, and the prefix pressed twice goes to the pane. It is off by default, because while it is on, the shell and an outer tmux never see that key.
 
-The terminal must send Option as Alt. In Ghostty that is `macos-option-as-alt = left` in its config (`right` for the other key, `true` for both), then **Ghostty → Reload Configuration**. On a non-Latin layout Ghostty 1.3.1 still drops these keys; `nerd --install-keys` binds them to the physical keys in Ghostty's config, which works on any layout.
+The terminal must send Option as Alt. Most send the character the layout prints for Option and the key instead, until told otherwise:
+
+| Terminal | Setting |
+|---|---|
+| Ghostty | `macos-option-as-alt = left` in its config (`right` for the other key, `true` for both), then **Ghostty → Reload Configuration** |
+| Kitty | `macos_option_as_alt left` in kitty.conf (`right` or `both`), then restart Kitty: reloading the config does not change it |
+| WezTerm | The left Option key sends Alt already. For the right one: `config.send_composed_key_when_right_alt_is_pressed = false` |
+| iTerm2 | **Settings → Profiles → Keys → General**: Left Option key **Esc+**, and the right one too if you use it |
+| Terminal.app | **Settings → Profiles → Keyboard**: **Use Option as Meta key**, in each profile you use |
+
+On a non-Latin layout Ghostty 1.3.1 still drops these keys; `nerd --install-keys` binds them to the physical keys in Ghostty's config, which works on any layout.
+
+Control with a non-Latin letter, such as the tmux-style prefix on a Cyrillic layout: Kitty sends it as Control and the Latin letter on the same key. In the other terminals, switch to a Latin layout for Control shortcuts.
 
 ## Commands
 
