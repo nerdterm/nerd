@@ -179,6 +179,35 @@ pub fn latin(c: char) -> char {
     RU.iter().find(|(ru, _)| *ru == lower).map_or(lower, |(_, en)| *en)
 }
 
+/// What the U.S. and ABC layouts print for Option and a key, read back as Alt and that key, so a terminal
+/// that types the printed character (iTerm2 by default) still reaches the Option shortcuts. Taken from the
+/// layouts themselves (UCKeyTranslate); U.S. International PC has the same Option layer. Dead keys (Option
+/// and e, u, i, n, `) print nothing alone and are not here; Option, Shift and ` prints a plain `.
+pub fn us_option(k: KeyEvent) -> KeyEvent {
+    const PLAIN: [(char, char); 42] = [
+        ('¡', '1'), ('™', '2'), ('£', '3'), ('¢', '4'), ('∞', '5'), ('§', '6'), ('¶', '7'), ('•', '8'),
+        ('ª', '9'), ('º', '0'), ('–', '-'), ('≠', '='), ('œ', 'q'), ('∑', 'w'), ('®', 'r'), ('†', 't'),
+        ('¥', 'y'), ('ø', 'o'), ('π', 'p'), ('“', '['), ('‘', ']'), ('«', '\\'), ('å', 'a'), ('ß', 's'),
+        ('∂', 'd'), ('ƒ', 'f'), ('©', 'g'), ('˙', 'h'), ('∆', 'j'), ('˚', 'k'), ('¬', 'l'), ('…', ';'),
+        ('æ', '\''), ('Ω', 'z'), ('≈', 'x'), ('ç', 'c'), ('√', 'v'), ('∫', 'b'), ('µ', 'm'), ('≤', ','),
+        ('≥', '.'), ('÷', '/'),
+    ];
+    const SHIFTED: [(char, char); 46] = [
+        ('⁄', '!'), ('€', '@'), ('‹', '#'), ('›', '$'), ('ﬁ', '%'), ('ﬂ', '^'), ('‡', '&'), ('°', '*'),
+        ('·', '('), ('‚', ')'), ('—', '_'), ('±', '+'), ('Œ', 'Q'), ('„', 'W'), ('´', 'E'), ('‰', 'R'),
+        ('ˇ', 'T'), ('Á', 'Y'), ('¨', 'U'), ('ˆ', 'I'), ('Ø', 'O'), ('∏', 'P'), ('”', '{'), ('’', '}'),
+        ('»', '|'), ('Å', 'A'), ('Í', 'S'), ('Î', 'D'), ('Ï', 'F'), ('˝', 'G'), ('Ó', 'H'), ('Ô', 'J'),
+        ('\u{f8ff}', 'K'), ('Ò', 'L'), ('Ú', ':'), ('Æ', '"'), ('¸', 'Z'), ('˛', 'X'), ('Ç', 'C'), ('◊', 'V'),
+        ('ı', 'B'), ('˜', 'N'), ('Â', 'M'), ('¯', '<'), ('˘', '>'), ('¿', '?'),
+    ];
+    let KeyCode::Char(c) = k.code else { return k };
+    if !k.modifiers.difference(KeyModifiers::SHIFT).is_empty() {
+        return k;
+    }
+    let read = |table: &[(char, char)], modifiers| table.iter().find(|(o, _)| *o == c).map(|(_, key)| KeyEvent { code: KeyCode::Char(*key), modifiers, ..k });
+    read(&PLAIN, KeyModifiers::ALT).or_else(|| read(&SHIFTED, KeyModifiers::ALT | KeyModifiers::SHIFT)).unwrap_or(k)
+}
+
 /// The same key event with its character read off the key rather than off the layout, so a
 /// command spelled `g` is `g` on any keyboard. Case survives: the tree keeps `shift`+`R` and
 /// `shift`+`D` deliberately. Call it only where the key is a command - while a query is being
@@ -243,6 +272,55 @@ mod layout_tests {
         assert_eq!(latin('Е'), 't', "nor does it in Cyrillic");
         assert_eq!(latin('1'), '1', "digits sit on the same keys everywhere");
         assert!(latin('ы').is_ascii(), "every mapping lands on ascii");
+    }
+
+    #[test]
+    fn a_us_option_character_is_read_back_as_option_and_its_key() {
+        let ev = |c, m| KeyEvent::new(KeyCode::Char(c), m);
+        let alt = |c| ev(c, KeyModifiers::ALT);
+        assert_eq!(us_option(ev('†', KeyModifiers::NONE)), alt('t'));
+        assert_eq!(us_option(ev('ç', KeyModifiers::NONE)), alt('c'));
+        assert_eq!(us_option(ev('∑', KeyModifiers::NONE)), alt('w'));
+        assert_eq!(us_option(ev('÷', KeyModifiers::NONE)), alt('/'));
+        for (c, digit) in "¡™£¢∞§¶•ª".chars().zip('1'..='9') {
+            assert_eq!(us_option(ev(c, KeyModifiers::NONE)), alt(digit), "Option and {digit}");
+        }
+        assert_eq!(us_option(ev('ˇ', KeyModifiers::SHIFT)), ev('T', KeyModifiers::ALT | KeyModifiers::SHIFT), "the shifted layer");
+        assert_eq!(us_option(ev('¿', KeyModifiers::NONE)), ev('?', KeyModifiers::ALT | KeyModifiers::SHIFT));
+    }
+
+    #[test]
+    fn typing_is_never_read_as_option() {
+        let ev = |c, m| KeyEvent::new(KeyCode::Char(c), m);
+        let typed = (' '..='~').chain("йцукенЖЁśłąüéñ".chars());
+        for c in typed {
+            for m in [KeyModifiers::NONE, KeyModifiers::SHIFT] {
+                assert_eq!(us_option(ev(c, m)), ev(c, m), "{c:?} is typed as it is");
+            }
+        }
+        for m in [KeyModifiers::CONTROL, KeyModifiers::ALT, KeyModifiers::SUPER] {
+            assert_eq!(us_option(ev('†', m)), ev('†', m), "another modifier: not the Option layer");
+        }
+        let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        assert_eq!(us_option(enter), enter);
+    }
+
+    #[test]
+    fn every_us_option_key_is_its_own_and_dead_keys_are_left_out() {
+        let ev = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE);
+        let mut seen = std::collections::HashSet::new();
+        for c in (0x80..0x10000u32).filter_map(char::from_u32) {
+            let k = us_option(ev(c));
+            if k != ev(c) {
+                let KeyCode::Char(base) = k.code else { panic!("{c:?} became {k:?}") };
+                assert!(base.is_ascii_graphic(), "{c:?} lands on a key, {base:?}");
+                assert!(seen.insert((base, k.modifiers)), "{base:?} {:?} comes from two characters", k.modifiers);
+            }
+        }
+        assert_eq!(seen.len(), 88, "42 keys with Option, 46 with Option and Shift");
+        for dead in ['e', 'u', 'i', 'n', '`'] {
+            assert!(!seen.contains(&(dead, KeyModifiers::ALT)), "Option and {dead} is a dead key: it prints nothing alone");
+        }
     }
 
     #[test]
