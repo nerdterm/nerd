@@ -1047,7 +1047,7 @@ mod tests {
         app.screen = ratatui::layout::Rect::new(0, 0, 120, 30);
         let mut tui = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 30)).unwrap();
         let fx = super::draw_turn(&mut tui, &mut app).unwrap();
-        assert!(String::from_utf8_lossy(&fx.screen).contains("a=T,f=100,i=2,r=1"), "the logo's PNG is in this turn's output");
+        assert!(String::from_utf8_lossy(&fx.screen).contains("a=T,f=100,i=2,c=9,r=1,"), "the logo's PNG is in this turn's output");
         assert!(app.to_client.is_empty(), "nothing is left for the next turn");
     }
 

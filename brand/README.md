@@ -2,7 +2,7 @@
 
 Every graphic nerd owns. A file name says the role, the theme, and — where it
 matters — the size the drawing is tuned for (`-16px`) or the pixels it holds
-(`-256`, `-1600x375`). Braces below stand for the files that exist: both
+(`-256`, `-1688x375`). Braces below stand for the files that exist: both
 themes, every listed size.
 
 ## The files
@@ -12,7 +12,7 @@ themes, every listed size.
 | `nerd-logo-{light,dark}.svg` | Full lockup: globe, wordmark, both taglines. Vector, 896×404 canvas | READMEs, docs, slides, anything a vector is taken in |
 | `nerd-logo-{light,dark}-1792x808.png` | The lockup at twice its canvas, transparent | The same, where a vector is not taken |
 | `nerd-wordmark-{light,dark}.svg` | NERD alone, no globe. Vector | Headers too small or too narrow for the globe |
-| `nerd-wordmark-{light,dark}-1600x375.png` | Wordmark raster, transparent | **Embedded in the binary** by `src/ui.rs`: the sidebar draws it one row high |
+| `nerd-wordmark-{light,dark}-1688x375.png` | Wordmark raster, transparent | **Embedded in the binary** by `src/ui.rs`: the sidebar draws it one row high |
 | `nerd-appicon-{light,dark}.svg` | App icon tile, full grid. Vector | Any icon at 64 px and above |
 | `nerd-appicon-{light,dark}-32px.svg` | Tile drawn for 32 px: bigger globe, one inner meridian, the equator | Favicons and lists at 24–48 px |
 | `nerd-appicon-{light,dark}-16px.svg` | Tile drawn for 16 px: rim and N only | Anything at 16–23 px |

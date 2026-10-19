@@ -133,8 +133,8 @@ for (const [name, th] of Object.entries(THEMES)) {
   for (const px of RASTERS) await png(TIERS[bandFor(px)], th, px, `${OUT}/nerd-appicon-${name}-${px}.png`);
   // Both lockups at twice their canvas: enough for retina, and nothing here is ever printed.
   await shot(`${OUT}/nerd-logo-${name}.svg`, `${OUT}/nerd-logo-${name}-1792x808.png`, 896, 404, 2);
-  // The sidebar draws the wordmark as an image one row high; 1600 px wide is ample for retina.
-  await shot(`${OUT}/nerd-wordmark-${name}.svg`, `${OUT}/nerd-wordmark-${name}-1600x375.png`, 1600, 375);
+  // The sidebar draws the wordmark nine cells by one row: 4.5:1 is that box at a 1:2 cell, so it is not stretched.
+  await shot(`${OUT}/nerd-wordmark-${name}.svg`, `${OUT}/nerd-wordmark-${name}-1688x375.png`, 1688, 375);
 }
 
 // The two .icns are not generated here. They are built from the Icon Composer artwork in
