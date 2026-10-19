@@ -31,7 +31,12 @@ table=$run/table
 echo "terminal${tab}attach${tab}TERM_PROGRAM${tab}graphics${tab}stray reply${tab}plain key${tab}Option${tab}Control Latin${tab}Control Cyrillic${tab}arrows${tab}paste${tab}mouse${tab}colour${tab}new window" >"$table"
 notes=$run/notes
 : >"$notes"
-trap 'for h in "$run"/*/; do $clean HOME="$h" NERD_SOCKET="${h}s.sock" "$nerd" --stop >/dev/null 2>&1 || true; done' EXIT
+# A run stopped mid-paste still gives the clipboard back.
+trap 'if [ -f "$run/clipboard" ]; then pbcopy <"$run/clipboard"; fi
+for h in "$run"/*/; do $clean HOME="$h" NERD_SOCKET="${h}s.sock" "$nerd" --stop >/dev/null 2>&1 || true; done' EXIT
+
+# A process and everything under it.
+family() ( for c in $(pgrep -P "$1" || true); do family "$c"; done; echo "$1" )
 
 # This app's windows on screen: id, pid, owner, x,y,w,h, name, tab-separated.
 wins() { "$post" windows | awk -F "$tab" -v p="$pat" 'tolower($3) ~ p'; }
@@ -135,11 +140,11 @@ for t in "$@"; do
     until grep -q ' attached: ' "$log" 2>/dev/null || [ $i -ge 30 ]; do sleep 0.5; i=$((i + 1)); done
     sleep 1
     if [ -n "$exe" ]; then
-        # The new processes include helpers (kitty's kittens): the app is the one that owns a window.
-        { pgrep -f "$exe" || true; } | grep -vxFf "$run/pids" >"$run/new-pids" || true
-        pid=$(wins | awk -F "$tab" 'NR == FNR { p[$1]; next } $2 in p { print $2 }' "$run/new-pids" - | sort -u)
+        # The instance `open -n` started is a new process of the app that launchd started; its helpers are its children.
+        pid=$({ pgrep -f "$exe" || true; } | grep -vxFf "$run/pids" | while read -r p; do
+            [ "$(ps -o ppid= -p "$p" | tr -d ' ')" = 1 ] && echo "$p"; done || true)
         if [ "$(echo "$pid" | grep -c . || true)" != 1 ]; then
-            echo "$t: $(echo "$pid" | grep -c . || true) new $app processes own a window, wanted one" >>"$notes"
+            echo "$t: $(echo "$pid" | grep -c . || true) new $app instances, wanted one" >>"$notes"
             pid=
         fi
     fi
@@ -192,7 +197,7 @@ for t in "$@"; do
                 pbpaste >"$run/clipboard"
                 printf %s "$clip" | pbcopy
                 cells="$cells${tab}$(try "paste ${#clip} chars" "key 9 command")"
-                pbcopy <"$run/clipboard"
+                pbcopy <"$run/clipboard" && mv "$run/clipboard" "$run/clipboard.restored"
                 cells="$cells${tab}$(try "mouse Down(Left) 0x0 mouse Up(Left) 0x0" click)"
             else
                 cells="$input${tab}$input${tab}$input${tab}$input${tab}$input${tab}$input${tab}$input"
@@ -205,9 +210,9 @@ for t in "$@"; do
     $clean HOME="$h" NERD_SOCKET="$h/s.sock" "$nerd" --stop >/dev/null || true
     sleep 2
     if [ -n "$server" ] && ps -p "$server" >/dev/null; then echo "$t: server $server still running" >>"$notes"; fi
-    # Only what `open -n` started for this run, even with no window found; never a process running before it.
+    # Only the instance `open -n` started for this run and its helpers.
     case $t in ghostty | kitty | wezterm)
-        while read -r p; do kill "$p" 2>/dev/null || true; done <"$run/new-pids" ;;
+        [ -z "$pid" ] || family "$pid" | while read -r p; do kill "$p" 2>/dev/null || true; done ;;
     # AppleScript's own id for the window it opened: it is not a window-server id.
     iterm | terminal) [ -z "$asid" ] || osascript -e "tell application \"$app\" to close window id $asid" >/dev/null 2>&1 || true ;;
     esac

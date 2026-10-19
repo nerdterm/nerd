@@ -39,7 +39,7 @@ func window(_ arg: String) -> [String: Any] {
 func pid(_ w: [String: Any]) -> pid_t { w[kCGWindowOwnerPID as String] as? pid_t ?? 0 }
 
 func isFront(_ arg: String) -> Bool {
-    let w = window(arg)
+    guard let w = windows().first(where: { $0[kCGWindowNumber as String] as? Int == Int(arg) }) else { return false }
     return windows().first?[kCGWindowNumber as String] as? Int == Int(arg)
         && NSWorkspace.shared.frontmostApplication?.processIdentifier == pid(w)
 }
@@ -72,16 +72,36 @@ func modifiers(_ s: String) -> [(CGKeyCode, CGEventFlags)] {
     }
 }
 
-func post(_ e: CGEvent, then pause: Double) {
+/// The events that let go of what is pressed now, the last pressed last.
+var undo: [CGEvent] = []
+
+/// Posts only while the window is in front; otherwise lets go of everything pressed and stops.
+func post(_ e: CGEvent, to window: String, then pause: Double) {
+    if !isFront(window) {
+        while let u = undo.popLast() { u.post(tap: .cghidEventTap) }
+        fail("window \(window) left the front mid-input, the rest not posted; \(frontNow())")
+    }
     e.post(tap: .cghidEventTap)
     Thread.sleep(forTimeInterval: pause)
 }
 
-func modifier(_ code: CGKeyCode, _ held: CGEventFlags) {
+func press(_ e: CGEvent, until release: CGEvent, on window: String) {
+    post(e, to: window, then: 0.03)
+    undo.append(release)
+}
+
+func releaseAll(on window: String) {
+    while let u = undo.last {
+        post(u, to: window, then: 0.05)
+        undo.removeLast()
+    }
+}
+
+func modifier(_ code: CGKeyCode, _ flags: CGEventFlags) -> CGEvent {
     let e = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: true)!
     e.type = .flagsChanged
-    e.flags = held
-    post(e, then: 0.03)
+    e.flags = flags
+    return e
 }
 
 // A private state: the flags set here never become the system's, or a later click would carry them.
@@ -111,30 +131,29 @@ case "key" where (4...6).contains(a.count):
     let mods = modifiers(a.count > 4 ? a[4] : "")
     var held = CGEventFlags()
     for (k, f) in mods {
+        let before = held
         held.formUnion(f)
-        modifier(k, held)
+        press(modifier(k, held), until: modifier(k, before), on: a[2])
     }
-    for down in [true, false] {
-        let e = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: down)!
+    func keyEvent(_ isDown: Bool) -> CGEvent {
+        let e = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: isDown)!
         // Without modifiers the event keeps its own flags: an arrow carries fn and numpad.
         if !mods.isEmpty { e.flags = e.flags.union(held) }
         if a.count > 5 {
             let u = Array(a[5].utf16)
             e.keyboardSetUnicodeString(stringLength: u.count, unicodeString: u)
         }
-        post(e, then: down ? 0.03 : 0.05)
+        return e
     }
-    for (k, f) in mods.reversed() {
-        held.subtract(f)
-        modifier(k, held)
-    }
+    press(keyEvent(true), until: keyEvent(false), on: a[2])
+    releaseAll(on: a[2])
 case "click" where a.count == 3:
     front(a[2])
     let r = bounds(window(a[2]))
     let p = CGPoint(x: r.midX, y: r.midY)
-    for t in [CGEventType.leftMouseDown, .leftMouseUp] {
-        post(CGEvent(mouseEventSource: src, mouseType: t, mouseCursorPosition: p, mouseButton: .left)!, then: 0.05)
-    }
+    let mouse = { (t: CGEventType) in CGEvent(mouseEventSource: src, mouseType: t, mouseCursorPosition: p, mouseButton: .left)! }
+    press(mouse(.leftMouseDown), until: mouse(.leftMouseUp), on: a[2])
+    releaseAll(on: a[2])
 case "colour" where a.count == 6:
     // Drawn into sRGB so the display profile does not shift the values the terminal was given.
     guard let s = CGImageSourceCreateWithURL(URL(fileURLWithPath: a[2]) as CFURL, nil),
