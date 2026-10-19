@@ -947,6 +947,23 @@ mod tests {
     }
 
     #[test]
+    fn the_graphics_probes_late_answer_turns_images_on() {
+        let reply = |app: &mut App, body: &str| {
+            app.key(alt('_'));
+            letter(app, body);
+            app.key(alt('\\'));
+        };
+        let mut app = App::new(Config::default());
+        reply(&mut app, "Gi=2;OK");
+        assert!(!app.graphics, "an answer to another image is not the probe's");
+        reply(&mut app, "Gi=31;ENOENT:no");
+        assert!(!app.graphics, "a refusal says the terminal draws none");
+        app.dirty = false;
+        reply(&mut app, "Gi=31;OK");
+        assert!(app.graphics && app.dirty, "the probe's OK after the client stopped waiting: images on, and drawn");
+    }
+
+    #[test]
     fn connect_asks_the_client_and_drops_an_answer_nobody_waits_for() {
         use crate::proto::RemoteInstance;
         crate::session::tests::with_temp_state_dir("connect", || {

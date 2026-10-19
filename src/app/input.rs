@@ -163,7 +163,15 @@ impl App {
             if end || late {
                 let text = std::mem::take(text);
                 self.reply = None;
-                crate::log::warn(&format!("terminal reply swallowed: {} chars", text.chars().count()));
+                // The answer to the client's graphics probe (`query_graphics`), after it stopped waiting.
+                if text == "Gi=31;OK" && !self.graphics {
+                    self.graphics = true;
+                    self.dirty = true;
+                    crate::log::info("graphics: the terminal answered late, images on");
+                }
+                // An image reply holds nothing typed, so its text is safe to log.
+                let what = if text.starts_with("Gi=") { text } else { format!("{} chars", text.chars().count()) };
+                crate::log::warn(&format!("terminal reply swallowed: {what}"));
             }
             if !late {
                 return true;

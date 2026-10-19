@@ -492,7 +492,7 @@ pub fn png_bytes(png: &[u8], x: u16, y: u16, size: &str, id: u32) -> Vec<u8> {
             out.extend(format!("\x1b_Ga=T,f=100,i={id},{size},C=1,q=2,m={more};{}\x1b\\", &b64[at..end]).into_bytes());
             first = false;
         } else {
-            out.extend(format!("\x1b_Gm={more};{}\x1b\\", &b64[at..end]).into_bytes());
+            out.extend(format!("\x1b_Gm={more},q=2;{}\x1b\\", &b64[at..end]).into_bytes());
         }
         at = end;
     }
@@ -683,7 +683,7 @@ fn average(px: &Pixels, (x0, x1): (usize, usize), (y0, y1): (usize, usize), grou
 }
 
 pub fn clear_image_bytes(id: u32) -> Vec<u8> {
-    format!("\x1b_Ga=d,d=i,i={id}\x1b\\").into_bytes()
+    format!("\x1b_Ga=d,d=i,i={id},q=2\x1b\\").into_bytes()
 }
 
 /// Width and height from the header, without decoding: what the caption and the layout need before any pixels exist.
@@ -1894,7 +1894,7 @@ mod tests {
         let out = p.image_bytes(Rect::new(4, 2, 40, 20), 7).expect("png returns bytes");
         let s = String::from_utf8(out).expect("protocol is ascii");
 
-        assert!(s.starts_with("\x1b_Ga=d,d=i,i=7\x1b\\"), "clear the previous one first: {:?}", &s[..24]);
+        assert!(s.starts_with("\x1b_Ga=d,d=i,i=7,q=2\x1b\\"), "clear the previous one first: {:?}", &s[..24]);
         // 64x64 pixels is 64x32 cells; one row of the area goes to the caption, leaving 40x19,
         // so it lands 38x19 and is centred across: x 4+1, y 2+0, counted from one.
         assert!(s.contains("\x1b[3;6H"), "cursor to the image's own corner, one-based numbering");
@@ -1914,6 +1914,7 @@ mod tests {
         let m: Vec<bool> = chunks.iter().map(|c| c.contains("m=1")).collect();
         assert!(m[..m.len() - 1].iter().all(|x| *x), "all but the last have m=1");
         assert!(chunks.last().expect("chunks exist").contains("m=0"), "last one has m=0");
+        assert!(chunks.iter().all(|c| c.split_once(';').unwrap().0.contains("q=2")), "every chunk is quiet");
 
         let j = d.join("a.jpg");
         fs::write(&j, [0xffu8, 0xd8, 0xff, 0xe0, 1, 2, 3]).unwrap();
@@ -2001,7 +2002,7 @@ mod tests {
 
     #[test]
     fn clear_sequence_names_the_image() {
-        assert_eq!(clear_image_bytes(3), b"\x1b_Ga=d,d=i,i=3\x1b\\".to_vec());
+        assert_eq!(clear_image_bytes(3), b"\x1b_Ga=d,d=i,i=3,q=2\x1b\\".to_vec());
     }
 
     #[test]

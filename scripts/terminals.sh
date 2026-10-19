@@ -107,8 +107,16 @@ for t in "$@"; do
         tp=$(sed -n 's/.*started in \(.*\), mux=.*/\1/p' "$log" | tail -1 | sed 's/^?$/none/')
         gr=$(echo "$line" | sed -n 's/.*graphics=\([a-z]*\).*/\1/p')
         at=$(grep -n ' attached: ' "$log" | tail -1 | cut -d: -f1)
-        stray=$(tail -n +"$at" "$log" | grep -c 'trace key' || true)
-        [ "$stray" = 0 ] && stray=none || stray="$stray keys"
+        if grep -q 'graphics: the terminal answered late' "$log"; then gr="$gr, true after a late answer"; fi
+        keys=$(tail -n +"$at" "$log" | grep -c 'trace key' || true)
+        # A reply the server swallowed: its keys are its text plus the two that open and close it.
+        sw=$(tail -n +"$at" "$log" | sed -n 's/.*terminal reply swallowed: //p')
+        told=$(echo "$sw" | awk 'NF { n += ($2 == "chars" ? $1 : length($0)) + 2 } END { print n + 0 }')
+        if [ -n "$sw" ]; then
+            stray="swallowed: $(echo "$sw" | paste -sd' ' -)"
+            if [ "$keys" -gt "$told" ]; then stray="$stray, $((keys - told)) keys more"; fi
+        elif [ "$keys" = 0 ]; then stray=none
+        else stray="$keys keys"; fi
         if [ -z "$wid" ]; then
             cells="no window${tab}no window${tab}no window${tab}no window${tab}no window${tab}no window${tab}no window${tab}no window"
             echo "$t: $(echo "$new" | grep -c . || true) new windows on screen, wanted one (a full-screen Space or a locked screen keeps them off it)" >>"$notes"

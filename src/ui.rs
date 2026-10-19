@@ -737,7 +737,7 @@ mod tests {
         app.apply_theme();
         assert!(sent(logo(&mut app, Some((2, 0)))).contains("a=T"), "the light wordmark replaces the dark one");
 
-        assert_eq!(sent(logo(&mut app, None)), "\x1b_Ga=d,d=i,i=2\x1b\\", "collapsed: the image goes");
+        assert_eq!(sent(logo(&mut app, None)), "\x1b_Ga=d,d=i,i=2,q=2\x1b\\", "collapsed: the image goes");
         assert_eq!(sent(logo(&mut app, None)), "", "and only once");
     }
 
