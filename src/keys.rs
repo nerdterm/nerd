@@ -180,9 +180,10 @@ pub fn latin(c: char) -> char {
 }
 
 /// What the U.S. and ABC layouts print for Option and a key, read back as Alt and that key, so a terminal
-/// that types the printed character (iTerm2 by default) still reaches the Option shortcuts. Taken from the
+/// that types the printed character (iTerm2 and kitty by default) still reaches the Option shortcuts. Taken from the
 /// layouts themselves (UCKeyTranslate); U.S. International PC has the same Option layer. Dead keys (Option
 /// and e, u, i, n, `) print nothing alone and are not here; Option, Shift and ` prints a plain `.
+/// Also read back: a bare accent typed as dead key and space (´ ¨ ˆ ˜); and —, ∏, ‘ arrive as Alt and _, P, ], which the server takes for the start of a terminal reply, as it does in Ghostty.
 pub fn us_option(k: KeyEvent) -> KeyEvent {
     const PLAIN: [(char, char); 42] = [
         ('¡', '1'), ('™', '2'), ('£', '3'), ('¢', '4'), ('∞', '5'), ('§', '6'), ('¶', '7'), ('•', '8'),

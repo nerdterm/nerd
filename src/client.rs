@@ -192,20 +192,6 @@ struct Tui(bool);
 /// Set while the TUI is up: undoing it twice would restore the cursor over what was printed between.
 static TUI_UP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Set while kitty's keyboard flags are pushed.
-static KITTY_KEYS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// Disambiguate, report alternate keys and report all keys (13), as tried in kitty 0.49: with alternate
-/// keys a shifted character still arrives as itself.
-const KITTY_FLAGS: crossterm::event::KeyboardEnhancementFlags = crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-    .union(crossterm::event::KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS)
-    .union(crossterm::event::KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES);
-
-/// Only kitty: Ghostty and WezTerm already send Option as a key, iTerm2 ignores the protocol, tmux does not pass it on.
-fn kitty_keys(term: Option<&str>) -> bool {
-    term == Some("xterm-kitty")
-}
-
 impl Tui {
     fn up(mouse_on: bool) -> std::io::Result<Tui> {
         // Before the first change, so a failure halfway is undone too.
@@ -220,11 +206,6 @@ impl Tui {
         enable_raw_mode()?;
         let mut out = std::io::stdout();
         execute!(out, EnterAlternateScreen)?;
-        // kitty sends Option and a letter as a key only under its own protocol: without it Option + t types "†".
-        if kitty_keys(std::env::var("TERM").ok().as_deref()) {
-            execute!(out, crossterm::event::PushKeyboardEnhancementFlags(KITTY_FLAGS))?;
-            KITTY_KEYS.store(true, std::sync::atomic::Ordering::SeqCst);
-        }
         if mouse_on {
             execute!(out, EnableMouseCapture)?;
         }
@@ -248,10 +229,6 @@ fn tui_down(mouse_on: bool) {
     let _ = execute!(out, crossterm::event::DisableBracketedPaste);
     if mouse_on {
         let _ = execute!(out, DisableMouseCapture);
-    }
-    // Popped on the alternate screen it was pushed on, so the shell after nerd gets plain keys again.
-    if KITTY_KEYS.swap(false, std::sync::atomic::Ordering::SeqCst) {
-        let _ = execute!(out, crossterm::event::PopKeyboardEnhancementFlags);
     }
     let _ = execute!(out, LeaveAlternateScreen);
     let _ = out.write_all(&crate::pointer::osc(crate::pointer::DEFAULT));
@@ -472,33 +449,56 @@ fn appearance_poller(dark: Option<bool>) -> Appearance {
     appearance
 }
 
-/// A key event as the server should get it: a modifier alone (kitty reports one) is not sent, and with
-/// `us_option` a character of the U.S. Option layer goes as Option and its key.
+/// A key event as the server should get it: a modifier alone is not sent, and with `us_option` a character
+/// of the U.S. Option layer goes as Option and its key.
 fn outgoing(ev: Event, us_option: bool) -> Option<Event> {
+    use crossterm::event::{KeyCode, KeyModifiers};
     match ev {
-        Event::Key(k) if matches!(k.code, crossterm::event::KeyCode::Modifier(_)) => None,
+        Event::Key(k) if matches!(k.code, KeyCode::Modifier(_)) => None,
+        // Command and a letter is the terminal's own shortcut; one it lets through would reach the pane as the letter.
+        Event::Key(k)
+            if matches!(k.code, KeyCode::Char(_))
+                && k.modifiers.contains(KeyModifiers::SUPER)
+                && !k.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+        {
+            None
+        }
         Event::Key(k) if us_option => Some(Event::Key(crate::keys::us_option(k))),
         ev => Some(ev),
     }
 }
 
-/// iTerm2 types what the layout prints for Option and a key; on these layouts that is read back as Option.
+/// iTerm2 and kitty type what the layout prints for Option and a key; Ghostty and WezTerm send the key.
+fn types_option_chars(term_program: Option<&str>, term: Option<&str>) -> bool {
+    term_program == Some("iTerm.app") || term == Some("xterm-kitty")
+}
+
+/// On a U.S. layout with no input method on top, what Option types is read back as Option and the key.
 static US_LAYOUT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// `defaults read com.apple.HIToolbox AppleSelectedInputSources` lists an input method (Japanese, Chinese...):
+/// the layout under it is U.S. too, but what arrives is the method's text.
+fn input_method_on(selected: &str) -> bool {
+    selected.lines().any(|l| l.trim() == "InputSourceKind = \"Input Mode\";")
+}
 
 /// Polled like the appearance, from one thread per process; TIS would want the main queue.
 /// ceiling: a layout switched just before a key can take up to 2 s to count.
 fn watch_us_layout() {
     static STARTED: std::sync::Once = std::sync::Once::new();
     STARTED.call_once(|| {
-        let us = || {
+        let read = |key| {
             crate::spawn::cmd("/usr/bin/defaults")
-                .args(["read", "com.apple.HIToolbox", "AppleCurrentKeyboardLayoutInputSourceID"])
+                .args(["read", "com.apple.HIToolbox", key])
                 .stderr(std::process::Stdio::null())
                 .output()
-                .is_ok_and(|o| {
-                    let id = String::from_utf8_lossy(&o.stdout);
-                    ["com.apple.keylayout.US", "com.apple.keylayout.ABC", "com.apple.keylayout.USInternational-PC"].contains(&id.trim())
-                })
+                .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+                .unwrap_or_default()
+        };
+        let us = move || {
+            ["com.apple.keylayout.US", "com.apple.keylayout.ABC", "com.apple.keylayout.USInternational-PC"]
+                .contains(&read("AppleCurrentKeyboardLayoutInputSourceID").trim())
+                && !input_method_on(&read("AppleSelectedInputSources"))
         };
         US_LAYOUT.store(us(), std::sync::atomic::Ordering::Relaxed);
         std::thread::spawn(move || loop {
@@ -593,8 +593,8 @@ fn session(
     })?;
 
     let mut sent = encode(dark);
-    let iterm = std::env::var("TERM_PROGRAM").as_deref() == Ok("iTerm.app");
-    if iterm {
+    let option_chars = types_option_chars(std::env::var("TERM_PROGRAM").ok().as_deref(), std::env::var("TERM").ok().as_deref());
+    if option_chars {
         watch_us_layout();
     }
 
@@ -621,7 +621,7 @@ fn session(
         if !crossterm::event::poll(Duration::from_millis(50))? {
             continue;
         }
-        let Some(ev) = outgoing(crossterm::event::read()?, iterm && US_LAYOUT.load(std::sync::atomic::Ordering::Relaxed)) else {
+        let Some(ev) = outgoing(crossterm::event::read()?, option_chars && US_LAYOUT.load(std::sync::atomic::Ordering::Relaxed)) else {
             continue;
         };
         if ClientMsg::Event(ev).write_to(&mut writer).is_err() {
@@ -1601,13 +1601,21 @@ fn _event_is_serializable(e: Event) -> String {
 mod tests {
 
     #[test]
-    fn kitty_is_asked_for_the_flags_that_were_tried() {
-        use crossterm::Command as _;
-        let mut push = String::new();
-        crossterm::event::PushKeyboardEnhancementFlags(super::KITTY_FLAGS).write_ansi(&mut push).unwrap();
-        assert_eq!(push, "\x1b[>13u", "disambiguate, alternate keys and all keys: shifted characters stay what they were");
-        assert!(super::kitty_keys(Some("xterm-kitty")));
-        assert!(!super::kitty_keys(Some("xterm-ghostty")) && !super::kitty_keys(Some("tmux-256color")) && !super::kitty_keys(None));
+    fn option_characters_are_read_back_only_in_iterm2_and_kitty() {
+        assert!(super::types_option_chars(Some("iTerm.app"), Some("xterm-256color")));
+        assert!(super::types_option_chars(None, Some("xterm-kitty")), "kitty sets no TERM_PROGRAM");
+        assert!(!super::types_option_chars(Some("ghostty"), Some("xterm-ghostty")), "Ghostty sends Option as a key");
+        assert!(!super::types_option_chars(Some("WezTerm"), Some("xterm-256color")));
+        assert!(!super::types_option_chars(Some("tmux"), Some("tmux-256color")), "inside tmux the terminal is unknown");
+    }
+
+    #[test]
+    fn an_input_method_turns_the_option_layer_off() {
+        let layout_only = "(\n        {\n        \"Bundle ID\" = \"com.apple.PressAndHold\";\n        InputSourceKind = \"Non Keyboard Input Method\";\n    },\n        {\n        InputSourceKind = \"Keyboard Layout\";\n        \"KeyboardLayout ID\" = 252;\n        \"KeyboardLayout Name\" = ABC;\n    }\n)\n";
+        assert!(!super::input_method_on(layout_only), "a layout and the accent popup");
+        let japanese = "(\n        {\n        \"Bundle ID\" = \"com.apple.inputmethod.Kotoeri.RomajiTyping\";\n        \"Input Mode\" = \"com.apple.inputmethod.Japanese\";\n        InputSourceKind = \"Input Mode\";\n    },\n        {\n        InputSourceKind = \"Keyboard Layout\";\n        \"KeyboardLayout ID\" = 0;\n        \"KeyboardLayout Name\" = \"U.S.\";\n    }\n)\n";
+        assert!(super::input_method_on(japanese), "an IME on top of the U.S. layout");
+        assert!(!super::input_method_on(""), "defaults could not answer");
     }
 
     #[test]
@@ -1615,8 +1623,12 @@ mod tests {
         use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, ModifierKeyCode};
         let key = |c, m| Event::Key(KeyEvent::new(KeyCode::Char(c), m));
         let option = Event::Key(KeyEvent::new(KeyCode::Modifier(ModifierKeyCode::LeftAlt), KeyModifiers::ALT));
-        assert_eq!(super::outgoing(option.clone(), false), None, "kitty reports Option alone; nothing has a use for it");
+        assert_eq!(super::outgoing(option.clone(), false), None, "a terminal that reports Option alone: nothing has a use for it");
         assert_eq!(super::outgoing(option, true), None);
+        assert_eq!(super::outgoing(key('q', KeyModifiers::SUPER), false), None, "Command and a letter nerd has no use for types nothing");
+        assert_eq!(super::outgoing(key('Q', KeyModifiers::SUPER | KeyModifiers::SHIFT), false), None);
+        let ctrl_cmd = key('q', KeyModifiers::SUPER | KeyModifiers::CONTROL);
+        assert_eq!(super::outgoing(ctrl_cmd.clone(), false), Some(ctrl_cmd), "with Control or Option it is still a key");
         assert_eq!(super::outgoing(key('†', KeyModifiers::NONE), true), Some(key('t', KeyModifiers::ALT)), "iTerm2 on a U.S. layout");
         assert_eq!(super::outgoing(key('†', KeyModifiers::NONE), false), Some(key('†', KeyModifiers::NONE)), "elsewhere it is typed");
         assert_eq!(super::outgoing(key('a', KeyModifiers::NONE), true), Some(key('a', KeyModifiers::NONE)));
