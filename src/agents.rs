@@ -126,6 +126,53 @@ fn host(h: &str) -> Option<String> {
     (name && labels.last()?.starts_with(|c: char| c.is_ascii_lowercase())).then(|| h.to_string())
 }
 
+/// An agent's hosts: one list, or (built-ins only) named provider groups a pane may choose from, `net` being their union.
+/// ceiling: ports are the agent's, so a provider on other ports cannot be a group; a port list per group would lift it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AgentNetwork {
+    pub net: Network,
+    /// Sorted by name; empty when the manifest names `hosts`.
+    pub providers: Vec<(String, Vec<String>)>,
+}
+
+const GROUPS: usize = 64;
+const AGENT_NETWORK_FORMS: &str = r#"agent.network is {"hosts": [...], "ports": [...]} (built-in agents may group their hosts as {"providers": {"name": [hosts], ...}, "ports": [...]})"#;
+
+impl<'de> Deserialize<'de> for AgentNetwork {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        agent_network(serde_json::Value::deserialize(d)?).map_err(serde::de::Error::custom)
+    }
+}
+
+fn agent_network(mut v: serde_json::Value) -> Result<AgentNetwork, String> {
+    use serde_json::Value;
+    let Some(groups) = v.as_object_mut().and_then(|o| o.remove("providers")) else {
+        return Ok(AgentNetwork { net: network(&v)?, providers: Vec::new() });
+    };
+    let Value::Object(groups) = groups else { return Err(format!("{AGENT_NETWORK_FORMS}; providers must be an object")) };
+    if v.get("hosts").is_some() {
+        return Err(format!("{AGENT_NETWORK_FORMS}; hosts or providers, not both"));
+    }
+    if groups.is_empty() || groups.len() > GROUPS {
+        return Err(format!("{AGENT_NETWORK_FORMS}; 1 to {GROUPS} providers"));
+    }
+    let mut providers = Vec::new();
+    for (name, hosts) in groups {
+        if !token(&name) {
+            return Err(format!("provider {name:?} must be lowercase letters, digits and dashes"));
+        }
+        let list = hosts.as_array().filter(|a| !a.is_empty()).ok_or_else(|| format!("provider {name:?} must list its hosts"))?;
+        let mut hosts = list.iter().map(|h| h.as_str().and_then(host).ok_or_else(|| format!("provider {name:?}: host {h} must be a lowercase domain name or an IP address"))).collect::<Result<Vec<_>, _>>()?;
+        hosts.sort();
+        hosts.dedup();
+        providers.push((name, hosts));
+    }
+    providers.sort();
+    let union: Vec<&String> = providers.iter().flat_map(|(_, h)| h).collect();
+    v["hosts"] = serde_json::json!(union);
+    Ok(AgentNetwork { net: network(&v)?, providers })
+}
+
 impl Network {
     /// Whether everything this reaches, `wider` reaches too.
     pub fn within(&self, wider: &Network) -> bool {
@@ -236,7 +283,7 @@ pub struct Agent {
     pub data: Vec<String>,
     /// Its provider's hosts and ports, for a pane set to "only these providers".
     #[serde(default)]
-    pub network: Network,
+    pub network: AgentNetwork,
     /// One sentence: how to turn the agent's own sandbox off.
     #[serde(default)]
     pub own_sandbox: Option<String>,
@@ -559,7 +606,7 @@ fn folder_rules(root: &Path, dir: &Path, problems: &mut Vec<String>) {
     }
 }
 
-fn token(s: &str) -> bool {
+pub fn token(s: &str) -> bool {
     !s.is_empty() && s.len() <= 64 && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
@@ -583,8 +630,12 @@ pub fn validate(m: &Manifest, others: &[Manifest]) -> Result<(), String> {
         return Err(format!("{} is a built-in's name", m.name));
     }
     let many = |n: &Network| matches!(n, Network::Internet { hosts, .. } if hosts.len() > HOSTS);
-    if !m.builtin && (many(&m.permissions.network) || many(&a.network)) {
+    if !m.builtin && (many(&m.permissions.network) || many(&a.network.net)) {
         return Err(format!("{NETWORK_FORMS}; at most {HOSTS} hosts and 8 ports"));
+    }
+    // a plugin that regrouped its hosts would change what a saved pane reaches without asking
+    if !m.builtin && !a.network.providers.is_empty() {
+        return Err("agent.network.providers is for built-in agents only: name the hosts".into());
     }
     if let Some(o) = others.iter().find(|o| o.name == m.name) {
         return Err(format!("{} is already taken by {}", m.name, if o.builtin { "a built-in" } else { "another plugin" }));
@@ -700,7 +751,7 @@ fn validate_mail(m: &Manifest) -> Result<(), String> {
             return Err(format!("data {d:?} {why}: an isolated pane could change what the agent runs"));
         }
     }
-    if a.network == Network::Localhost {
+    if a.network.net == Network::Localhost {
         return Err("an agent's network names its hosts and ports".into());
     }
     Ok(())
@@ -1341,6 +1392,93 @@ mod tests {
             assert!(p.contains("(deny file-read* file-write* file-ioctl (regex #\"^/dev/(tty|ttys[0-9]+"), "every plugin is kept off the terminals: {p}");
             let _ = std::fs::remove_dir_all(&dir);
         });
+    }
+
+    #[test]
+    fn an_agent_network_is_hosts_or_a_built_ins_provider_groups() {
+        use serde_json::json;
+        let n = |v: serde_json::Value| agent_network(v);
+        let hosts = n(json!({ "hosts": ["b.dev", "a.dev"], "ports": [443] })).unwrap();
+        assert_eq!(hosts, AgentNetwork { net: Network::Internet { hosts: vec!["a.dev".into(), "b.dev".into()], ports: vec![443] }, providers: Vec::new() });
+        let groups = n(json!({ "providers": { "zed": ["z.dev", "a.dev"], "acme": ["a.dev"] }, "ports": [443] })).unwrap();
+        assert_eq!(groups.providers, vec![("acme".to_string(), vec!["a.dev".to_string()]), ("zed".into(), vec!["a.dev".into(), "z.dev".into()])]);
+        assert_eq!(groups.net, Network::Internet { hosts: vec!["a.dev".into(), "z.dev".into()], ports: vec![443] }, "the union");
+        assert_eq!(n(serde_json::Value::Null), Ok(AgentNetwork::default()));
+        let many = |k: usize, per: usize| json!({ "providers": (0..k).map(|i| (format!("g{i}"), json!((0..per).map(|j| format!("h{i}-{j}.dev")).collect::<Vec<_>>()))).collect::<serde_json::Map<_, _>>(), "ports": [443] });
+        for (bad, says) in [
+            (json!({ "hosts": ["a.dev"], "providers": { "a": ["a.dev"] }, "ports": [443] }), "not both"),
+            (json!({ "providers": { "a": [] }, "ports": [443] }), "must list its hosts"),
+            (json!({ "providers": {}, "ports": [443] }), "1 to 64 providers"),
+            (json!({ "providers": ["a.dev"], "ports": [443] }), "must be an object"),
+            (json!({ "providers": { "A": ["a.dev"] }, "ports": [443] }), "lowercase letters"),
+            (json!({ "providers": { "a/b": ["a.dev"] }, "ports": [443] }), "lowercase letters"),
+            (json!({ "providers": { "a": ["A.dev"] }, "ports": [443] }), "lowercase domain name"),
+            (json!({ "providers": { "a": ["a.dev"] } }), "ports must be a list"),
+            (json!({ "providers": { "a": ["a.dev"] }, "ports": [443], "other": 1 }), "\"other\" is not one of its keys"),
+            (many(65, 1), "1 to 64 providers"),
+            (many(13, 5), "at most 16 hosts"),
+        ] {
+            let e = n(bad.clone()).unwrap_err();
+            assert!(e.contains(says), "{bad}: {e}");
+        }
+        assert!(n(many(64, 1)).is_ok(), "64 groups");
+        let mut builtin = fake(json!({ "network": many(16, 4) }));
+        builtin.builtin = true;
+        assert!(validate(&builtin, &builtins()).is_ok(), "a built-in's union may reach 64 hosts");
+        assert!(refused(json!({ "network": many(2, 1) })).contains("for built-in agents only"), "a user's or a plugin's manifest names hosts");
+        assert!(refused(json!({ "network": many(17, 1) })).contains("at most 16 hosts"), "a user's union counts against 16");
+    }
+
+    #[test]
+    fn pis_provider_groups_are_pinned() {
+        const WHY: &str = "renaming or removing a group strands panes saved with it: see docs/isolation.md";
+        let pi = builtins().into_iter().find(|m| m.name == "pi").unwrap().agent.network;
+        let want: &[(&str, &[&str])] = &[
+            ("amazon-bedrock", &["bedrock-runtime.eu-central-1.amazonaws.com", "bedrock-runtime.us-east-1.amazonaws.com"]),
+            ("ant-ling", &["api.ant-ling.com"]),
+            ("anthropic", &["api.anthropic.com", "claude.ai", "platform.claude.com"]),
+            ("baseten", &["inference.baseten.co"]),
+            ("cerebras", &["api.cerebras.ai"]),
+            ("deepseek", &["api.deepseek.com"]),
+            ("fireworks", &["api.fireworks.ai"]),
+            ("github-copilot", &["api.business.githubcopilot.com", "api.enterprise.githubcopilot.com", "api.github.com", "api.individual.githubcopilot.com", "github.com"]),
+            ("google", &["generativelanguage.googleapis.com"]),
+            ("groq", &["api.groq.com"]),
+            ("huggingface", &["router.huggingface.co"]),
+            ("kimi-coding", &["api.kimi.com", "auth.kimi.com"]),
+            ("meta", &["api.meta.ai", "auth.meta.com"]),
+            ("minimax", &["api.minimax.io"]),
+            ("minimax-cn", &["api.minimaxi.com"]),
+            ("mistral", &["api.mistral.ai"]),
+            ("moonshotai", &["api.moonshot.ai"]),
+            ("moonshotai-cn", &["api.moonshot.cn"]),
+            ("nvidia", &["integrate.api.nvidia.com"]),
+            ("openai", &["api.openai.com", "auth.openai.com"]),
+            ("openai-codex", &["auth.openai.com", "chatgpt.com"]),
+            ("opencode", &["opencode.ai"]),
+            ("openrouter", &["openrouter.ai", "us.openrouter.ai"]),
+            ("qwen-token-plan", &["token-plan.ap-southeast-1.maas.aliyuncs.com"]),
+            ("qwen-token-plan-cn", &["token-plan.cn-beijing.maas.aliyuncs.com"]),
+            ("radius", &["radius.pi.dev"]),
+            ("together", &["api.together.ai"]),
+            ("typesafe", &["api.typesafe.ai"]),
+            ("vercel-ai-gateway", &["ai-gateway.vercel.sh"]),
+            ("xai", &["api.x.ai", "auth.x.ai"]),
+            ("xiaomi", &["api.xiaomimimo.com"]),
+            ("xiaomi-token-plan-ams", &["token-plan-ams.xiaomimimo.com"]),
+            ("xiaomi-token-plan-cn", &["token-plan-cn.xiaomimimo.com"]),
+            ("xiaomi-token-plan-sgp", &["token-plan-sgp.xiaomimimo.com"]),
+            ("zai", &["api.z.ai"]),
+            ("zai-coding-cn", &["open.bigmodel.cn"]),
+        ];
+        let names: Vec<&str> = pi.providers.iter().map(|(g, _)| g.as_str()).collect();
+        assert_eq!(names, want.iter().map(|(g, _)| *g).collect::<Vec<_>>(), "{WHY}");
+        for ((g, hosts), (wg, wh)) in pi.providers.iter().zip(want) {
+            assert_eq!((g.as_str(), hosts.iter().map(String::as_str).collect::<Vec<_>>()), (*wg, wh.to_vec()), "{WHY}");
+        }
+        let Network::Internet { hosts, ports } = &pi.net else { panic!("pi names hosts") };
+        assert_eq!((hosts.len(), ports.as_slice()), (48, &[443][..]));
+        assert!(!hosts.iter().any(|h| h == "console.anthropic.com" || h == "api.githubcopilot.com"), "pi-ai 1.3.0 names neither: {hosts:?}");
     }
 
     #[test]

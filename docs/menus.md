@@ -67,6 +67,11 @@ Every window except a context menu is drawn through `chrome::dialog`, and `chrom
   exact delivery" when the pane's agent delivers through a hook that is not this build's. Then **Isolation…** as
   the pane's own tool. **Rename pane…** refuses a name another pane holds and asks keep or drop for a name with
   routes or waiting messages from before.
+- In the Isolation window, once an agent with providers (pi) is chosen under Only these providers, a line under the
+  chips says which (`pi: all`, `pi: deepseek, openai`) beside **[Choose providers…]**. It opens the view **Choose
+  providers** inside the window: a row **all** with its host count, then a row per provider with its hosts. A click
+  ticks a row (all clears the providers; a provider clears all); **[Enter] done** writes the choice back, **[Esc] back**
+  returns unchanged; done with nothing ticked stays and says so.
 - Tab menu and space menu: **Isolation for new panes…**, with "as the space" or "as nerd's default".
 - Settings → Messages: Messaging, Programs in panes may stop or update nerd, Set up a topology…, Accounts…. The
   server stores them in policy.json, not in config.json.

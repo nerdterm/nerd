@@ -1553,7 +1553,7 @@ impl App {
     /// Isolation… on a pane, or Isolation for new panes… on a tab or a space, as they are now.
     pub(super) fn isolation_overlay(&self, target: IsolationTarget) -> Overlay {
         let agents = crate::agents::all();
-        let providers: Vec<String> = agents.iter().filter(|m| matches!(m.agent.network, crate::agents::Network::Internet { .. })).map(|m| m.name.clone()).collect();
+        let providers: Vec<String> = agents.iter().filter(|m| matches!(m.agent.network.net, crate::agents::Network::Internet { .. })).map(|m| m.name.clone()).collect();
         let notes = agents.iter().filter_map(|m| Some(format!("{}: {}", m.title, m.agent.own_sandbox.as_ref()?))).collect();
         let accounts = crate::policy::current().accounts.iter().map(|a| a.name.clone()).collect();
         let (about, mut pick, inherit, agent, folder) = match target {
@@ -1572,15 +1572,16 @@ impl App {
         };
         let canon = |p: &std::path::Path| std::fs::canonicalize(p).ok();
         let home = crate::paths::home().is_some_and(|h| canon(&h).is_some() && canon(&h) == canon(&folder));
-        let chosen = match pick.as_ref().map(|i| &i.network) {
-            Some(crate::policy::Network::Providers(p)) if p.iter().any(|a| providers.contains(a)) => p.iter().filter(|a| providers.contains(a)).cloned().collect(),
-            _ => agent.filter(|a| providers.contains(a)).or_else(|| providers.first().cloned()).into_iter().collect(),
+        let groups: Vec<_> = agents.iter().filter(|m| !m.agent.network.providers.is_empty()).map(|m| (m.name.clone(), m.agent.network.clone())).collect();
+        let (chosen, stale) = match pick.as_ref().map(|i| &i.network) {
+            Some(crate::policy::Network::Providers(p)) => crate::isolation_ui::known(p, &providers, &groups),
+            _ => (agent.filter(|a| providers.contains(a)).or_else(|| providers.first().cloned()).into_iter().map(|a| (a, None)).collect(), Vec::new()),
         };
-        // Save keeps what the chips show, never a name that has no chip.
+        // Save keeps what the window shows: never a name or a group that is gone, never wider than saved.
         if let Some(crate::policy::Isolation { network: crate::policy::Network::Providers(p), .. }) = pick.as_mut() {
-            p.clone_from(&chosen);
+            *p = crate::policy::entries(&chosen);
         }
-        Overlay::Isolation(crate::isolation_ui::IsolationWin { target, about, pick, inherit, accounts, providers, chosen, notes, home })
+        Overlay::Isolation(crate::isolation_ui::IsolationWin { target, about, pick, inherit, accounts, providers, groups, chosen, stale, view: None, notes, home })
     }
 
     pub(super) fn isolation_outcome(&mut self, w: crate::isolation_ui::IsolationWin, out: crate::isolation_ui::Out) -> Overlay {

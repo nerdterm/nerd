@@ -470,7 +470,7 @@ pub fn abilities(m: &Manifest) -> Result<std::collections::BTreeSet<Ability>, St
         out.insert(Ability::Network(m.permissions.network.clone()));
     }
     if !m.agent.names.is_empty() {
-        out.insert(Ability::Agent { names: m.agent.names.clone(), config: m.agent.config.as_ref().map(|c| c.path.clone()), resume: m.agent.resume.clone(), network: m.agent.network.clone() });
+        out.insert(Ability::Agent { names: m.agent.names.clone(), config: m.agent.config.as_ref().map(|c| c.path.clone()), resume: m.agent.resume.clone(), network: m.agent.network.net.clone() });
     }
     Ok(out)
 }
