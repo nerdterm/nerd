@@ -34,7 +34,7 @@ scripts/setup.sh
 
 `setup.sh` enables the git hooks. Before every push they run `scripts/privacy.sh`, which refuses key material, tokens and private agent session links in what is pushed, and `scripts/gates.sh`: build, tests, clippy with warnings as errors, `cargo deny` and the same privacy check over the tree.
 
-`scripts/terminals.sh` runs nerd in Ghostty, Kitty, WezTerm, iTerm2 and Terminal.app, each on a test server of its own, and prints a table of what reached nerd from each: graphics, keys, paste, mouse and colour. Run it from Terminal.app after a change to how nerd talks to the terminal. Typing into the test windows needs Accessibility, and screenshots need Screen Recording, for the terminal it runs in; without them those columns say so. It types nothing into a terminal while another instance of that terminal is running, because the input could reach that instance instead.
+`scripts/terminals.sh` runs nerd in Ghostty, Kitty, WezTerm and iTerm2, each on a test server of its own, and prints a table of what reached nerd from each: graphics, keys, paste, mouse and colour. Run it from Terminal.app, which it does not test, after a change to how nerd talks to the terminal. Typing into the test windows needs Accessibility, and screenshots need Screen Recording, for the terminal it runs in; without them those columns say so. It types nothing into a terminal while another instance of that terminal is running, because the input could reach that instance instead.
 
 If you use Claude Code, the repository's `.claude/settings.json` applies to you: it denies `git push --no-verify` and destructive git commands, and its hook (`scripts/privacy-hook.sh`) refuses a command that carries a private session link, or a `gh` call that would post one.
 

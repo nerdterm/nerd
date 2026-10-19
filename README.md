@@ -89,17 +89,22 @@ Each agent is described by a manifest, `plugins/<name>/plugin.json` in the sourc
 - **macOS.** nerd relies on macOS for its sandbox, clipboard, sounds, image conversion and login item. Linux and Windows are planned by the maintainer; pull requests for them are not accepted.
 - **Apple Silicon** for the prebuilt binary. Intel Macs can build from source; this is not tested.
 - Any terminal with mouse support and 24-bit colour.
-- Full-quality image previews need a terminal with the Kitty graphics protocol (Ghostty, Kitty, WezTerm, iTerm2). Elsewhere, Terminal.app among them, they are drawn in coloured blocks, and nerd says so under the image.
+- Full-quality image previews need a terminal with the Kitty graphics protocol (Ghostty, Kitty, WezTerm, iTerm2). Elsewhere they are drawn in coloured blocks, and nerd says so under the image.
 - To build from source: Rust 1.88 or newer.
 
 ## Terminals
 
-nerd is checked in Ghostty, Kitty, WezTerm, iTerm2 and Terminal.app.
+nerd is checked in Ghostty, Kitty, WezTerm and iTerm2.
 
-- Option shortcuts need the terminal to send Option as Alt. Ghostty does on a U.S. layout; Kitty, iTerm2 and Terminal.app need one setting for it, and WezTerm one for its right Option key; see [Keys](docs/usage.md#keys).
+- Option shortcuts need the terminal to send Option as Alt. Ghostty does on a U.S. layout; Kitty and iTerm2 need one setting for it, and WezTerm one for its right Option key; see [Keys](docs/usage.md#keys).
 - nerd asks the terminal two things when it starts: whether it draws images by the Kitty graphics protocol, and its device attributes. Programs in panes get the cursor position, device attributes and colours from nerd itself, so they do not depend on the terminal.
 - WezTerm and iTerm2 show colours in Display P3, so nerd's colours look more saturated there than in the others.
-- Not checked: Alacritty, whose Homebrew cask is disabled because the app fails Gatekeeper, and Warp.
+- A margin around nerd, 16 points on every side; nerd sets the terminal's background, so the margin takes nerd's colour:
+  - Ghostty: `window-padding-x = 16`, `window-padding-y = 16` and `window-padding-balance = true`
+  - Kitty: `window_padding_width 16`
+  - WezTerm: `config.window_padding = { left = '16pt', right = '16pt', top = '16pt', bottom = '16pt' }`
+  - iTerm2: **Settings → Appearance → Panes**: **Side margins** and **Top & bottom margins** 16
+- Not checked: Terminal.app, which is not a target; Alacritty, whose Homebrew cask is disabled because the app fails Gatekeeper; and Warp.
 
 ## Limitations
 
