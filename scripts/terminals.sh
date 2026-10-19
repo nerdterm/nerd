@@ -45,7 +45,7 @@ try() {
     want=$1; shift
     at=$(wc -c <"$log")
     for keys in "$@"; do
-        "$post" ${keys%% *} "$wid" ${keys#"${keys%% *}"} 2>/dev/null || { echo "focus lost"; return; }
+        "$post" ${keys%% *} "$wid" ${keys#"${keys%% *}"} 2>"$run/err" || { echo "$t: $(cat "$run/err")" >>"$notes"; echo "focus lost"; return; }
     done
     sleep 0.7
     got=$(since "$at")
@@ -128,7 +128,7 @@ for t in "$@"; do
                     iterm) osascript -e "tell application \"iTerm\" to select window id $asid" >/dev/null 2>&1 || true ;;
                     terminal) osascript -e "tell application \"Terminal\" to set index of window id $asid to 1" >/dev/null 2>&1 || true ;;
                 esac
-                if "$post" raise "$wid" 2>/dev/null; then
+                if "$post" raise "$wid" 2>"$run/err"; then
                     cells="$(try "char 0x0" "key 0")${tab}$(try "char ALT" "key 0 option")"
                     cells="$cells${tab}$(try "Char('c') CONTROL" "key 8 control")"
                     cells="$cells${tab}$(try "Char('с') CONTROL" "key 8 control с")"
@@ -139,6 +139,7 @@ for t in "$@"; do
                     pbcopy <"$run/clipboard"
                     cells="$cells${tab}$(try "mouse Down(Left) 0x0 mouse Up(Left) 0x0" click)"
                 else
+                    echo "$t: $(cat "$run/err")" >>"$notes"
                     cells="focus not obtained${tab}focus not obtained${tab}focus not obtained${tab}focus not obtained${tab}focus not obtained${tab}focus not obtained${tab}focus not obtained"
                 fi
             else

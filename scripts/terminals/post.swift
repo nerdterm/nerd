@@ -44,26 +44,47 @@ func isFront(_ arg: String) -> Bool {
         && NSWorkspace.shared.frontmostApplication?.processIdentifier == pid(w)
 }
 
-func front(_ arg: String) {
-    need("input")
-    if !isFront(arg) { fail("window \(arg) is not the front window, nothing posted") }
+/// What is in front instead, for the note that says why nothing was posted.
+func frontNow() -> String {
+    let w = windows().first
+    let app = NSWorkspace.shared.frontmostApplication
+    let id = w?[kCGWindowNumber as String] as? Int ?? 0
+    let owner = w?[kCGWindowOwnerName as String] as? String ?? "?"
+    return "front is window \(id) of \(owner) pid \(w.map(pid) ?? 0), active app \(app?.localizedName ?? "?") pid \(app?.processIdentifier ?? 0)"
 }
 
-func flags(_ s: String) -> CGEventFlags {
-    var f = CGEventFlags()
-    for m in s.split(separator: ",") {
+func front(_ arg: String) {
+    need("input")
+    if !isFront(arg) { fail("window \(arg) is not the front window, nothing posted; \(frontNow())") }
+}
+
+/// Each modifier is pressed as a key of its own, so an app that tracks modifier state sees it go down and up.
+func modifiers(_ s: String) -> [(CGKeyCode, CGEventFlags)] {
+    s.split(separator: ",").map { m in
         switch m {
-        case "option": f.insert(.maskAlternate)
-        case "control": f.insert(.maskControl)
-        case "command": f.insert(.maskCommand)
-        case "shift": f.insert(.maskShift)
+        case "option": (58, .maskAlternate)
+        case "control": (59, .maskControl)
+        case "command": (55, .maskCommand)
+        case "shift": (56, .maskShift)
         default: fail("unknown modifier \(m)")
         }
     }
-    return f
 }
 
-let src = CGEventSource(stateID: .hidSystemState)
+func post(_ e: CGEvent, then pause: Double) {
+    e.post(tap: .cghidEventTap)
+    Thread.sleep(forTimeInterval: pause)
+}
+
+func modifier(_ code: CGKeyCode, _ held: CGEventFlags) {
+    let e = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: true)!
+    e.type = .flagsChanged
+    e.flags = held
+    post(e, then: 0.03)
+}
+
+// A private state: the flags set here never become the system's, or a later click would carry them.
+let src = CGEventSource(stateID: .privateState)
 let a = CommandLine.arguments
 switch a.count > 1 ? a[1] : "" {
 case "can" where a.count == 3:
@@ -75,26 +96,37 @@ case "windows":
 case "raise" where a.count == 3:
     _ = NSRunningApplication(processIdentifier: pid(window(a[2])))?.activate()
     Thread.sleep(forTimeInterval: 0.5)
-    if !isFront(a[2]) { fail("window \(a[2]) did not come to the front") }
+    if !isFront(a[2]) { fail("window \(a[2]) did not come to the front; \(frontNow())") }
+    Thread.sleep(forTimeInterval: 0.3)
 case "key" where (4...6).contains(a.count):
     front(a[2])
     guard let code = CGKeyCode(a[3]) else { fail("bad keycode \(a[3])") }
+    let mods = modifiers(a.count > 4 ? a[4] : "")
+    var held = CGEventFlags()
+    for (k, f) in mods {
+        held.formUnion(f)
+        modifier(k, held)
+    }
     for down in [true, false] {
         let e = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: down)!
-        e.flags = flags(a.count > 4 ? a[4] : "")
+        // Without modifiers the event keeps its own flags: an arrow carries fn and numpad.
+        if !mods.isEmpty { e.flags = e.flags.union(held) }
         if a.count > 5 {
             let u = Array(a[5].utf16)
             e.keyboardSetUnicodeString(stringLength: u.count, unicodeString: u)
         }
-        e.post(tap: .cghidEventTap)
+        post(e, then: down ? 0.03 : 0.05)
+    }
+    for (k, f) in mods.reversed() {
+        held.subtract(f)
+        modifier(k, held)
     }
 case "click" where a.count == 3:
     front(a[2])
     let r = bounds(window(a[2]))
     let p = CGPoint(x: r.midX, y: r.midY)
     for t in [CGEventType.leftMouseDown, .leftMouseUp] {
-        CGEvent(mouseEventSource: src, mouseType: t, mouseCursorPosition: p, mouseButton: .left)!.post(tap: .cghidEventTap)
-        Thread.sleep(forTimeInterval: 0.05)
+        post(CGEvent(mouseEventSource: src, mouseType: t, mouseCursorPosition: p, mouseButton: .left)!, then: 0.05)
     }
 case "colour" where a.count == 6:
     // Drawn into sRGB so the display profile does not shift the values the terminal was given.
