@@ -169,9 +169,7 @@ impl App {
                     self.dirty = true;
                     crate::log::info("graphics: the terminal answered late, images on");
                 }
-                // An image reply holds nothing typed, so its text is safe to log.
-                let what = if text.starts_with("Gi=") { text } else { format!("{} chars", text.chars().count()) };
-                crate::log::warn(&format!("terminal reply swallowed: {what}"));
+                crate::log::warn(&format!("terminal reply swallowed: {}", swallowed(text)));
             }
             if !late {
                 return true;
@@ -1170,6 +1168,11 @@ fn topology_back(what: &mut Pending) -> Option<Overlay> {
         Pending::Topology(_, back) => back.take().map(|w| Overlay::Messages(*w)),
         _ => None,
     }
+}
+
+/// How a swallowed reply goes into the log: an image reply holds nothing typed, so its text; anything else only its length.
+pub(super) fn swallowed(text: String) -> String {
+    if text.starts_with("Gi=") { text } else { format!("{} chars", text.chars().count()) }
 }
 
 fn inside(r: Rect, x: u16, y: u16) -> bool {

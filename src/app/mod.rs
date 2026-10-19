@@ -964,6 +964,13 @@ mod tests {
     }
 
     #[test]
+    fn a_swallowed_reply_is_logged_by_its_text_only_when_it_answers_an_image() {
+        assert_eq!(super::input::swallowed("Gi=31;OK".into()), "Gi=31;OK");
+        assert_eq!(super::input::swallowed("11;rgb:1313/1414/1717".into()), "21 chars", "it could hold what was typed meanwhile");
+        assert_eq!(super::input::swallowed("secret".into()), "6 chars");
+    }
+
+    #[test]
     fn connect_asks_the_client_and_drops_an_answer_nobody_waits_for() {
         use crate::proto::RemoteInstance;
         crate::session::tests::with_temp_state_dir("connect", || {
