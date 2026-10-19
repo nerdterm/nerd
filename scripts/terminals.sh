@@ -2,7 +2,7 @@
 # Starts nerd in each macOS terminal on a test server of its own and prints what reached the server from there.
 # Input needs Accessibility and screenshots need Screen Recording for the terminal this runs in; without them those
 # columns say "no permission". Run it from Terminal.app; input goes only to the test window it opened.
-# usage: scripts/terminals.sh [ghostty kitty wezterm iterm terminal]
+# usage: scripts/terminals.sh [ghostty kitty wezterm iterm]
 set -eu
 cd "$(git rev-parse --show-toplevel)"
 nerd=${NERD:-$PWD/target/release/nerd}
@@ -47,7 +47,7 @@ resolve() {
     case $t in
         ghostty | kitty | wezterm)
             wid=$(wins | awk -F "$tab" -v p="$pid" '$2 == p { n++; id = $1 } END { if (n == 1) print id }') ;;
-        iterm | terminal)
+        iterm)
             # The window AppleScript opened, only if it is new and holds the test tab alone, matched by bounds and name.
             as=$(osascript -e "tell application \"$app\" to get {count of tabs, bounds, name} of window id $asid" 2>/dev/null || true)
             box=$(echo "$as" | awk -F ', ' 'NF >= 5 { print $2 "," $3 "," $4 - $2 "," $5 - $3 }')
@@ -66,10 +66,7 @@ lost() {
 # Brings the test window to the front and posts one input there; posts nothing when it cannot prove that window is in front.
 step() {
     resolve || { lost "no test window"; return 1; }
-    case $t in
-        iterm) osascript -e "tell application \"iTerm\" to select window id $asid" >/dev/null 2>&1 || true ;;
-        terminal) osascript -e "tell application \"Terminal\" to set index of window id $asid to 1" >/dev/null 2>&1 || true ;;
-    esac
+    if [ "$t" = iterm ]; then osascript -e "tell application \"iTerm\" to select window id $asid" >/dev/null 2>&1 || true; fi
     "$post" raise "$wid" 2>"$run/err" || { lost "$(cat "$run/err")"; return 1; }
     sub=$1; shift
     "$post" "$sub" "$wid" "$@" 2>"$run/err" || { lost "$(cat "$run/err")"; return 1; }
@@ -102,14 +99,14 @@ try() {
     if [ "$got" = "$want" ]; then echo ok; else echo "${got:-nothing}"; fi
 }
 
-[ $# -gt 0 ] || set -- ghostty kitty wezterm iterm terminal
+[ $# -gt 0 ] || set -- ghostty kitty wezterm iterm
 for t in "$@"; do
     case $t in
         ghostty) app=Ghostty pat=ghostty offer=offered exe=/Ghostty.app/Contents/MacOS/ ;;
         kitty) app=kitty pat=kitty offer=offered exe=/kitty.app/Contents/MacOS/ ;;
         wezterm) app=WezTerm pat=wezterm offer=offered exe=/WezTerm.app/Contents/MacOS/ ;;
         iterm) app=iTerm pat=iterm offer="not offered" exe= ;;
-        terminal) app=Terminal pat=terminal offer="not offered" exe= ;;
+        *) echo "terminals: unknown terminal $t" >&2; exit 2 ;;
     esac
     if ! open -Ra "$app" 2>/dev/null; then
         echo "$t${tab}not installed" >>"$table"
@@ -128,13 +125,10 @@ for t in "$@"; do
         ghostty | kitty | wezterm)
             pgrep -f "$exe" >"$run/pids" || true
             $clean open -na "$app.app" --args -e $c ;;
-        *)
+        iterm)
             open -ga "$app" && sleep 2
             osascript -e "tell application \"$app\" to id of windows" 2>/dev/null | tr -s ', ' '\n' >"$run/as-before" || true
-            case $t in
-                iterm) asid=$(osascript -e "tell application \"iTerm\" to id of (create window with default profile command \"$c\")") || true ;;
-                terminal) asid=$(osascript -e "tell application \"Terminal\" to do script \"$c; exit\"" | sed -n 's/.*window id \([0-9]*\).*/\1/p') || true ;;
-            esac ;;
+            asid=$(osascript -e "tell application \"iTerm\" to id of (create window with default profile command \"$c\")") || true ;;
     esac
     i=0
     until grep -q ' attached: ' "$log" 2>/dev/null || [ $i -ge 30 ]; do sleep 0.5; i=$((i + 1)); done
@@ -214,12 +208,13 @@ for t in "$@"; do
     case $t in ghostty | kitty | wezterm)
         [ -z "$pid" ] || family "$pid" | while read -r p; do kill "$p" 2>/dev/null || true; done ;;
     # AppleScript's own id for the window it opened: it is not a window-server id.
-    iterm | terminal) [ -z "$asid" ] || osascript -e "tell application \"$app\" to close window id $asid" >/dev/null 2>&1 || true ;;
+    iterm) [ -z "$asid" ] || osascript -e "tell application \"$app\" to close window id $asid" >/dev/null 2>&1 || true ;;
     esac
     i=0
     while [ -n "$pid$asid" ] && resolve && [ $i -lt 10 ]; do sleep 0.5; i=$((i + 1)); done
     if [ -n "$pid$asid" ] && resolve; then echo "$t: window $wid left open" >>"$notes"; fi
 done
+echo "Terminal.app${tab}not checked: not a target" >>"$table"
 echo "Alacritty${tab}not checked: its Homebrew cask is disabled (fails Gatekeeper)" >>"$table"
 echo "Warp${tab}not checked: closed source, needs an account, has its own input editor" >>"$table"
 
