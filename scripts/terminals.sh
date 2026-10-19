@@ -23,6 +23,8 @@ clean="env -u TERM_PROGRAM -u TERM_PROGRAM_VERSION -u TERM -u TERMINFO -u COLORT
 if [ "$(defaults read -g AppleInterfaceStyle 2>/dev/null)" = Dark ]; then ground="19 20 23"; else ground="250 250 251"; fi
 # Off the 256-colour cube: a terminal that rounds 24-bit colour misses it by more than the tolerance.
 block="40 150 190"
+# The same block in sRGB from a terminal that reads 24-bit colour as Display P3 (WezTerm, iTerm2).
+p3="0 153 194"
 clip='nerd-terminals-paste-ok'
 tab=$(printf '\t')
 table=$run/table
@@ -67,7 +69,7 @@ for t in "$@"; do
     log="$h/Library/Application Support/nerd/instances/1/daemon.log"
     mkdir -p "$h"
     for rc in .zshrc .bash_profile; do
-        printf 'for i in 1 2 3 4 5 6; do printf "\\033[48;2;%s;%s;%sm%%*s\\033[0m\\n" "$COLUMNS" ""; done\n' $block >"$h/$rc"
+        printf 'for i in 1 2 3 4 5 6; do printf "\\033[48;2;%s;%s;%sm%%20s\\033[0m\\n" ""; done\n' $block >"$h/$rc"
     done
     # Started first, so the window an app opens on its own launch is not taken for the test window.
     case $t in iterm | terminal) open -ga "$app" && sleep 2 ;; esac
@@ -116,7 +118,10 @@ for t in "$@"; do
                 screencapture -x -o -l "$wid" "$shots/$t.png"
                 g=$("$post" colour "$shots/$t.png" $ground)
                 b=$("$post" colour "$shots/$t.png" $block)
-                [ "$g" -ge 10 ] && [ "$b" -ge 1 ] || colour="ground $g%, 24-bit $b%"
+                p=$("$post" colour "$shots/$t.png" $p3)
+                if [ "$g" -ge 1000 ] && [ "$b" -ge 10 ]; then colour=ok
+                elif [ "$g" -ge 1000 ] && [ "$p" -ge 10 ]; then colour="ok, Display P3"
+                else colour=$(echo "$g $b" | awk '{ printf "ground %d%%, 24-bit %.1f%%", $1 / 100, $2 / 100 }'); fi
             fi
             if [ "$input" = ok ]; then
                 case $t in

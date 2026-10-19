@@ -111,7 +111,8 @@ case "colour" where a.count == 6:
     for i in stride(from: 0, to: px.count, by: 4) where (0..<3).allSatisfy({ abs(Int(px[i + $0]) - want[$0]) <= 8 }) {
         hits += 1
     }
-    print(hits * 100 / max(w * h, 1))
+    // Parts per 10000: a 20-cell block is under one percent of a large window.
+    print(hits * 10000 / max(w * h, 1))
 default:
     fail("usage: post can input|screen | windows | raise <id> | key <id> <keycode> [mods] [text] | click <id> | colour <png> <r> <g> <b>")
 }
