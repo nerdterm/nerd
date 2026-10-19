@@ -90,10 +90,16 @@ switch a.count > 1 ? a[1] : "" {
 case "can" where a.count == 3:
     need(a[2])
 case "windows":
+    // Tab-separated: id, pid, owner, x,y,w,h, name. The name is empty without Screen Recording.
     for w in windows() {
-        print(w[kCGWindowNumber as String] as? Int ?? 0, pid(w), w[kCGWindowOwnerName as String] as? String ?? "?")
+        let r = bounds(w)
+        let box = [r.minX, r.minY, r.width, r.height].map { String(Int($0)) }.joined(separator: ",")
+        let fields = [String(w[kCGWindowNumber as String] as? Int ?? 0), String(pid(w)), w[kCGWindowOwnerName as String] as? String ?? "?", box,
+            w[kCGWindowName as String] as? String ?? ""]
+        print(fields.joined(separator: "\t"))
     }
 case "raise" where a.count == 3:
+    if isFront(a[2]) { break }
     _ = NSRunningApplication(processIdentifier: pid(window(a[2])))?.activate()
     Thread.sleep(forTimeInterval: 0.5)
     if !isFront(a[2]) { fail("window \(a[2]) did not come to the front; \(frontNow())") }
