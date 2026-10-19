@@ -51,7 +51,7 @@ impl App {
             crate::session::clear_screens();
             return false;
         }
-        let mut restored = 0usize;
+        let (mut restored, mut failed) = (0usize, Vec::new());
         self.rebuild_tabs(&snap, |app, ps| {
             let launch = restore_launch(ps);
             // Whatever the pane was running, its own process is the shell again.
@@ -59,7 +59,12 @@ impl App {
             // Stored size, so replay and the pty agree until the first resize; 0 would make a 0-row grid.
             // Clamped to 1000: a hand-edited snapshot must not allocate a giant grid.
             let (cols, rows) = if ps.cols == 0 || ps.rows == 0 { (80, 24) } else { (ps.cols.min(1000), ps.rows.min(1000)) };
-            let mut pty = Pty::spawn(ps.id, &argv, &ps.cwd, cols, rows, app.bell.clone(), &ps.isolation).map_err(|e| crate::log::error(&format!("pane {}: not restored: {e}", ps.id))).ok()?;
+            let mut pty = Pty::spawn(ps.id, &argv, &ps.cwd, cols, rows, app.bell.clone(), &ps.isolation)
+                .map_err(|e| {
+                    crate::log::error(&format!("pane {}: not restored: {e}", ps.id));
+                    failed.push(format!("{}: {e}", ps.label.clone().unwrap_or_else(|| format!("pane {}", ps.id))));
+                })
+                .ok()?;
             if let Some(cmd) = &launch {
                 // Typed in as the human would type it, so leaving the agent lands on the prompt.
                 match restore_line(cmd) {
@@ -77,6 +82,9 @@ impl App {
             let _ = std::fs::remove_file(crate::session::screen_path(ps.id));
             Some(Pane { command, label: ps.label.clone(), agent_session: ps.session(), isolation: ps.isolation.clone(), ..Pane::new(ps.id, term, pty, ps.cwd.clone(), argv) })
         });
+        if !failed.is_empty() {
+            self.notice = Some(format!("{} not restored: {}", if failed.len() == 1 { "1 pane".into() } else { format!("{} panes", failed.len()) }, failed.join("; ")));
+        }
         let stale = crate::session::clear_screens();
         if restored > 0 || stale > 0 {
             crate::log::info(&format!("screens: {restored} restored, {stale} removed"));

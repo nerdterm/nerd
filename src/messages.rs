@@ -40,6 +40,14 @@ fn cells(s: &str) -> usize {
     crate::slots::cells(s)
 }
 
+/// `s` in at most `max` characters, the last one `…` when cut.
+pub fn cut(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    s.chars().take(max.saturating_sub(1)).chain(['…']).collect()
+}
+
 pub fn width<H>(l: &Line<H>) -> usize {
     l.iter().map(|(t, _, _)| cells(t)).sum()
 }
@@ -193,6 +201,8 @@ const W: u8 = 8;
 const CELL: usize = 9;
 /// A card's height: the border, the name, the agent, the isolation, the border.
 const CH: usize = 5;
+/// The widest a card's isolation line grows, so one pane's long list does not widen every card.
+const CARD_WORDS: usize = 36;
 /// Between columns: the exit cell, six lanes, and the next column's exit cell.
 const GX: usize = 8;
 /// Between card rows: two lanes and the arrow row.
@@ -972,7 +982,7 @@ fn card_text(c: &Card) -> ((String, String), String, String) {
     let (l2, l3) = match (c.name.as_str(), c.pane) {
         ("you", _) => ("the owner".into(), String::new()),
         (_, None) => ("no pane holds".into(), "this name now".into()),
-        _ => (c.agent.clone().unwrap_or_else(|| "shell".into()), c.isolation.words()),
+        _ => (c.agent.clone().unwrap_or_else(|| "shell".into()), cut(&c.isolation.words(), CARD_WORDS)),
     };
     ((c.name.clone(), tag), l2, l3)
 }
@@ -1426,6 +1436,17 @@ mod tests {
         assert!(drawn(&m, &v, 100, 20).1.contains("columns 2–4 of 7"), "shift: a column across");
         wheel(&mut m, MouseEventKind::ScrollLeft, KeyModifiers::NONE);
         assert!(drawn(&m, &v, 100, 20).1.contains("columns 1–3 of 7"));
+    }
+
+    #[test]
+    fn a_cards_isolation_line_is_cut_at_its_width() {
+        let iso = |e: &[&str]| Isolation { files: Files::Folder, network: Network::Providers(e.iter().map(|s| s.to_string()).collect()) };
+        let short = card("reader", Some(3), "main", Some("pi"), iso(&["pi/deepseek"]));
+        assert_eq!(card_text(&short).2, "this folder only, only pi (deepseek)");
+        let long = card("reader", Some(3), "main", Some("pi"), iso(&["claude", "pi/deepseek", "pi/openai", "pi/xai", "pi/zai"]));
+        let l3 = card_text(&long).2;
+        assert_eq!((l3.chars().count(), l3.as_str()), (CARD_WORDS, "this folder only, only claude, pi (…"));
+        assert_eq!(card_width(&long), 4 + CARD_WORDS);
     }
 
     #[test]

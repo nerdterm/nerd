@@ -299,6 +299,7 @@ impl App {
             Ok(pty) => pty,
             Err(e) => {
                 crate::log::error(&format!("pane {id}: the shell would not start again: {e}"));
+                self.notice = Some(format!("{}: the shell would not start again: {e}", ps.label.clone().unwrap_or_else(|| format!("pane {id}"))));
                 return false;
             }
         };

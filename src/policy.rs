@@ -344,9 +344,62 @@ pub enum Files {
 pub enum Network {
     #[default]
     Open,
-    /// The agents whose manifest hosts are allowed.
+    /// Entries read by `entry`: `"pi"` is every provider of pi, `"pi/deepseek"` only that one.
     Providers(Vec<String>),
     None,
+}
+
+/// A providers entry: the agent, and the one provider group it names, if any; None when malformed.
+pub fn entry(s: &str) -> Option<(&str, Option<&str>)> {
+    let tok = crate::agents::token;
+    match s.split_once('/') {
+        None => tok(s).then_some((s, None)),
+        Some((a, g)) => (tok(a) && tok(g)).then_some((a, Some(g))),
+    }
+}
+
+/// Per agent: every provider (None) or the groups named, sorted.
+pub type Chosen = Vec<(String, Option<Vec<String>>)>;
+
+/// Providers entries by agent in first-seen order, and the malformed ones; the agent alone beside some of its groups is the whole agent.
+pub fn chosen(entries: &[String]) -> (Chosen, Vec<String>) {
+    let (mut out, mut bad): (Chosen, Vec<String>) = (Vec::new(), Vec::new());
+    for e in entries {
+        let Some((a, g)) = entry(e) else {
+            bad.push(e.clone());
+            continue;
+        };
+        match (out.iter_mut().find(|(x, _)| x == a), g) {
+            (Some((_, all)), None) => *all = None,
+            (Some((_, Some(gs))), Some(g)) => gs.push(g.into()),
+            (Some((_, None)), Some(_)) => {}
+            (None, g) => out.push((a.into(), g.map(|g| vec![g.into()]))),
+        }
+    }
+    for (_, gs) in &mut out {
+        if let Some(gs) = gs {
+            gs.sort();
+            gs.dedup();
+        }
+    }
+    (out, bad)
+}
+
+/// What is saved: `pi`, or `pi/<group>` per group, sorted, never both.
+pub fn entries(chosen: &[(String, Option<Vec<String>>)]) -> Vec<String> {
+    let mut out = Vec::new();
+    for (a, gs) in chosen {
+        match gs {
+            None => out.push(a.clone()),
+            Some(gs) => {
+                let mut gs = gs.clone();
+                gs.sort();
+                gs.dedup();
+                out.extend(gs.iter().map(|g| format!("{a}/{g}")));
+            }
+        }
+    }
+    out
 }
 
 impl Isolation {
@@ -363,7 +416,11 @@ impl Isolation {
         };
         let network = match &self.network {
             Network::Open => None,
-            Network::Providers(a) => Some(format!("only {}", a.join(", "))),
+            Network::Providers(a) => {
+                let (c, bad) = chosen(a);
+                let said = c.iter().map(|(a, gs)| gs.as_ref().map_or_else(|| a.clone(), |gs| format!("{a} ({})", gs.join(", "))));
+                Some(format!("only {}", said.chain(bad).collect::<Vec<_>>().join(", ")))
+            }
             Network::None => Some("no network".to_string()),
         };
         files.into_iter().chain(network).collect::<Vec<_>>().join(", ")
@@ -601,5 +658,25 @@ mod tests {
         let i = Isolation { files: Files::Account("scout".into()), network: Network::None };
         assert_eq!(i.words(), "as scout, no network");
         assert_eq!(Isolation { files: Files::Folder, network: Network::Providers(vec!["claude".into(), "gemini".into()]) }.words(), "this folder only, only claude, gemini");
+        let only = |e: &[&str]| Isolation { files: Files::Everything, network: Network::Providers(e.iter().map(|s| s.to_string()).collect()) }.words();
+        assert_eq!(only(&["pi/deepseek"]), "only pi (deepseek)");
+        assert_eq!(only(&["pi"]), "only pi");
+        assert_eq!(only(&["claude", "pi/openai", "pi/deepseek"]), "only claude, pi (deepseek, openai)");
+        assert_eq!(only(&["pi/deepseek", "pi"]), "only pi", "the agent beside its groups is the whole agent");
+    }
+
+    #[test]
+    fn a_providers_entry_is_an_agent_or_an_agent_and_one_group() {
+        for (s, want) in [("pi", Some(("pi", None))), ("pi/deepseek", Some(("pi", Some("deepseek")))), ("open-code2/x-1", Some(("open-code2", Some("x-1"))))] {
+            assert_eq!(entry(s), want, "{s}");
+        }
+        for bad in ["", "pi/", "/x", "pi/x/y", "Pi", "pi/DeepSeek", "pi deepseek", "pi//x", &"x".repeat(65)] {
+            assert_eq!(entry(bad), None, "{bad:?}");
+        }
+        let e = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let (c, bad) = chosen(&e(&["pi/openai", "claude", "pi/deepseek", "pi/openai", "Bad", "codex/x", "codex"]));
+        assert_eq!(c, vec![("pi".to_string(), Some(vec!["deepseek".to_string(), "openai".into()])), ("claude".into(), None), ("codex".into(), None)]);
+        assert_eq!(bad, ["Bad"]);
+        assert_eq!(entries(&c), ["pi/deepseek", "pi/openai", "claude", "codex"], "normal form: sorted groups, no duplicates, never the agent beside them");
     }
 }

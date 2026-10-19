@@ -88,9 +88,36 @@ pub fn wrap(id: PaneId, argv: &[String], cwd: &Path, iso: &Isolation, env: &mut 
 
 static SHARED: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
 
-/// What a pane set to "only these providers" reaches: the chosen agents' hosts on the ports they all name.
-pub fn providers_net(agents: &[String]) -> Result<crate::proxy::Net, String> {
-    merge(agents.iter().map(|a| (a.as_str(), crate::agents::get(a).map(|m| m.agent.network).unwrap_or_default())))
+/// What a pane set to "only these providers" reaches: the chosen agents' hosts, or their chosen providers' hosts, on the ports they all name.
+pub fn providers_net(entries: &[String]) -> Result<crate::proxy::Net, String> {
+    resolve(entries, |a| crate::agents::get(a).map(|m| m.agent.network).unwrap_or_default())
+}
+
+/// A group that is gone or unknown is refused, never read as the whole agent.
+fn resolve(entries: &[String], network_of: impl Fn(&str) -> crate::agents::AgentNetwork) -> Result<crate::proxy::Net, String> {
+    use crate::agents::Network::Internet;
+    let (chosen, bad) = crate::policy::chosen(entries);
+    if let Some(e) = bad.first() {
+        return Err(format!("{e:?} is not an agent or an agent/provider"));
+    }
+    let mut nets = Vec::new();
+    for (agent, groups) in &chosen {
+        let n = network_of(agent);
+        let net = match (groups, &n.net) {
+            (None, _) | (Some(_), crate::agents::Network::None | crate::agents::Network::Localhost) => n.net,
+            (Some(_), Internet { .. }) if n.providers.is_empty() => return Err(format!("{agent} has no providers to choose from")),
+            (Some(groups), Internet { ports, .. }) => {
+                let mut hosts = Vec::new();
+                for g in groups {
+                    let (_, h) = n.providers.iter().find(|(name, _)| name == g).ok_or_else(|| format!("{agent} has no provider {g} any more"))?;
+                    hosts.extend(h.iter().cloned());
+                }
+                Internet { hosts, ports: ports.clone() }
+            }
+        };
+        nets.push((agent.as_str(), net));
+    }
+    merge(nets.into_iter())
 }
 
 /// The proxy keeps one port list for all its hosts, so agents naming different ports cannot share a pane.
@@ -654,7 +681,67 @@ mod tests {
             assert!(!app.restart_pane(1), "its shell is refused, never started unwrapped");
             let log = std::fs::read_to_string(crate::session::state_dir().join("daemon.log")).unwrap();
             assert!(log.contains("the shell would not start again: no-such-agent names no hosts"), "{log}");
+            assert_eq!(app.notice.as_deref(), Some("pane 1: the shell would not start again: no-such-agent names no hosts"));
         });
+    }
+
+    #[test]
+    fn panes_whose_saved_provider_is_gone_are_not_restored_and_the_notice_names_them() {
+        use crate::app::{App, Pane, Space, Tab};
+        crate::session::tests::with_temp_state_dir("restore-gone", || {
+            let mut app = App::new(crate::config::Config::default());
+            let pane = |id, iso: &[&str], label: Option<&str>| {
+                let (pty, _) = crate::pty::Pty::fake(id, std::fs::File::create("/dev/null").unwrap());
+                let mut p = Pane::new(id, crate::term::Term::new(80, 24, 100), pty, "/".into(), vec!["/bin/zsh".into()]);
+                p.isolation = Isolation { files: Files::Folder, network: Network::Providers(iso.iter().map(|s| s.to_string()).collect()) };
+                p.label = label.map(Into::into);
+                p
+            };
+            let mut layout = crate::layout::Layout::new(1);
+            layout.split(crate::layout::Dir::Horizontal, 2);
+            let tab = Tab { name: None, layout, panes: [(1, pane(1, &["pi/xyz"], Some("reader"))), (2, pane(2, &["pi/deepseek", "nobody"], None))].into(), isolation_new: None };
+            app.spaces.push(Space { name: None, cwd: "/".into(), tabs: vec![tab], active_tab: 0, isolation_new: None });
+            crate::session::save(&app.snapshot()).unwrap();
+            let mut again = App::new(crate::config::Config::default());
+            again.restore();
+            let notice = again.notice.unwrap_or_default();
+            assert!(notice.starts_with("2 panes not restored: ") && notice.contains("reader: pi has no provider xyz any more") && notice.contains("pane 2: nobody names no hosts"), "{notice}");
+            assert_eq!(again.spaces.iter().flat_map(|s| &s.tabs).map(|t| t.panes.len()).sum::<usize>(), 0, "nothing started in their place");
+        });
+    }
+
+    #[test]
+    fn a_chosen_provider_opens_only_its_hosts_and_a_gone_one_nothing() {
+        use crate::agents::{AgentNetwork, Network::Internet};
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let fixture = |a: &str| match a {
+            "fake" => AgentNetwork { net: Internet { hosts: s(&["a.dev", "b.dev", "c.dev"]), ports: vec![443] }, providers: vec![("alpha".into(), s(&["a.dev"])), ("beta".into(), s(&["b.dev", "c.dev"]))] },
+            "plain" => AgentNetwork { net: Internet { hosts: s(&["p.dev"]), ports: vec![443] }, providers: Vec::new() },
+            _ => AgentNetwork::default(),
+        };
+        let r = |e: &[&str]| resolve(&s(e), fixture).map(|n| n.hosts);
+        assert_eq!(r(&["fake/alpha"]), Ok(s(&["a.dev"])));
+        assert_eq!(r(&["fake/beta", "fake/alpha"]), Ok(s(&["a.dev", "b.dev", "c.dev"])));
+        assert_eq!(r(&["fake"]), Ok(s(&["a.dev", "b.dev", "c.dev"])), "the agent alone: all its providers");
+        assert_eq!(r(&["fake/alpha", "fake"]), Ok(s(&["a.dev", "b.dev", "c.dev"])), "the agent beside a group: all");
+        assert_eq!(r(&["fake/alpha", "fake/alpha"]), Ok(s(&["a.dev"])), "duplicates are harmless");
+        assert_eq!(r(&["plain", "fake/alpha"]), Ok(s(&["a.dev", "p.dev"])));
+        assert_eq!(r(&["fake/gone"]), Err("fake has no provider gone any more".into()), "never the whole agent");
+        assert_eq!(r(&["fake/alpha", "fake/gone"]), Err("fake has no provider gone any more".into()));
+        assert_eq!(r(&["plain/x"]), Err("plain has no providers to choose from".into()));
+        assert_eq!(r(&["nobody/x"]), Err("nobody names no hosts".into()));
+        assert_eq!(r(&["fake/"]), Err("\"fake/\" is not an agent or an agent/provider".into()));
+        assert_eq!(r(&["fake/a/b"]), Err("\"fake/a/b\" is not an agent or an agent/provider".into()));
+        assert_eq!(r(&[]), Err("no provider is chosen".into()));
+    }
+
+    #[test]
+    fn pis_saved_choices_resolve_through_its_manifest() {
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert_eq!(providers_net(&s(&["pi"])).unwrap().hosts.len(), 48, "an old saved pi is every provider");
+        assert_eq!(providers_net(&s(&["pi/deepseek"])).unwrap().hosts, ["api.deepseek.com"]);
+        assert_eq!(providers_net(&s(&["pi/openai-codex"])).unwrap().hosts, ["auth.openai.com", "chatgpt.com"]);
+        assert_eq!(providers_net(&s(&["pi/xyz"])).unwrap_err(), "pi has no provider xyz any more");
     }
 
     #[test]
@@ -698,6 +785,8 @@ mod tests {
         let net = crate::proxy::Net::parse(&hosts).unwrap();
         assert!(["api.anthropic.com", "accounts.google.com", "api.openai.com"].iter().all(|h| net.hosts.iter().filter(|n| n == h).count() == 1), "every chosen agent's hosts, each once: {hosts}");
         assert_eq!(net.ports, [443], "{hosts}");
+        let got = wrap(3, &argv, Path::new("/w"), &Isolation { files: Files::Everything, network: Network::Providers(vec!["pi/deepseek".into()]) }, &mut env).unwrap();
+        assert_eq!(got.windows(2).find(|w| w[0] == "--hosts").map(|w| w[1].as_str()), Some("api.deepseek.com;443"), "{got:?}");
         let e = wrap(3, &argv, Path::new("/w"), &Isolation { files: Files::Account("nobody-here".into()), network: Network::Open }, &mut env).unwrap_err();
         assert_eq!(e.to_string(), "nobody-here is not an admitted account");
     }

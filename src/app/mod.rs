@@ -1967,6 +1967,38 @@ mod tests {
     }
 
     #[test]
+    fn isolation_keeps_a_saved_provider_choice_and_never_turns_what_is_gone_into_the_agent() {
+        use crate::isolation_ui::Out;
+        use crate::policy::{Files, Isolation, Network};
+        let only = |e: &[&str]| Isolation { files: Files::Everything, network: Network::Providers(e.iter().map(|s| s.to_string()).collect()) };
+        let open = |app: &App, t| match app.isolation_overlay(t) {
+            Overlay::Isolation(w) => w,
+            _ => panic!("no window"),
+        };
+        let enter = |w: &mut crate::isolation_ui::IsolationWin| w.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        crate::config::tests::with_temp_home(|| {
+            let mut app = named();
+            app.pane_mut(1).unwrap().isolation = only(&["pi/deepseek"]);
+            assert_eq!(enter(&mut open(&app, IsolationTarget::Pane(1))), Out::Save(Some(only(&["pi/deepseek"])), false), "a pane's subset, opened and saved");
+            app.spaces[0].tabs[0].isolation_new = Some(only(&["pi/openai", "pi/deepseek"]));
+            assert_eq!(enter(&mut open(&app, IsolationTarget::Tab(0, 0))), Out::Save(Some(only(&["pi/deepseek", "pi/openai"])), false), "a tab's subset");
+            app.pane_mut(1).unwrap().isolation = only(&["pi/xyz", "pi/deepseek"]);
+            let mut w = open(&app, IsolationTarget::Pane(1));
+            let text: String = w.lines(&crate::render::Theme::dark()).iter().flatten().map(|(t, _, _)| t.as_str()).collect();
+            assert!(text.contains("xyz: no longer in pi's manifest") && text.contains("pi: deepseek"), "{text}");
+            assert_eq!(enter(&mut w), Out::Save(Some(only(&["pi/deepseek"])), false), "a gone provider is dropped on save");
+            for gone in [&["pi/xyz"][..], &["foo"]] {
+                app.pane_mut(1).unwrap().isolation = only(gone);
+                let mut w = open(&app, IsolationTarget::Pane(1));
+                let out = enter(&mut w);
+                assert_eq!(out, Out::Save(Some(only(&[])), false), "{gone:?}: never pi");
+                app.isolation_outcome(w, out);
+                assert_eq!((app.notice.as_deref(), &app.pane(1).unwrap().isolation), (Some("no provider is chosen"), &only(gone)), "{gone:?}: refused, the pane unchanged");
+            }
+        });
+    }
+
+    #[test]
     fn rename_reads_the_label_of_a_pane_in_another_tab() {
         let mut app = named();
         for (id, want) in [(4, "coder"), (3, "reader")] {
