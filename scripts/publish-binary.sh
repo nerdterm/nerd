@@ -36,3 +36,6 @@ gh release upload "$tag" "$work/$name" "$work/$name.sha256" --clobber
 gh release edit "$tag" --draft=false
 git worktree remove --force "$work/src"
 echo "attached $name to $tag and published it"
+# nerdterm.dev is built from the latest release: rebuild it now rather than at the next daily run.
+gh workflow run pages --repo nerdterm/nerd-plugins
+echo "started the nerdterm.dev build"
