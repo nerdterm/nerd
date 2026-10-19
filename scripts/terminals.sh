@@ -70,20 +70,28 @@ step() {
     "$post" "$sub" "$wid" "$@" 2>"$run/err" || { lost "$(cat "$run/err")"; return 1; }
 }
 
-# New trace lines since byte $1 of the log, shortened: "trace key char KeyModifiers(ALT)" reads "char ALT".
+# Input trace lines from byte $1 to byte $2 of the log, shortened: "trace key char KeyModifiers(ALT)" reads "char ALT".
 since() {
-    tail -c +$(($1 + 1)) "$log" | sed -n 's/.*trace \(key \)\{0,1\}//p' | grep -v '^frames' | sed 's/KeyModifiers(\([^)]*\))/\1/' | paste -sd' ' -
+    tail -c +$(($1 + 1)) "$log" | head -c $(($2 - $1)) | sed -n 's/.*trace \(key \)\{0,1\}//p' | grep -v '^frames' | sed 's/KeyModifiers(\([^)]*\))/\1/' | paste -sd' ' -
 }
+
+arrived() { tail -c +$(($1 + 1)) "$log" | grep -c 'trace \(key\|paste\|mouse\)' || true; }
 
 # Posts each input (post's arguments without the window), then says ok, what arrived instead of $want, or nothing.
 try() {
     want=$1; shift
     at=$(wc -c <"$log")
+    n=0
     for keys in "$@"; do
         step ${keys%% *} ${keys#"${keys%% *}"} || { echo "focus lost"; return; }
+        case $keys in click) n=$((n + 2)) ;; *) n=$((n + 1)) ;; esac
     done
-    sleep 0.7
-    got=$(since "$at")
+    # As many lines as inputs or 2 s, then 0.3 s with nothing new: a late line must not land in the next step.
+    i=0
+    while [ "$(arrived "$at")" -lt $n ] && [ $i -lt 20 ]; do sleep 0.1; i=$((i + 1)); done
+    i=0 seen=-1
+    while [ "$(arrived "$at")" != "$seen" ] && [ $i -lt 10 ]; do seen=$(arrived "$at"); sleep 0.3; i=$((i + 1)); done
+    got=$(since "$at" "$(wc -c <"$log")")
     if [ "$got" = "$want" ]; then echo ok; else echo "${got:-nothing}"; fi
 }
 
@@ -164,7 +172,14 @@ for t in "$@"; do
                 elif [ "$g" -ge 1000 ] && [ "$p" -ge 10 ]; then colour="ok, Display P3"
                 else colour=$(echo "$g $b" | awk '{ printf "ground %d%%, 24-bit %.1f%%", $1 / 100, $2 / 100 }'); fi
             fi
-            if [ "$input" = ok ]; then
+            others=
+            if [ -n "$exe" ]; then others=$({ pgrep -f "$exe" || true; } | grep -xFf "$run/pids" | paste -sd' ' - || true); fi
+            if [ "$input" = ok ] && [ -n "$others" ]; then
+                # Events posted to one instance of an app can reach another instance of the same app, the user's own.
+                no="not checked: another $app is running"
+                cells="$no${tab}$no${tab}$no${tab}$no${tab}$no${tab}$no${tab}$no"
+                echo "$t: another $app is running (pid $others), so no input was posted; quit it to check this row's input" >>"$notes"
+            elif [ "$input" = ok ]; then
                 cells="$(try "char 0x0" "key 0")${tab}$(try "char ALT" "key 0 option")"
                 cells="$cells${tab}$(try "Char('c') CONTROL" "key 8 control")"
                 # kitty reads Control and с as Control and c, the key under it: what a shortcut needs.
@@ -188,9 +203,9 @@ for t in "$@"; do
     $clean HOME="$h" NERD_SOCKET="$h/s.sock" "$nerd" --stop >/dev/null || true
     sleep 2
     if [ -n "$server" ] && ps -p "$server" >/dev/null; then echo "$t: server $server still running" >>"$notes"; fi
-    # The one process `open -n` started for this run, never one that was running before it.
+    # Only what `open -n` started for this run, even with no window found; never a process running before it.
     case $t in ghostty | kitty | wezterm)
-        [ -z "$pid" ] || kill "$pid" 2>/dev/null || true ;;
+        while read -r p; do kill "$p" 2>/dev/null || true; done <"$run/new-pids" ;;
     # AppleScript's own id for the window it opened: it is not a window-server id.
     iterm | terminal) [ -z "$asid" ] || osascript -e "tell application \"$app\" to close window id $asid" >/dev/null 2>&1 || true ;;
     esac
