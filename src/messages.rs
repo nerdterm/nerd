@@ -468,11 +468,13 @@ impl Messages {
         let r = crate::chrome::fit(screen, u16::MAX, u16::MAX);
         let w = r.width.saturating_sub(2 * crate::chrome::DIALOG_FRAME.horizontal) as usize;
         let room = r.height.saturating_sub(2 * crate::chrome::DIALOG_FRAME.vertical + 2) as usize;
-        let head = match &m.state {
-            State::Held(Hold::RouteRequest) => format!("{} asks to write to {}", m.from.name(), m.to.name()),
-            _ => format!("{} → {}", m.from.name(), m.to.name()),
-        };
-        let mut lines: Vec<Line<Click>> = vec![vec![(head, g.fg(theme.text).add_modifier(Modifier::BOLD), None), (format!(" · waited {}", age(m)), g.fg(theme.muted), None)]];
+        let verb = if m.state == State::Held(Hold::RouteRequest) { " asks to write to " } else { " → " };
+        let waited = format!(" · waited {}", age(m));
+        // The names give way, not the wait: the shorter keeps up to half the room whole.
+        let (a, b, both) = (m.from.name(), m.to.name(), w.saturating_sub(cells(verb) + cells(&waited)));
+        let keep_a = a.chars().count().min(both.saturating_sub(b.chars().count().min(both / 2)));
+        let head = format!("{}{verb}{}", cut(a, keep_a), cut(b, both - keep_a));
+        let mut lines: Vec<Line<Click>> = vec![vec![(head, g.fg(theme.text).add_modifier(Modifier::BOLD), None), (waited, g.fg(theme.muted), None)]];
         if let State::Held(h) = &m.state {
             lines.extend(crate::menu::wrap(&h.sentence(m), w).into_iter().map(|l| vec![(l, g.fg(theme.warn), None)]));
         }
@@ -1648,7 +1650,7 @@ mod tests {
         let mut m = shown_on("m1", &v);
         let (d, shown) = drawn(&m, &v, 80, 24);
         assert_eq!((d.frame.width, d.frame.height), (70, 20));
-        assert!(shown.contains("coder → reader · waited 2m") && shown.contains("coder and reader have answered each other 8 times"), "{shown}");
+        assert!(shown.contains("coder → reader · waited 2m") && shown.contains("coder and reader have written to each other 8 times"), "{shown}");
         assert!(shown.contains("[d] deliver  [h] deliver, allow 1 hour  [x] drop  [r] reply…") && shown.contains("[Esc] close"), "{shown}");
         assert!(shown.contains("word word") && shown.contains("lines 1–"), "{shown}");
         for (h, out) in [
@@ -1666,6 +1668,18 @@ mod tests {
         assert_eq!(key(&mut m, &v, crossterm::event::KeyCode::Char('h')), Out::Act(MailAction::DeliverAllow("m1".into())), "keys repeat the buttons");
         let close = crossterm::event::MouseEvent { kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left), column: d.close.x, row: d.close.y, modifiers: crossterm::event::KeyModifiers::NONE };
         assert_eq!(m.mouse(close, &d), Out::Close, "opened from outside the window: close");
+    }
+
+    #[test]
+    fn long_names_are_cut_and_the_wait_stays_in_the_head() {
+        let mut v = view();
+        let long = "a-very-long-pane-name-".repeat(3);
+        v.waiting[0] = msg("m1", &long, Some(&long), State::Held(Hold::Route), 120);
+        v.waiting[1] = msg("m2", &long, Some("planner"), State::Held(Hold::RouteRequest), 60);
+        let (_, shown) = drawn(&shown_on("m1", &v), &v, 80, 24);
+        assert!(shown.contains("a-very-long-pane-name-a-v… → a-very-long-pane-name-a-… · waited 2m │"), "{shown}");
+        let (_, shown) = drawn(&shown_on("m2", &v), &v, 80, 24);
+        assert!(shown.contains("a-very-long-pane-name-a-very… asks to write to planner · waited 1m │"), "the short name stays whole: {shown}");
     }
 
     #[test]

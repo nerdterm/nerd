@@ -2361,7 +2361,7 @@ mod tests {
                 let (r, _) = app.view.sidebar_mail[0].clone();
                 mouse_at(&mut app, left, (r.x, r.y));
                 let shown = screen(&mut app);
-                assert!(shown.contains("Held message") && shown.contains("a route says to ask you first"), "rail {rail}: {shown}");
+                assert!(shown.contains("Held message") && shown.contains("a route asks you before"), "rail {rail}: {shown}");
                 assert_eq!(showing(&app), Some(first.id.clone()), "rail {rail}");
             }
             click(&mut app, &Click::Act(MailAction::Deliver(first.id.clone())));

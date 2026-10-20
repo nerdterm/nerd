@@ -616,7 +616,7 @@ impl App {
             (Action::No, ..) => refused(v.why),
             (Action::Ask, ..) => (State::Held(if v.route.is_some() { Hold::Route } else { Hold::CrossUid }), Ok(Some(v.why))),
             (Action::Allow, _, Some(why)) => refused(why),
-            (Action::Allow, Some(name), None) => (State::Held(Hold::Limit(name.into())), Ok(Some(format!("limit {name}")))),
+            (Action::Allow, Some(name), None) => (State::Held(Hold::limit(name)), Ok(Some(format!("limit {name}")))),
             (Action::Allow, None, None) if m.to == Party::You => (State::Delivered, Ok(None)),
             (Action::Allow, None, None) => (State::Queued, Ok(None)),
         }
@@ -669,7 +669,7 @@ impl App {
             let (state, out) = if i < crate::mail::BROADCAST {
                 self.judge(&m, sender, false, now)
             } else {
-                (State::Held(Hold::Limit("broadcast".into())), Ok(Some("limit broadcast".into())))
+                (State::Held(Hold::limit("broadcast")), Ok(Some("limit broadcast".into())))
             };
             match &out {
                 Ok(None) => sent += 1,
