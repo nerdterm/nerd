@@ -59,7 +59,7 @@ impl App {
         match (crate::broker::handle(), crate::broker::exec_handle()) {
             (Some(_), _) if crate::broker::exec_coming() => Err("nerd's helper is starting; try again in a moment".to_string()),
             (Some(_), None) => Err("this server's helper is from an older build: restart the server to check for releases".into()),
-            (Some(_), Some(b)) => b.exec(exec, argv, Vec::new(), crate::paths::home().unwrap_or_default()).map_err(|e| format!("the broker did not take it: {e}")),
+            (Some(_), Some(b)) => b.exec(exec, argv, vec![("NERD_INSTANCE".into(), crate::session::instance_name())], crate::paths::home().unwrap_or_default()).map_err(|e| format!("the broker did not take it: {e}")),
             // Tests run with no broker: the job stays as started.
             (None, _) if cfg!(test) => Ok(()),
             (None, _) => Err("no broker to ask GitHub through".into()),

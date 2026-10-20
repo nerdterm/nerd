@@ -59,13 +59,13 @@ impl Env {
     fn run(&self, exe: &Path, args: &[&str], vars: &[(&str, &str)]) -> String {
         let out = Command::new(exe)
             .args(args)
-            .envs(vars.iter().copied())
             .env("HOME", &self.home)
             .env("NERD_TEST_CURL", self.served.parent().unwrap().join("curl"))
             .env("SERVED", &self.served)
             .env_remove("NERD_STATE_DIR")
             .env_remove("NERD_SOCKET")
             .env_remove("NERD_INSTANCE")
+            .envs(vars.iter().copied())
             .stdin(Stdio::null())
             .output()
             .unwrap();
@@ -74,7 +74,11 @@ impl Env {
 
     /// What the window's run left for the server.
     fn said(&self) -> serde_json::Value {
-        let p = self.state().join("release.json");
+        self.said_in(&self.state())
+    }
+
+    fn said_in(&self, dir: &Path) -> serde_json::Value {
+        let p = dir.join("release.json");
         let v = serde_json::from_str(&std::fs::read_to_string(&p).unwrap()).unwrap();
         std::fs::remove_file(p).unwrap();
         v
@@ -174,6 +178,23 @@ fn a_release_is_installed_only_for_the_window_s_click_and_only_when_its_checksum
     assert_eq!(left, ["nerd"], "renamed into place, nothing left beside it");
     assert!(!e.home.join(".zshrc").exists(), "the shell's file is left alone");
     assert!(e.log().contains("release v0.99.0 installed in ~/.local/bin: nerd 0.99.0 (test)"), "{}", e.log());
+}
+
+#[test]
+fn each_server_on_a_mac_takes_only_its_own_click_and_its_own_answer() {
+    let e = Env::new("instances");
+    let nerd = e.installed();
+    let (a, b) = (e.state().join("instances/a"), e.state().join("instances/b"));
+    std::fs::create_dir_all(&a).unwrap();
+    std::fs::create_dir_all(&b).unwrap();
+    std::fs::write(a.join("release-install"), TAG).unwrap();
+
+    e.run(&nerd, &["--check-update", "--install", "--window"], &[("NERD_INSTANCE", "b")]);
+    assert!(e.said_in(&b)["Failed"].as_str().unwrap().contains("only from a button in nerd's window"), "server b has no click of its own");
+    assert!(a.join("release-install").exists(), "nor did it take server a's");
+    e.run(&nerd, &["--check-update", "--install", "--window"], &[("NERD_INSTANCE", "a")]);
+    assert_eq!(e.said_in(&a)["Installed"], "nerd 0.99.0 (test)");
+    assert!(!e.state().join("release.json").exists() && !b.join("release.json").exists(), "each answer only where its server reads");
 }
 
 #[test]

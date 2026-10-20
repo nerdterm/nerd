@@ -323,12 +323,13 @@ fn checked_path() -> PathBuf {
     crate::paths::config_path().with_file_name("update-checked")
 }
 
+/// The server's own folder, which its broker's run shares through `NERD_INSTANCE`: two servers never take each other's.
 fn said_path() -> PathBuf {
-    crate::paths::state_root().join("release.json")
+    crate::session::state_dir().join("release.json")
 }
 
 fn go_path() -> PathBuf {
-    crate::paths::state_root().join("release-install")
+    crate::session::state_dir().join("release-install")
 }
 
 fn skipped_path() -> PathBuf {
