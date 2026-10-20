@@ -449,6 +449,22 @@ fn appearance_poller(dark: Option<bool>) -> Appearance {
     appearance
 }
 
+/// A key event as the server should get it: Command and a letter is the terminal's own shortcut, and one it
+/// lets through would reach the pane as the letter.
+fn outgoing(ev: Event) -> Option<Event> {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    match ev {
+        Event::Key(k)
+            if matches!(k.code, KeyCode::Char(_))
+                && k.modifiers.contains(KeyModifiers::SUPER)
+                && !k.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+        {
+            None
+        }
+        ev => Some(ev),
+    }
+}
+
 /// What came down the stream, for telling a detach from a stop from a loss.
 #[derive(Default, Debug)]
 struct Seen {
@@ -558,7 +574,9 @@ fn session(
         if !crossterm::event::poll(Duration::from_millis(50))? {
             continue;
         }
-        let ev = crossterm::event::read()?;
+        let Some(ev) = outgoing(crossterm::event::read()?) else {
+            continue;
+        };
         if ClientMsg::Event(ev).write_to(&mut writer).is_err() {
             break;
         }
@@ -1534,6 +1552,19 @@ fn _event_is_serializable(e: Event) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn command_and_a_letter_types_nothing() {
+        use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+        let key = |c, m| Event::Key(KeyEvent::new(KeyCode::Char(c), m));
+        assert_eq!(super::outgoing(key('q', KeyModifiers::SUPER)), None, "Command and a letter nerd has no use for types nothing");
+        assert_eq!(super::outgoing(key('Q', KeyModifiers::SUPER | KeyModifiers::SHIFT)), None);
+        let ctrl_cmd = key('q', KeyModifiers::SUPER | KeyModifiers::CONTROL);
+        assert_eq!(super::outgoing(ctrl_cmd.clone()), Some(ctrl_cmd), "with Control or Option it is still a key");
+        assert_eq!(super::outgoing(key('†', KeyModifiers::NONE)), Some(key('†', KeyModifiers::NONE)), "what Option types is typed");
+        let paste = Event::Paste("†".into());
+        assert_eq!(super::outgoing(paste.clone()), Some(paste));
+    }
 
     #[test]
     fn the_log_keeps_an_ssh_host_without_its_user() {

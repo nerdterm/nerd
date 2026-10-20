@@ -53,7 +53,7 @@ fn chord_rows(p: Prefix) -> &'static [(&'static str, &'static str)] {
 fn rows(prefix: Prefix) -> Vec<(Option<&'static str>, &'static str, &'static str)> {
     let mut out: Vec<(Option<&'static str>, &'static str, &'static str)> = Vec::new();
     for (i, g) in crate::keys::GLOBAL.iter().enumerate() {
-        out.push((i.eq(&0).then_some("⌥ and the letter it is named after"), g.label, g.what));
+        out.push((i.eq(&0).then_some("⌥ and a letter, with Option sent as Alt"), g.label, g.what));
     }
     out.push((None, "⌥+1..9", "switch to that tab"));
     // the arrow rows are headless and still belong to the `⌥` section above
@@ -370,7 +370,7 @@ mod tests {
         assert_eq!(
             heads(&h),
             vec![
-                "⌥ and the letter it is named after",
+                "⌥ and a letter, with Option sent as Alt",
                 "Mouse",
                 "Navigator",
                 "Tree",
@@ -436,7 +436,7 @@ mod tests {
         );
         assert!(found.len() < rows(Prefix::Off).len(), "list narrowed");
         assert!(
-            heads(&h).contains(&"⌥ and the letter it is named after"),
+            heads(&h).contains(&"⌥ and a letter, with Option sent as Alt"),
             "the heading of a section that kept a row"
         );
     }
@@ -554,6 +554,17 @@ mod tests {
         assert!(row(inner.y + 1).contains("⌥"), "{:?}", row(inner.y + 1));
         let first = row(inner.y + 2);
         assert!(first.contains("⌥+K") && first.contains("keys and mouse"), "{first:?}");
+    }
+
+    #[test]
+    fn the_first_heading_is_whole_in_an_80_column_terminal() {
+        let screen = Rect::new(0, 0, 80, 40);
+        let mut buf = Buffer::empty(screen);
+        let h = KeysHelp::new(Prefix::Off);
+        h.draw(&mut buf, screen, &theme());
+        let inner = h.rect(screen).inner(crate::chrome::DIALOG_FRAME);
+        let row: String = (inner.x..inner.right()).map(|x| buf[(x, inner.y + 1)].symbol()).collect();
+        assert_eq!(row.trim_end(), heads(&h)[0], "the heading is cut at {} columns", inner.width);
     }
 
     #[test]

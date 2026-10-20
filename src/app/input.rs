@@ -163,7 +163,13 @@ impl App {
             if end || late {
                 let text = std::mem::take(text);
                 self.reply = None;
-                crate::log::warn(&format!("terminal reply swallowed: {} chars", text.chars().count()));
+                // The answer to the client's graphics probe (`query_graphics`), after it stopped waiting.
+                if text == "Gi=31;OK" && !self.graphics {
+                    self.graphics = true;
+                    self.dirty = true;
+                    crate::log::info("graphics: the terminal answered late, images on");
+                }
+                crate::log::warn(&format!("terminal reply swallowed: {}", swallowed(text)));
             }
             if !late {
                 return true;
@@ -1162,6 +1168,11 @@ fn topology_back(what: &mut Pending) -> Option<Overlay> {
         Pending::Topology(_, back) => back.take().map(|w| Overlay::Messages(*w)),
         _ => None,
     }
+}
+
+/// How a swallowed reply goes into the log: an image reply holds nothing typed, so its text; anything else only its length.
+pub(super) fn swallowed(text: String) -> String {
+    if text.starts_with("Gi=") { text } else { format!("{} chars", text.chars().count()) }
 }
 
 fn inside(r: Rect, x: u16, y: u16) -> bool {

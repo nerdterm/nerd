@@ -454,6 +454,9 @@ fn serve(started: &mut bool) -> std::io::Result<()> {
                     redraw = true;
                 }
                 Inbound::Event(_, Event::Mouse(m)) => {
+                    if trace && matches!(m.kind, crossterm::event::MouseEventKind::Down(_) | crossterm::event::MouseEventKind::Up(_)) {
+                        debug(&trace_line(&Event::Mouse(m)));
+                    }
                     let screen = app.screen;
                     app.mouse(m, screen);
                     redraw = true;
@@ -911,6 +914,7 @@ fn trace_line(ev: &Event) -> String {
         Event::Key(k) if matches!(k.code, KeyCode::Char(_)) && !k.modifiers.contains(KeyModifiers::CONTROL) => format!("trace key char {:?}", k.modifiers),
         Event::Key(k) => format!("trace key {:?} {:?}", k.code, k.modifiers),
         Event::Paste(s) => format!("trace paste {} chars", s.chars().count()),
+        Event::Mouse(m) => format!("trace mouse {:?} {:?}", m.kind, m.modifiers),
         other => format!("trace {other:?}"),
     }
 }
@@ -1009,6 +1013,13 @@ mod tests {
     }
 
     #[test]
+    fn a_trace_names_a_mouse_press_without_its_place() {
+        use crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+        let down = MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), column: 7, row: 3, modifiers: KeyModifiers::NONE };
+        assert_eq!(super::trace_line(&Event::Mouse(down)), "trace mouse Down(Left) KeyModifiers(0x0)");
+    }
+
+    #[test]
     fn a_status_file_that_cannot_be_written_leaves_no_stale_one() {
         crate::session::tests::with_temp_state_dir("sandbox-stale", || {
             let path = crate::log::sandbox_path();
@@ -1036,7 +1047,7 @@ mod tests {
         app.screen = ratatui::layout::Rect::new(0, 0, 120, 30);
         let mut tui = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 30)).unwrap();
         let fx = super::draw_turn(&mut tui, &mut app).unwrap();
-        assert!(String::from_utf8_lossy(&fx.screen).contains("a=T,f=100,i=2,r=1"), "the logo's PNG is in this turn's output");
+        assert!(String::from_utf8_lossy(&fx.screen).contains("a=T,f=100,i=2,c=9,r=1,"), "the logo's PNG is in this turn's output");
         assert!(app.to_client.is_empty(), "nothing is left for the next turn");
     }
 

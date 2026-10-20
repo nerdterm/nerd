@@ -22,10 +22,10 @@ pub(crate) const TEXT_INSET: u16 = 2;
 /// The menu button, expanded or collapsed.
 const MENU: &str = "\u{2261}";
 /// The logo's wordmark, one row high, where the terminal draws images; letters at about 80% of the height.
-const LOGO_DARK: &[u8] = include_bytes!("../brand/nerd-wordmark-dark-1600x375.png");
-const LOGO_LIGHT: &[u8] = include_bytes!("../brand/nerd-wordmark-light-1600x375.png");
+const LOGO_DARK: &[u8] = include_bytes!("../brand/nerd-wordmark-dark-1688x375.png");
+const LOGO_LIGHT: &[u8] = include_bytes!("../brand/nerd-wordmark-light-1688x375.png");
 const LOGO_ID: u32 = 2;
-/// Cells the wordmark takes at one row high (its canvas is 4.27:1, a cell about 1:2).
+/// Cells the wordmark takes at one row high (its canvas is 4.5:1, a cell about 1:2).
 const LOGO_COLS: u16 = 9;
 
 /// What a frame asks for beyond its cells; the loop sends it right after the frame, in the same turn.
@@ -108,7 +108,7 @@ fn place_logo(app: &App, view: &mut ViewState, at: Option<(u16, u16)>) -> Vec<u8
     match want {
         Some((x, y, dark)) => {
             let png = if dark { LOGO_DARK } else { LOGO_LIGHT };
-            crate::preview::png_bytes(png, x, y, "r=1", LOGO_ID)
+            crate::preview::png_bytes(png, x, y, &format!("c={LOGO_COLS},r=1"), LOGO_ID)
         }
         None => crate::preview::clear_image_bytes(LOGO_ID),
     }
@@ -727,7 +727,7 @@ mod tests {
         let sent = |bytes: Vec<u8>| String::from_utf8_lossy(&bytes).into_owned();
 
         let first = sent(logo(&mut app, Some((2, 0))));
-        assert!(first.contains("\x1b[1;3H") && first.contains("a=T,f=100,i=2,r=1"), "one row high at the corner");
+        assert!(first.contains("\x1b[1;3H") && first.contains("a=T,f=100,i=2,c=9,r=1,"), "nine cells by one row at the corner");
         assert_eq!(sent(logo(&mut app, Some((2, 0)))), "", "nothing new to send");
         // a resize clears the client's screen, and a terminal that draws images deletes them with it
         app.images_lost();
@@ -737,7 +737,7 @@ mod tests {
         app.apply_theme();
         assert!(sent(logo(&mut app, Some((2, 0)))).contains("a=T"), "the light wordmark replaces the dark one");
 
-        assert_eq!(sent(logo(&mut app, None)), "\x1b_Ga=d,d=i,i=2\x1b\\", "collapsed: the image goes");
+        assert_eq!(sent(logo(&mut app, None)), "\x1b_Ga=d,d=i,i=2,q=2\x1b\\", "collapsed: the image goes");
         assert_eq!(sent(logo(&mut app, None)), "", "and only once");
     }
 

@@ -6,6 +6,12 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 pub fn encode_key(k: KeyEvent) -> Option<Vec<u8>> {
     use terminput::Encoding;
 
+    // Option and an arrow as Ghostty sends them by default: a shell reads ESC b / ESC f as a word, and prints `;3D` for CSI 1;3D.
+    match (k.code, k.modifiers) {
+        (KeyCode::Left, KeyModifiers::ALT) => return Some(b"\x1bb".to_vec()),
+        (KeyCode::Right, KeyModifiers::ALT) => return Some(b"\x1bf".to_vec()),
+        _ => {}
+    }
     let k = control_on_its_key(k);
     let ev: terminput::Event = terminput_crossterm::to_terminput(crossterm::event::Event::Key(k)).ok()?;
     let mut buf = [0u8; 32];
@@ -122,6 +128,16 @@ mod tests {
         }
         let ctrl_up = encode_key(key(KeyCode::Up, KeyModifiers::CONTROL)).unwrap();
         assert_eq!(cursor_keys(ctrl_up, true), b"\x1b[1;5A");
+    }
+
+    #[test]
+    fn option_and_left_or_right_move_a_word_in_the_shell() {
+        let alt = |c| encode_key(key(c, KeyModifiers::ALT)).unwrap();
+        assert_eq!(alt(KeyCode::Left), b"\x1bb", "zsh prints ;3D for the CSI form");
+        assert_eq!(alt(KeyCode::Right), b"\x1bf");
+        assert_eq!(cursor_keys(alt(KeyCode::Left), true), b"\x1bb", "application cursor mode leaves it alone");
+        assert_eq!(alt(KeyCode::Up), b"\x1b[1;3A", "up and down keep the modifier form");
+        assert_eq!(encode_key(key(KeyCode::Left, KeyModifiers::ALT | KeyModifiers::SHIFT)).unwrap(), b"\x1b[1;4D", "only plain Option");
     }
 
     #[test]
