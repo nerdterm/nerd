@@ -302,6 +302,12 @@ fn text(p: &Places, files: &Files, network: &Network, cwd: &Path, msock: &Path, 
         } else {
             String::new()
         };
+        // rules() resolves a linked nerd (Homebrew's) to its target; the link is kept too.
+        // ceiling: the keg folder above the target stays renamable from a pane whose folder holds it; deny the keg's subpath if that matters.
+        let link = match (p.exe.parent(), p.exe.file_name()) {
+            (Some(d), Some(n)) if canon(d).join(n) != canon(&p.exe) => format!(" (literal {})", quote(&canon(d).join(n))?),
+            _ => String::new(),
+        };
         let literal = [p.exe.clone()].into_iter().chain(RUN_LATER.iter().map(|f| p.home.join(f))).chain(p.terminal_files.iter().cloned()).chain(p.hook_files.iter().cloned());
         let dirs = [root.clone()].into_iter().chain(RUN_LATER_DIRS.iter().map(|d| p.home.join(d))).chain(p.terminal_dirs.iter().cloned()).chain(p.hook_dirs.iter().cloned());
         // The door other accounts exec nerd from, Claude Code's message sockets, agents' memory (Claude, Qwen), Codex's databases shared by its sessions (queued prompts, remote control) and Qwen's workflow scripts a resume runs, which the owner's own sessions read.
@@ -315,7 +321,7 @@ fn text(p: &Places, files: &Files, network: &Network, cwd: &Path, msock: &Path, 
             rules("subpath", p.roots.iter().cloned())?,
             data_rules(&p.data)?,
             rules("subpath", dirs)?,
-            rules("literal", literal)?,
+            rules("literal", literal)? + &link,
             rules("subpath", UNREAD.iter().map(|s| p.home.join(s)).chain([root.clone()]))?,
         );
     }
@@ -930,6 +936,25 @@ mod tests {
         for no in ["state/config.json", "home/.claude/settings.json", "home/.claude/hooks/x", "home/.zshrc", "home/x"] {
             assert_ne!(try_(no), Some(0), "{no}");
             assert!(!d.join(no).exists(), "{no}");
+        }
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn folder_only_cannot_replace_a_linked_nerd_nor_what_it_points_at() {
+        let d = scratch("brew");
+        let (keg, link) = (d.join("work/Cellar/nerd/1/bin/nerd"), d.join("work/bin/nerd"));
+        std::fs::create_dir_all(keg.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+        std::fs::write(&keg, "nerd").unwrap();
+        std::os::unix::fs::symlink(&keg, &link).unwrap();
+        let profile = text(&Places { exe: link.clone(), ..places(&d) }, &Files::Folder, &Network::None, &d.join("work"), Path::new("/tmp/none.msock"), None).unwrap();
+        let Some(ok) = sandboxed(&profile, &format!("echo x > '{}/work/ok'", d.display())) else { return };
+        assert_eq!(ok, 0, "its own folder");
+        for (what, script) in [("through the link", format!("echo x > '{}'", link.display())), ("the link itself", format!("rm -f '{0}' && ln -s /bin/sh '{0}'", link.display()))] {
+            assert_ne!(sandboxed(&profile, &script), Some(0), "{what}");
+            assert_eq!(std::fs::read_link(&link).ok().as_ref(), Some(&keg), "{what}");
+            assert_eq!(std::fs::read_to_string(&keg).unwrap(), "nerd", "{what}");
         }
         let _ = std::fs::remove_dir_all(&d);
     }
