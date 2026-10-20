@@ -212,7 +212,8 @@ type Layer = [(char, char)];
 /// so a terminal that types the printed character (iTerm2 and kitty by default) still reaches the Option shortcuts.
 /// Taken from the layouts themselves (UCKeyTranslate): U.S. and ABC are the same, U.S. International PC has the same
 /// Option layer. Left out: dead keys (U.S. Option and e, u, i, n, `), what the layout also types without Option, a
-/// character two keys print, and the Shift layer where it repeats the plain one.
+/// character two keys print, the Shift layer where it repeats the plain one, and any ASCII character: a layout
+/// that types @ or [ only with Option (the Russian ones) must still type it.
 /// Also read back: a bare accent typed as dead key and space (´ ¨ ˆ ˜); and —, ∏, ‘ arrive as Alt and _, P, ], which the server takes for the start of a terminal reply, as it does in Ghostty.
 pub fn option_layer(layout: &str, k: KeyEvent) -> KeyEvent {
     let (plain, shifted): (&Layer, &Layer) = match layout {
@@ -246,45 +247,39 @@ const US_SHIFTED: [(char, char); 46] = [
     ('\u{f8ff}', 'K'), ('Ò', 'L'), ('Ú', ':'), ('Æ', '"'), ('¸', 'Z'), ('˛', 'X'), ('Ç', 'C'), ('◊', 'V'),
     ('ı', 'B'), ('˜', 'N'), ('Â', 'M'), ('¯', '<'), ('˘', '>'), ('¿', '?'),
 ];
-const RU_PLAIN: [(char, char); 37] = [
-    ('@', '2'), ('#', '3'), ('$', '4'), ('^', '6'), ('&', '7'), ('*', '8'), ('{', '9'), ('}', '0'),
+const RU_PLAIN: [(char, char); 28] = [
     ('–', '-'), ('»', '='), ('ј', 'q'), ('џ', 'w'), ('ќ', 'e'), ('®', 'r'), ('†', 't'), ('њ', 'y'),
     ('ѓ', 'u'), ('ѕ', 'i'), ('ў', 'o'), ('‘', 'p'), ('ƒ', 'a'), ('ћ', 'd'), ('÷', 'f'), ('©', 'g'),
     ('₽', 'h'), ('°', 'j'), ('љ', 'k'), ('∆', 'l'), ('…', ';'), ('ђ', 'z'), ('≈', 'x'), ('≠', 'c'),
-    ('µ', 'v'), ('™', 'n'), ('~', 'm'), ('≤', ','), ('≥', '.'),
+    ('µ', 'v'), ('™', 'n'), ('≤', ','), ('≥', '.'),
 ];
-const RU_SHIFTED: [(char, char); 27] = [
-    ('|', '!'), ('£', '#'), ('€', '$'), ('∞', '%'), ('¬', '^'), ('¶', '&'), ('√', '*'), ('\'', '('),
-    ('`', ')'), ('—', '_'), ('«', '+'), ('Ј', 'Q'), ('Џ', 'W'), ('Ќ', 'E'), ('Њ', 'Y'), ('Ѓ', 'U'),
-    ('Ѕ', 'I'), ('Ў', 'O'), ('’', 'P'), ('”', '{'), ('Ћ', 'D'), ('•', 'J'), ('Љ', 'K'), ('Ђ', 'Z'),
-    ('<', '<'), ('>', '>'), ('„', '?'),
+const RU_SHIFTED: [(char, char); 22] = [
+    ('£', '#'), ('€', '$'), ('∞', '%'), ('¬', '^'), ('¶', '&'), ('√', '*'), ('—', '_'), ('«', '+'),
+    ('Ј', 'Q'), ('Џ', 'W'), ('Ќ', 'E'), ('Њ', 'Y'), ('Ѓ', 'U'), ('Ѕ', 'I'), ('Ў', 'O'), ('’', 'P'),
+    ('”', '{'), ('Ћ', 'D'), ('•', 'J'), ('Љ', 'K'), ('Ђ', 'Z'), ('„', '?'),
 ];
-const RU_WIN_PLAIN: [(char, char); 41] = [
-    ('[', '`'), ('@', '2'), ('#', '3'), ('$', '4'), ('©', '5'), ('^', '6'), ('&', '7'), ('₽', '8'),
-    ('–', '-'), ('≠', '='), ('ј', 'q'), ('џ', 'w'), ('ў', 'e'), ('ќ', 'r'), ('†', 't'), ('њ', 'y'),
-    ('ѓ', 'u'), ('ѕ', 'i'), ('\'', 'o'), ('‘', 'p'), ('“', '['), ('d', 'a'), ('z', 's'), ('ћ', 'd'),
-    ('÷', 'f'), ('…', 'g'), ('•', 'h'), ('∆', 'j'), ('љ', 'k'), ('l', 'l'), ('є', '\''), ('ђ', 'z'),
-    ('x', 'x'), ('c', 'c'), ('v', 'v'), ('і', 'b'), ('ƒ', 'n'), ('m', 'm'), ('≤', ','), ('≥', '.'),
-    ('ї', '/'),
+const RU_WIN_PLAIN: [(char, char); 27] = [
+    ('©', '5'), ('₽', '8'), ('–', '-'), ('≠', '='), ('ј', 'q'), ('џ', 'w'), ('ў', 'e'), ('ќ', 'r'),
+    ('†', 't'), ('њ', 'y'), ('ѓ', 'u'), ('ѕ', 'i'), ('‘', 'p'), ('“', '['), ('ћ', 'd'), ('÷', 'f'),
+    ('…', 'g'), ('•', 'h'), ('∆', 'j'), ('љ', 'k'), ('є', '\''), ('ђ', 'z'), ('і', 'b'), ('ƒ', 'n'),
+    ('≤', ','), ('≥', '.'), ('ї', '/'),
 ];
-const RU_WIN_SHIFTED: [(char, char); 42] = [
-    (']', '~'), ('™', '!'), ('§', '@'), ('£', '#'), ('€', '$'), ('®', '%'), ('¬', '^'), ('¶', '&'),
-    ('°', '*'), ('{', '('), ('}', ')'), ('—', '_'), ('≈', '+'), ('Ј', 'Q'), ('Џ', 'W'), ('Ў', 'E'),
-    ('Ќ', 'R'), ('Њ', 'Y'), ('Ѓ', 'U'), ('Ѕ', 'I'), ('„', 'O'), ('’', 'P'), ('”', '{'), ('|', '|'),
-    ('Z', 'S'), ('Ћ', 'D'), ('±', 'F'), ('√', 'G'), ('∞', 'H'), ('µ', 'J'), ('Љ', 'K'), ('L', 'L'),
-    ('Є', '"'), ('Ђ', 'Z'), ('X', 'X'), ('C', 'C'), ('V', 'V'), ('І', 'B'), ('M', 'M'), ('<', '<'),
-    ('>', '>'), ('Ї', '?'),
+const RU_WIN_SHIFTED: [(char, char); 30] = [
+    ('™', '!'), ('§', '@'), ('£', '#'), ('€', '$'), ('®', '%'), ('¬', '^'), ('¶', '&'), ('°', '*'),
+    ('—', '_'), ('≈', '+'), ('Ј', 'Q'), ('Џ', 'W'), ('Ў', 'E'), ('Ќ', 'R'), ('Њ', 'Y'), ('Ѓ', 'U'),
+    ('Ѕ', 'I'), ('„', 'O'), ('’', 'P'), ('”', '{'), ('Ћ', 'D'), ('±', 'F'), ('√', 'G'), ('∞', 'H'),
+    ('µ', 'J'), ('Љ', 'K'), ('Є', '"'), ('Ђ', 'Z'), ('І', 'B'), ('Ї', '?'),
 ];
-const RU_PHONETIC_PLAIN: [(char, char); 31] = [
-    ('∞', '5'), ('§', '6'), ('¶', '7'), ('•', '8'), ('[', '9'), (']', '0'), ('-', '-'), ('=', '='),
-    ('¬', 'q'), ('₽', 'r'), ('ћ', 't'), ('ў', 'u'), ('і', 'i'), ('«', 'o'), ('»', 'p'), ('“', '['),
-    ('ѕ', 's'), ('ђ', 'd'), ('ƒ', 'f'), ('ѓ', 'g'), ('ј', 'j'), ('ќ', 'k'), ('љ', 'l'), ('„', ';'),
-    ('≈', 'x'), ('©', 'c'), ('√', 'v'), ('њ', 'n'), ('µ', 'm'), ('≤', ','), ('≥', '.'),
+const RU_PHONETIC_PLAIN: [(char, char); 27] = [
+    ('∞', '5'), ('§', '6'), ('¶', '7'), ('•', '8'), ('¬', 'q'), ('₽', 'r'), ('ћ', 't'), ('ў', 'u'),
+    ('і', 'i'), ('«', 'o'), ('»', 'p'), ('“', '['), ('ѕ', 's'), ('ђ', 'd'), ('ƒ', 'f'), ('ѓ', 'g'),
+    ('ј', 'j'), ('ќ', 'k'), ('љ', 'l'), ('„', ';'), ('≈', 'x'), ('©', 'c'), ('√', 'v'), ('њ', 'n'),
+    ('µ', 'm'), ('≤', ','), ('≥', '.'),
 ];
-const RU_PHONETIC_SHIFTED: [(char, char); 22] = [
-    ('°', '*'), ('{', '('), ('}', ')'), ('—', '_'), ('+', '+'), ('±', 'Q'), ('®', 'R'), ('Ћ', 'T'),
-    ('Ў', 'U'), ('І', 'I'), ('‘', 'O'), ('”', '{'), ('Ѕ', 'S'), ('Ђ', 'D'), ('∆', 'F'), ('Ѓ', 'G'),
-    ('Ј', 'J'), ('Ќ', 'K'), ('Љ', 'L'), ('Њ', 'N'), ('…', '>'), ('\\', '?'),
+const RU_PHONETIC_SHIFTED: [(char, char); 18] = [
+    ('°', '*'), ('—', '_'), ('±', 'Q'), ('®', 'R'), ('Ћ', 'T'), ('Ў', 'U'), ('І', 'I'), ('‘', 'O'),
+    ('”', '{'), ('Ѕ', 'S'), ('Ђ', 'D'), ('∆', 'F'), ('Ѓ', 'G'), ('Ј', 'J'), ('Ќ', 'K'), ('Љ', 'L'),
+    ('Њ', 'N'), ('…', '>'),
 ];
 
 /// The same key event with its character read off the key rather than off the layout, so a
@@ -381,7 +376,9 @@ mod layout_tests {
         assert_eq!(win(ev('ѓ', KeyModifiers::NONE)), alt('u'), "Option and U on Russian - PC");
         assert_eq!(win(ev('Ѓ', KeyModifiers::SHIFT)), ev('U', KeyModifiers::ALT | KeyModifiers::SHIFT));
         assert_eq!(win(ev('†', KeyModifiers::NONE)), alt('t'));
-        assert_eq!(win(ev('@', KeyModifiers::NONE)), alt('2'), "the cost: Option and 2 is how this layout types @");
+        for c in ['@', 'c', '[', '~', 'Z', '|'] {
+            assert_eq!(win(ev(c, KeyModifiers::NONE)), ev(c, KeyModifiers::NONE), "{c:?}: this layout types it only with Option, so it stays typed");
+        }
         assert_eq!(option_layer("com.apple.keylayout.Russian", ev('ѓ', KeyModifiers::NONE)), alt('u'));
         assert_eq!(option_layer("com.apple.keylayout.Russian-Phonetic", ev('ѓ', KeyModifiers::NONE)), alt('g'), "phonetic: on the G key");
     }
@@ -412,7 +409,7 @@ mod layout_tests {
     #[test]
     fn every_option_key_is_its_own_and_dead_keys_are_left_out() {
         let ev = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE);
-        let counts = [88, 88, 88, 64, 83, 53];
+        let counts = [88, 88, 88, 50, 57, 45];
         for (layout, count) in OPTION_LAYOUTS.into_iter().zip(counts) {
             let mut seen = std::collections::HashSet::new();
             for c in (0x21..0x10000u32).filter_map(char::from_u32) {
@@ -420,6 +417,7 @@ mod layout_tests {
                 if k != ev(c) {
                     let KeyCode::Char(base) = k.code else { panic!("{c:?} became {k:?}") };
                     assert!(base.is_ascii_graphic(), "{c:?} lands on a key, {base:?}");
+                    assert!(!c.is_ascii(), "{c:?} on {layout} can be typed only this way: it is never read back");
                     assert!(seen.insert((base, k.modifiers)), "{base:?} {:?} comes from two characters on {layout}", k.modifiers);
                 }
             }
