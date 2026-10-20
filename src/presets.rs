@@ -406,7 +406,8 @@ fn set_margins(on: bool) -> std::io::Result<()> {
     }
     let Some(text) = read(&record)? else { return Ok(()) };
     let before: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&text).map_err(std::io::Error::other)?;
-    for k in ITERM_KEYS {
+    // a margin no longer the preset's was set by the user since, and stays
+    for k in ITERM_KEYS.into_iter().filter(|k| margin_now(k) == Some(i64::from(MARGIN))) {
         margin_set(k, before.get(k).and_then(serde_json::Value::as_i64))?;
     }
     std::fs::remove_file(record)
@@ -598,7 +599,7 @@ pub fn describe(steps: &[Step], full: bool) -> Vec<String> {
                 margin_now(ITERM_KEYS[0]).map_or("unset".into(), |v| v.to_string()),
                 margin_now(ITERM_KEYS[1]).map_or("unset".into(), |v| v.to_string())
             )),
-            Step::Margins(false) => out.push("put iTerm2's margins back as they were".into()),
+            Step::Margins(false) => out.push(format!("put iTerm2's margins back as they were, each one still at {MARGIN}")),
             Step::Note(n) => out.push(n.clone()),
         }
     }
@@ -1049,6 +1050,23 @@ mod tests {
             assert!(p["Ansi 15 Color (Light)"]["Red Component"].is_f64());
             undo(Terminal::Iterm2);
             assert_eq!((margin_now("TerminalMargin"), margin_now("TerminalVMargin")), (Some(5), None), "as they were, absent included");
+        });
+    }
+
+    #[test]
+    fn iterm_margins_changed_after_apply_stay_and_uninstall_restores_them_without_the_profile() {
+        with_temp_home(|| {
+            margin_set("TerminalMargin", Some(5)).unwrap();
+            apply(Terminal::Iterm2);
+            margin_set("TerminalVMargin", Some(8)).unwrap();
+            undo(Terminal::Iterm2);
+            assert_eq!((margin_now("TerminalMargin"), margin_now("TerminalVMargin")), (Some(5), Some(8)), "a margin set after apply is the user's");
+
+            apply(Terminal::Iterm2);
+            std::fs::remove_file(iterm_profile()).unwrap();
+            assert!(undo_all().is_empty());
+            assert_eq!((margin_now("TerminalMargin"), margin_now("TerminalVMargin")), (Some(5), Some(8)), "the profile gone, the margins still come back");
+            assert!(!margins_record().exists());
         });
     }
 
