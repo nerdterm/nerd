@@ -590,12 +590,25 @@ pub fn refresh(cfg: &crate::config::Config, dark: impl Fn() -> bool) -> std::io:
     Ok(ghostty_changed)
 }
 
+/// What the steps changed, for the log line each apply and undo writes.
+pub fn touched(steps: &[Step]) -> String {
+    let names: Vec<String> = steps
+        .iter()
+        .filter_map(|s| match s {
+            Step::Write(p, _) | Step::Append(p, _) | Step::Unappend(p, _) | Step::Remove(p) => Some(crate::paths::shown(p)),
+            Step::Margins(_) => Some("iTerm2's margins".into()),
+            Step::Note(_) => None,
+        })
+        .collect();
+    names.join(", ")
+}
+
 /// Every applied preset taken back, for `nerd --uninstall`.
 pub fn undo_all() -> Vec<String> {
     let mut failed = Vec::new();
     for t in ALL.into_iter().filter(|t| applied(*t)) {
-        match undo_steps(t).and_then(|s| run(&s)) {
-            Ok(()) => crate::log::info(&format!("preset for {} undone by nerd --uninstall", t.title())),
+        match undo_steps(t).and_then(|s| run(&s).map(|()| s)) {
+            Ok(s) => crate::log::info(&format!("preset for {} undone by nerd --uninstall: {}", t.title(), touched(&s))),
             Err(e) => failed.push(format!("{}: {e}", t.title())),
         }
     }
@@ -636,12 +649,7 @@ pub fn main(args: &[String]) -> std::io::Result<()> {
         return Ok(());
     }
     run(&steps)?;
-    let touched: Vec<String> = steps.iter().filter_map(|s| match s {
-        Step::Write(p, _) | Step::Append(p, _) | Step::Unappend(p, _) | Step::Remove(p) => Some(crate::paths::shown(p)),
-        Step::Margins(_) => Some("iTerm2's margins".into()),
-        Step::Note(_) => None,
-    }).collect();
-    crate::log::info(&format!("preset for {} {} from the command line: {}", t.title(), if undo { "undone" } else { "applied" }, touched.join(", ")));
+    crate::log::info(&format!("preset for {} {} from the command line: {}", t.title(), if undo { "undone" } else { "applied" }, touched(&steps)));
     println!("Done.");
     Ok(())
 }

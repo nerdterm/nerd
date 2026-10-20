@@ -522,7 +522,7 @@ impl App {
                 let done = if undo { "undone" } else { "applied" };
                 match crate::presets::run(&steps) {
                     Ok(()) => {
-                        crate::log::info(&format!("preset for {} {done} from the menu", t.title()));
+                        crate::log::info(&format!("preset for {} {done} from the menu: {}", t.title(), crate::presets::touched(&steps)));
                         self.toast = Some(format!("{} preset {done}", t.title()));
                     }
                     Err(e) => self.notice = Some(format!("the {} preset was not {done}: {e}", t.title())),
