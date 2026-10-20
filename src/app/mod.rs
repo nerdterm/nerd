@@ -1397,6 +1397,7 @@ mod tests {
             assert!(app.release_job.is_none());
             let Overlay::Confirm(c, Pending::ReleaseInstall(tag)) = &app.overlay else { panic!("the window shows the release") };
             assert_eq!(tag, "v9.0.0");
+            assert_eq!(app.toast, None, "the asking card goes when the window opens");
             let body = c.body_lines(200).join("\n");
             assert!(body.contains("nerd 9.0.0 is out") && body.contains("checksum") && body.contains("- a thing"), "{body}");
 

@@ -5,6 +5,8 @@ use crate::release::{Found, Said};
 pub const RELEASE_EVERY: Duration = Duration::from_secs(600);
 
 const TITLE: &str = "Check for a new release";
+const ASKING: &str = "asking GitHub for the newest release…";
+const DOWNLOADING: &str = "downloading the release…";
 
 /// Who asked for the release run: each is answered its own way.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -36,8 +38,8 @@ impl App {
             Ok(id) => {
                 self.release_job = Some((id, ask));
                 match ask {
-                    ReleaseAsk::Menu => self.toast = Some("asking GitHub for the newest release…".into()),
-                    ReleaseAsk::Install => self.toast = Some("downloading the release…".into()),
+                    ReleaseAsk::Menu => self.toast = Some(ASKING.into()),
+                    ReleaseAsk::Install => self.toast = Some(DOWNLOADING.into()),
                     ReleaseAsk::Daily => {}
                 }
             }
@@ -84,6 +86,10 @@ impl App {
 
     fn release_said(&mut self, said: Said, ask: ReleaseAsk) {
         self.dirty = true;
+        // The run's own card is answered now; anything said since stays.
+        if self.toast.as_deref().is_some_and(|t| t == ASKING || t == DOWNLOADING) {
+            self.toast = None;
+        }
         match said {
             // The run logged it; a check nobody asked for just now does not interrupt.
             Said::Failed(_) if ask == ReleaseAsk::Daily => {}
