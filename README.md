@@ -96,14 +96,10 @@ Each agent is described by a manifest, `plugins/<name>/plugin.json` in the sourc
 
 nerd is checked in Ghostty, Kitty, WezTerm and iTerm2.
 
-- The Option shortcuts need the terminal to send Option as Alt. Ghostty does on a U.S. layout and WezTerm for its left Option key; Kitty and iTerm2 need one setting. Set it for the left Option key, so the right one still types symbols such as — and €. nerd reads each shortcut by its key, so with the setting they work on a Cyrillic layout too (in Ghostty with `nerd --install-keys`). See [Keys](docs/usage.md#keys).
+- Every shortcut works in each of them as it comes: Control + B, then a key, on any keyboard layout (Control + B twice reaches the program in the pane). See [Keys](docs/usage.md#keys).
+- For Option shortcuts and nerd's look, run `nerd --preset <terminal>` (`ghostty`, `kitty`, `wezterm` or `iterm2`), or use **Settings… → Terminal preset…**: the left Option key sends Alt and the right one still types symbols such as — and €, with a 16 point margin and nerd's colours. It shows every change before it makes it, and `--undo` takes them back.
 - nerd asks the terminal two things when it starts: whether it draws images by the Kitty graphics protocol, and its device attributes. Programs in panes get the cursor position, device attributes and colours from nerd itself, so they do not depend on the terminal.
 - WezTerm and iTerm2 show colours in Display P3, so nerd's colours look more saturated there than in the others.
-- A margin around nerd, 16 points on every side; nerd sets the terminal's background, so the margin takes nerd's colour:
-  - Ghostty: `window-padding-x = 16`, `window-padding-y = 16` and `window-padding-balance = true`
-  - Kitty: `window_padding_width 16`
-  - WezTerm: `config.window_padding = { left = '16pt', right = '16pt', top = '16pt', bottom = '16pt' }`
-  - iTerm2: **Settings → Appearance → Panes**: **Side margins** and **Top & bottom margins** 16
 - Not checked: Terminal.app, which is not a target; Alacritty, whose Homebrew cask is disabled because the app fails Gatekeeper; and Warp.
 
 ## Limitations

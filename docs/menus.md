@@ -23,7 +23,7 @@ taste.
    row but separators, so they always pick the same item. One exception: the items of Messages, Isolation and
    Accounts stay enabled in a window attached from inside a pane and refuse with a notice when chosen, because a
    greyed item cannot show the reason.
-9. **Keys are shown where they exist,** right-aligned, as printed on the key: ⌥+T, ⌥+shift+R. Menus, the key
+9. **Keys are shown where they exist,** right-aligned, as printed on the key: ⌥+T, ⌥+shift+arrow. Menus, the key
    list and docs/usage.md read them from the key tables (`keys::GLOBAL`, `tree::keys`).
 10. **A window is named after its item:** "Export logs…" opens "Export logs", and its result is "Logs exported".
     Titles, section headers and settings rows are sentence case; values are lowercase words.
@@ -75,6 +75,12 @@ Every window except a context menu is drawn through `chrome::dialog`, and `chrom
 - Tab menu and space menu: **Isolation for new panes…**, with "as the space" or "as nerd's default".
 - Settings → Messages: Messaging, Programs in panes may stop or update nerd, Set up a topology…, Accounts…. The
   server stores them in policy.json, not in config.json.
+- Settings → Terminal: **Terminal preset…** lists Ghostty, kitty, WezTerm and iTerm2, each applied, not applied,
+  (Ghostty) old keys link, or (WezTerm) needs your line. A click on one opens "<terminal> preset": every file it writes or changes, then
+  **[Enter] apply** (or **[Enter] undo** when it is applied) and **[Esc] cancel**; nothing changes before the button.
+  For a WezTerm config nerd does not edit, the window shows the line to add in full, with **[Enter] copy the line**
+  (it also writes nerd's file) and **[Esc] close**. The files are on the server's Mac, so a window from another Mac is
+  told to run `nerd --preset` there.
 - Every change these windows make is refused from a window attached from inside a pane; reading them is not.
 
 ## Words

@@ -196,8 +196,7 @@ pub fn latin(c: char) -> char {
 }
 
 /// The same key event with its character read off the key rather than off the layout, so a
-/// command spelled `g` is `g` on any keyboard. Case survives: the tree keeps `shift`+`R` and
-/// `shift`+`D` deliberately. Call it only where the key is a command - while a query is being
+/// command spelled `g` is `g` on any keyboard. Case survives. Call it only where the key is a command - while a query is being
 /// typed the character must stay exactly as it was printed.
 pub fn normalize(k: KeyEvent) -> KeyEvent {
     let KeyCode::Char(c) = k.code else { return k };

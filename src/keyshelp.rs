@@ -13,7 +13,7 @@ use crate::render::Theme;
 /// The only rows still written by hand: the ones no key handler owns. The mouse has no key
 /// table to come from, and the two app-level rows describe `App::key` itself.
 const ROWS: &[(Option<&str>, &str, &str)] = &[
-    (None, "⌥+shift+arrow", "next pane that way, then the sidebar, the tree or the tabs"),
+    (None, "⌥+shift+arrow", ARROW),
     (None, "arrows, return", "inside the sidebar or the tabs, without ⌥"),
     (Some("Mouse"), "click", "focus a pane, switch a tab, press a button"),
     (None, "right click", "menu for a pane, tab, space, sidebar row or tree row"),
@@ -39,19 +39,23 @@ enum Line {
 
 /// The whole list: the global shortcuts, straight out of the table the dispatcher reads, then
 /// the rows above. Nothing about a `⌥` key is spelled twice.
-const CHORD: &str = "what ⌥ and that key do: a letter, a digit, or an arrow without shift";
+const CHORD: &str = "what ⌥ and that key do below, where the keys are; shift is never needed";
+const ARROW: &str = "next pane that way, then the sidebar, the tree or the tabs";
 
 /// Shown only while the prefix is on, or the list would teach a key that does nothing.
 fn chord_rows(p: Prefix) -> &'static [(&'static str, &'static str)] {
     match p {
         Prefix::Off => &[],
-        Prefix::CtrlB => &[("⌃+B, then a key", CHORD), ("⌃+B twice", "sends ⌃+B to the pane")],
-        Prefix::CtrlA => &[("⌃+A, then a key", CHORD), ("⌃+A twice", "sends ⌃+A to the pane")],
+        Prefix::CtrlB => &[("⌃+B, then a key", CHORD), ("⌃+B, then an arrow", ARROW), ("⌃+B twice", "sends ⌃+B to the pane")],
+        Prefix::CtrlA => &[("⌃+A, then a key", CHORD), ("⌃+A, then an arrow", ARROW), ("⌃+A twice", "sends ⌃+A to the pane")],
     }
 }
 
 fn rows(prefix: Prefix) -> Vec<(Option<&'static str>, &'static str, &'static str)> {
     let mut out: Vec<(Option<&'static str>, &'static str, &'static str)> = Vec::new();
+    for (i, (label, what)) in chord_rows(prefix).iter().enumerate() {
+        out.push((i.eq(&0).then_some("The prefix, in every terminal"), label, what));
+    }
     for (i, g) in crate::keys::GLOBAL.iter().enumerate() {
         out.push((i.eq(&0).then_some("⌥ and a letter, with Option sent as Alt"), g.label, g.what));
     }
@@ -59,9 +63,6 @@ fn rows(prefix: Prefix) -> Vec<(Option<&'static str>, &'static str, &'static str
     // the arrow rows are headless and still belong to the `⌥` section above
     let (arrows, rest) = ROWS.split_at(ROWS.iter().position(|r| r.0.is_some()).unwrap_or(ROWS.len()));
     out.extend(arrows.iter().copied());
-    for (i, (label, what)) in chord_rows(prefix).iter().enumerate() {
-        out.push((i.eq(&0).then_some("The tmux-style prefix"), label, what));
-    }
     out.extend(rest.iter().copied());
 
     let mut section = |head: &'static str, rows: Vec<(&'static str, &'static str)>| {
@@ -388,15 +389,34 @@ mod tests {
     }
 
     #[test]
-    fn the_prefix_has_a_section_only_while_it_is_on() {
-        assert!(!heads(&KeysHelp::new(Prefix::Off)).contains(&"The tmux-style prefix"));
+    fn the_prefix_leads_the_list_only_while_it_is_on() {
+        assert!(!heads(&KeysHelp::new(Prefix::Off)).contains(&"The prefix, in every terminal"));
         let listed: Vec<&str> = rows(Prefix::CtrlA).iter().map(|r| r.1).collect();
         assert!(listed.contains(&"⌃+A, then a key"), "{listed:?}");
         let with = rows(Prefix::CtrlB);
-        let at = with.iter().position(|r| r.0 == Some("The tmux-style prefix")).unwrap();
-        let arrow = with.iter().position(|r| r.1 == "⌥+shift+arrow").unwrap();
-        assert!(arrow < at, "the arrow row stays under the ⌥ heading");
-        assert_eq!(with[at + 2].0, Some("Mouse"), "and the section holds its own two rows only");
+        assert_eq!(with[0].0, Some("The prefix, in every terminal"), "it comes first");
+        assert_eq!(with[3].0, Some("⌥ and a letter, with Option sent as Alt"), "and holds its own three rows only");
+    }
+
+    #[test]
+    fn every_option_key_has_a_prefix_form_without_shift() {
+        // after the prefix: an arrow moves between areas, a digit picks a tab, a letter is a global one or,
+        // in the tree, the tree's own (input.rs), whatever its case
+        for (_, label, _) in rows(Prefix::CtrlB) {
+            let Some(rest) = label.strip_prefix("⌥+") else {
+                assert!(!label.contains('⌥'), "{label:?}");
+                continue;
+            };
+            if matches!(rest, "shift+arrow" | "1..9") {
+                continue;
+            }
+            assert!(!rest.contains("shift"), "{label:?} needs shift");
+            let mut chars = rest.chars();
+            let (Some(c), None) = (chars.next(), chars.next()) else { panic!("{label:?} is not one key") };
+            let c = crate::keys::latin(c);
+            let tree = crate::tree::COMMAND.iter().any(|r| r.alt && r.code == crossterm::event::KeyCode::Char(c));
+            assert!(crate::keys::global_of(c).is_some() || tree, "{label:?} answers nothing after the prefix");
+        }
     }
 
     #[test]

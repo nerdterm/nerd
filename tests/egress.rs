@@ -73,6 +73,8 @@ const ALLOW: &[(&str, &str, &str, &str, &str, &str)] = &[
     ("src/client.rs", "walk_to_app", "spawn", "\"ps\"", "local", "finds the terminal app"),
     ("src/client.rs", "open_window", "spawn", "\"/usr/bin/open\"", "local", "opens a terminal window"),
     ("src/client.rs", "appearance_dark", "spawn", "\"/usr/bin/defaults\"", "local", "reads light or dark mode"),
+    ("src/presets.rs", "margin_now", "spawn", "\"/usr/bin/defaults\"", "local", "reads iTerm2's margins before its preset changes them"),
+    ("src/presets.rs", "margin_set", "spawn", "\"/usr/bin/defaults\"", "local", "sets iTerm2's margins for its preset, and puts them back on undo"),
     ("src/client.rs", "connect_or_spawn", "spawn", "exe --daemon", "local", "starts nerd's server"),
     ("src/daemon.rs", "start", "spawn", "& exe --version", "local", "asks the installed build its version"),
     ("src/daemon.rs", "handover_exec", "command", "std :: env :: current_exe ()", "local", "update in place: the new build takes over the open panes and sockets"),

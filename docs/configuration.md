@@ -27,7 +27,7 @@ Settings live in `~/Library/Application Support/nerd/config.json`. **Settings…
 | `preview_wrap` | `false` | Wrap long lines in the preview; off, they scroll sideways. `w` in the preview switches it |
 | `paths` | `"home"` | `home` writes paths from your home folder (`~/dev/nerd`), `full` writes them whole (`/Users/you/dev/nerd`). Typing `~/` works either way |
 | `images` | `"auto"` | Image previews: `auto` (full quality where the terminal supports it, blocks elsewhere), `blocks` or `off` |
-| `prefix` | `"off"` | The tmux-style prefix: `off`, `ctrl_b` or `ctrl_a` |
+| `prefix` | `"ctrl_b"` | nerd's key, as in tmux: `ctrl_b`, `ctrl_a` or `off`. A stored `off` becomes `ctrl_b` once, on the first start of the build that made it the default |
 | `tmux` | `"ask"` | Started inside tmux: `ask` to open a window outside it, `new_window` without asking, or `stay` |
 | `notify` | `{"sound": true, "bell": false}` | When an agent outside the focused pane needs you: play a sound, ring the terminal bell. nerd sends no macOS notifications |
 | `remotes` | none | Machines for **Connect to another computer…** and `nerd --remote`: `[{"name": "studio", "host": "me@studio.local"}]`, a name of 1 to 16 letters, digits, `.`, `_` or `-`, with ssh keys set up for the host |

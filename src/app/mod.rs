@@ -116,8 +116,8 @@ pub struct App {
     pub tree: Option<crate::tree::Tree>,
     /// Which area has the keys. The tree is visible even when it does not.
     pub focus: Focus,
-    /// The prefix chord was pressed and the next key is its second half.
-    prefix: bool,
+    /// The prefix chord was pressed and the next key is its second half; the top row says so.
+    pub prefix: bool,
     /// The sidebar row the keys are on, while the sidebar has them.
     pub sidebar_sel: Option<SidebarSel>,
     /// The tree and its preview take the whole screen; panes are not drawn.
@@ -609,6 +609,61 @@ mod tests {
         app.key(crossterm::event::KeyEvent::new(KeyCode::Char('s'), KeyModifiers::ALT));
         assert_eq!((app.sidebar, app.cfg.sidebar_visible), (shown, shown));
         assert!(app.cfg_save_pending.is_some());
+    }
+
+    #[test]
+    fn a_terminal_preset_is_shown_then_applied_and_undone_from_settings() {
+        crate::config::tests::with_temp_home(|| {
+            let mut app = with_one_space();
+            let open = |app: &mut App| {
+                app.overlay = app.settings_outcome(crate::settings::Settings::new(&app.cfg), crate::settings::SettingsOutcome::Preset);
+                let Overlay::Picker(_, pick) = std::mem::replace(&mut app.overlay, Overlay::None) else { panic!("a list of terminals") };
+                app.overlay = app.picked(1, pick);
+            };
+            open(&mut app);
+            let Overlay::Confirm(c, Pending::Preset(crate::presets::Terminal::Kitty, steps, false)) = &app.overlay else { panic!("kitty, to apply") };
+            let lines = c.body_lines(200);
+            assert!(lines.iter().any(|l| l.contains("include ")), "the line added to kitty.conf is shown: {lines:?}");
+            let steps = steps.clone();
+            app.overlay = Overlay::None;
+            assert!(!crate::presets::applied(crate::presets::Terminal::Kitty), "nothing before the button");
+            app.perform(Pending::Preset(crate::presets::Terminal::Kitty, steps, false));
+            assert!(crate::presets::applied(crate::presets::Terminal::Kitty));
+            open(&mut app);
+            let Overlay::Confirm(_, what @ Pending::Preset(_, _, true)) = std::mem::replace(&mut app.overlay, Overlay::None) else { panic!("applied: the window offers undo") };
+            app.perform(what);
+            assert!(!crate::presets::applied(crate::presets::Terminal::Kitty));
+
+            app.caps.bye = true;
+            app.overlay = app.preset_picker();
+            assert!(matches!(app.overlay, Overlay::None) && app.notice.as_deref().is_some_and(|n| n.contains("nerd --preset")), "a window from another Mac is sent to the command there");
+        });
+    }
+
+    #[test]
+    fn a_wezterm_config_nerd_does_not_edit_gets_the_line_shown_whole_and_copied_not_applied() {
+        crate::config::tests::with_temp_home(|| {
+            let mine = crate::config::home_dir().join(".wezterm.lua");
+            std::fs::write(&mine, "return { font_size = 13 }\n").unwrap();
+            let mut app = with_one_space();
+            let wezterm = crate::presets::ALL.iter().position(|t| *t == crate::presets::Terminal::Wezterm).unwrap();
+            app.overlay = app.picked(wezterm, Pick::Preset);
+            let Overlay::Confirm(c, what @ Pending::Preset(_, _, false)) = std::mem::replace(&mut app.overlay, Overlay::None) else { panic!("the WezTerm window") };
+            let (_, line) = crate::presets::needs_line(match &what {
+                Pending::Preset(_, s, _) => s,
+                _ => unreachable!(),
+            })
+            .unwrap();
+            assert!(c.body.contains("WezTerm needs one line from you") && c.body.ends_with(&line), "the line, whole: {}", c.body);
+            assert!(c.body_lines(40).join(" ").contains("if ok then nerd(config) end"), "shown on a narrow window too");
+            app.to_client.clear();
+            app.perform(what);
+            assert!(String::from_utf8_lossy(&app.to_client).starts_with("\x1b]52;c;"), "the button copies the line");
+            assert!(app.toast.as_deref().is_some_and(|t| t.contains("not applied yet")), "{:?}", app.toast);
+            assert!(!crate::presets::applied(crate::presets::Terminal::Wezterm));
+            assert_eq!(crate::presets::status(crate::presets::Terminal::Wezterm), "needs your line");
+            assert_eq!(std::fs::read_to_string(&mine).unwrap(), "return { font_size = 13 }\n", "the config is not touched");
+        });
     }
 
     #[test]
@@ -1419,6 +1474,27 @@ mod tests {
             }
         }
         assert!(paths.contains(&dir.canonicalize().unwrap().join(name)), "the path acted on keeps its name: {paths:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn after_the_prefix_the_tree_takes_its_option_keys_without_shift() {
+        let dir = crate::paths::test_dir("prefix-tree");
+        std::fs::write(dir.join("f.txt"), "x").unwrap();
+        let mut app = App::new(Config::default());
+        let tab = Tab { name: None, layout: Layout::new(1), panes: HashMap::new(), isolation_new: None };
+        app.spaces.push(Space { name: None, cwd: dir.clone(), tabs: vec![tab], active_tab: 0, isolation_new: None });
+        app.screen = Rect::new(0, 0, 160, 30);
+        app.toggle_tree();
+        until(&mut app, "the file", |a| screen(a).contains("f.txt"));
+        app.focus = Focus::Tree;
+        let ctrl_b = KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL);
+        app.key(ctrl_b);
+        app.key(KeyEvent::new(KeyCode::Char('X'), KeyModifiers::SHIFT));
+        assert!(app.overlay.is_open(), "⌥+X, delete, asks first");
+        app.overlay = Overlay::None;
+        app.key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+        assert!(!app.overlay.is_open(), "without the prefix the letter filters");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -2512,11 +2588,24 @@ mod tests {
         let ctrl = |c| crossterm::event::KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
         let bare = |c| crossterm::event::KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE);
 
+        assert_eq!(app.cfg.prefix, Prefix::CtrlB, "on by default");
+        app.cfg.prefix = Prefix::Off;
         app.key(ctrl('b'));
         assert_eq!(written(&mut pane), [0x02], "off: control+b is the shell's");
 
         app.cfg.prefix = Prefix::CtrlB;
         let sidebar = app.sidebar;
+        app.key(ctrl('и'));
+        assert!(app.prefix, "control and the B key arms it on a Russian layout");
+        app.key(ctrl('и'));
+        assert_eq!(written(&mut pane), [0x02], "and twice reaches the pane there too");
+        let tree = app.tree.is_some();
+        app.key(ctrl('и'));
+        app.key(bare('е'));
+        assert_eq!(app.tree.is_some(), !tree, "then the T key, printing е, is option+T");
+        app.key(ctrl('b'));
+        app.key(bare('T'));
+        assert_eq!(app.tree.is_some(), tree, "and its case does not matter");
         app.key(ctrl('b'));
         app.key(bare('s'));
         assert_eq!(app.sidebar, !sidebar, "on: then s is option+S");
@@ -2525,6 +2614,9 @@ mod tests {
         app.key(ctrl('b'));
         app.key(bare('j'));
         assert_eq!(written(&mut pane), b"j", "a letter bound to nothing is typed, not swallowed");
+        app.key(ctrl('b'));
+        app.key(bare('x'));
+        assert_eq!(written(&mut pane), b"x", "a tree letter is the tree's only while the tree has the keys");
 
         app.key(ctrl('b'));
         app.key(ctrl('b'));
@@ -3325,7 +3417,7 @@ mod tests {
             let mut v = strings(what);
             v.extend(strings(&["—", view, hidden, "Filter names…", "Search contents… [⌥+G]", shape, "—", "Root one level up [⌫]", "Reload [⌥+R]", "—"]));
             v.extend(strings(zoom));
-            v.extend(strings(&["—", "Rename… [⌥+shift+R]", "Delete… [⌥+shift+D]", "—", "Close file tree [⌥+T]"]));
+            v.extend(strings(&["—", "Rename… [⌥+L]", "Delete… [⌥+X]", "—", "Close file tree [⌥+T]"]));
             v
         };
         let show = "Show hidden files [⌥+H]";

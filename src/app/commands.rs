@@ -133,6 +133,11 @@ impl App {
                     self.open_run(pane, sub.clone());
                 }
             }
+            Pick::Preset => {
+                if let Some(t) = crate::presets::ALL.get(id) {
+                    return self.preset_overlay(*t);
+                }
+            }
             Pick::Report => {
                 let Some((_, hours)) = REPORT_PERIODS.get(id) else { return Overlay::None };
                 let peers: Vec<String> = self.clients.iter().filter_map(|c| c.host.clone()).collect();
@@ -198,6 +203,7 @@ impl App {
             Pending::RemovePlugin(_) => "Remove plugin",
             Pending::Rename(..) => "Rename pane",
             Pending::Topology(..) => "Set up a topology",
+            Pending::Preset(..) => "Terminal preset",
         };
         // The name of the thing goes on its own line, so the sentence carries the consequence
         // and nothing else. A body that is only a count answers a question nobody asked.
@@ -259,7 +265,7 @@ impl App {
             Pending::DeletePath(_) => 0,
             // Detach never reaches here: its dialog is built on its own.
             Pending::Detach | Pending::DisconnectAll | Pending::Update | Pending::LeaveTmux | Pending::CopyResumeCommand => 0,
-            Pending::OpenRemote(_) | Pending::CopyCommand(_) | Pending::Dismiss | Pending::ShowInFinder(_) | Pending::InstallHook(_) | Pending::RemoveHook | Pending::StopServer | Pending::PluginReady(..) | Pending::RemovePlugin(_) | Pending::Rename(..) | Pending::Topology(..) => 0,
+            Pending::OpenRemote(_) | Pending::CopyCommand(_) | Pending::Dismiss | Pending::ShowInFinder(_) | Pending::InstallHook(_) | Pending::RemoveHook | Pending::StopServer | Pending::PluginReady(..) | Pending::RemovePlugin(_) | Pending::Rename(..) | Pending::Topology(..) | Pending::Preset(..) => 0,
             Pending::CloseGroup(key) => self
                 .spaces
                 .iter()
@@ -348,6 +354,46 @@ impl App {
         }
     }
 
+    /// The four terminals and whether each carries its preset. Files are written on the server's Mac, so a window
+    /// from another Mac is sent to the command there.
+    pub(super) fn preset_picker(&mut self) -> Overlay {
+        if self.caps.bye {
+            self.notice = Some("a preset changes the terminal on the Mac it runs on: run nerd --preset in a terminal there".into());
+            return Overlay::None;
+        }
+        let items = crate::presets::ALL
+            .iter()
+            .enumerate()
+            .map(|(id, t)| crate::menu::PickerItem { label: t.title().into(), detail: crate::presets::status(*t).into(), id })
+            .collect();
+        Overlay::Picker(crate::menu::Picker::new("Terminal preset", items), Pick::Preset)
+    }
+
+    /// Every change the preset makes, or takes back when it is applied, before the button that makes it.
+    fn preset_overlay(&mut self, t: crate::presets::Terminal) -> Overlay {
+        let undo = crate::presets::applied(t);
+        let steps = if undo { crate::presets::undo_steps(t) } else { crate::presets::apply_steps(t, &self.cfg, self.caps.dark.unwrap_or(true)) };
+        let steps = match steps {
+            Ok(s) => s,
+            Err(e) => {
+                self.notice = Some(format!("the {} preset cannot be read: {e}", t.title()));
+                return Overlay::None;
+            }
+        };
+        // the body wraps and a table row does not, so the line to add goes in the body, whole
+        if let Some((_, line)) = crate::presets::needs_line(&steps) {
+            let (says, rest): (Vec<_>, Vec<_>) = steps.iter().cloned().partition(|s| matches!(s, crate::presets::Step::Line(..)));
+            let body = format!("{} The button writes nerd's file and copies the line: {line}", crate::presets::describe(&says, false)[0]);
+            let rows = crate::presets::describe(&rest, false).into_iter().map(|l| vec![l]).collect();
+            let confirm = crate::menu::Confirm::new(format!("{} preset", t.title()), body).rows(rows).labels(" [Enter] copy the line ", " [Esc] close ");
+            return Overlay::Confirm(confirm, Pending::Preset(t, steps, false));
+        }
+        let body = format!("Option as Alt on the left key, a 16 pt margin and nerd's colours. nerd --preset {} in a terminal prints every line.", t.name());
+        let rows = crate::presets::describe(&steps, false).into_iter().map(|l| vec![l]).collect();
+        let confirm = crate::menu::Confirm::new(format!("{} preset", t.title()), body).rows(rows).does(if undo { "undo" } else { "apply" });
+        Overlay::Confirm(confirm, Pending::Preset(t, steps, undo))
+    }
+
     /// The hook goes into an agent's config only after the human has read where and what resumes it.
     pub(super) fn install_hook_overlay(&mut self) -> Overlay {
         self.dirty = true;
@@ -370,6 +416,7 @@ impl App {
         match outcome {
             O::Close => Overlay::None,
             O::InstallHook => self.install_hook_overlay(),
+            O::Preset => self.preset_picker(),
             O::RemoveHook => self.remove_hook_overlay(),
             O::EditConfig if self.caps.bye => {
                 let host = nix::unistd::gethostname().ok().map(|h| h.to_string_lossy().into_owned()).unwrap_or_default();
@@ -479,6 +526,23 @@ impl App {
     pub(super) fn perform(&mut self, what: Pending) {
         self.dirty = true;
         match what {
+            Pending::Preset(t, steps, undo) => {
+                let done = if undo { "undone" } else { "applied" };
+                let line = crate::presets::needs_line(&steps);
+                match crate::presets::run(&steps) {
+                    Ok(()) if let Some((p, line)) = line => {
+                        let p = crate::paths::shown(p);
+                        crate::log::info(&format!("preset for {} needs the user's line in {p}, copied from the menu: {}", t.title(), crate::presets::touched(&steps)));
+                        self.to_client.extend(crate::select::copy(&line));
+                        self.toast = Some(format!("{} preset not applied yet: the line is copied, add it to {p}", t.title()));
+                    }
+                    Ok(()) => {
+                        crate::log::info(&format!("preset for {} {done} from the menu: {}", t.title(), crate::presets::touched(&steps)));
+                        self.toast = Some(format!("{} preset {done}", t.title()));
+                    }
+                    Err(e) => self.notice = Some(format!("the {} preset was not {done}: {e}", t.title())),
+                }
+            }
             Pending::Update => self.upgrade = true,
             Pending::StopServer => self.stop_server = true,
             Pending::RemovePlugin(n) => self.remove_plugin(&n, false),
@@ -1141,8 +1205,8 @@ impl App {
             ],
             plugin_group(if is_dir { crate::agents::Place::Folder } else { crate::agents::Place::File }, self.builtins),
             vec![
-                Item::new("Rename…", Action::TreeRename).key(k(Char('R'), true)),
-                Item::new("Delete…", Action::TreeDelete).key(k(Char('D'), true)),
+                Item::new("Rename…", Action::TreeRename).key(k(Char('l'), true)),
+                Item::new("Delete…", Action::TreeDelete).key(k(Char('x'), true)),
             ],
             vec![Item::new("Close file tree", Action::TreeClose).key(global_label(KeyActionName::Surface(4)))],
         ]);
@@ -1972,6 +2036,8 @@ pub enum Pick {
     Run(PaneId, Vec<String>),
     /// A period from REPORT_PERIODS, by index.
     Report,
+    /// A terminal from presets::ALL, by index.
+    Preset,
     /// Set up a topology…: the preset once chosen, the names picked so far, and what this picker offers.
     Topology(Option<usize>, Vec<String>, Vec<String>, Option<Box<crate::messages::Messages>>),
 }
@@ -2024,6 +2090,8 @@ pub enum Pending {
     /// A pane takes a name with history: keep it, or the third button drops it.
     Rename(PaneId, String),
     Topology(Vec<crate::policy::Route>, Option<Box<crate::messages::Messages>>),
+    /// A terminal preset's steps as the window showed them; `true` when they undo it.
+    Preset(crate::presets::Terminal, Vec<crate::presets::Step>, bool),
 }
 
 impl Overlay {

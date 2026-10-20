@@ -256,7 +256,7 @@ impl Default for Config {
             paths: PathStyle::Home,
             tmux: TmuxOffer::Ask,
             theme: ThemeMode::Auto,
-            prefix: Prefix::Off,
+            prefix: Prefix::CtrlB,
             remotes: serde_json::Value::Null,
             plugins: serde_json::Value::Null,
         }
@@ -288,6 +288,36 @@ pub fn load_checked() -> (Config, bool) {
         Err(_) => (Config::default(), true),
     };
     (cfg.clamped(), broken)
+}
+
+/// Once per config: the first server start with Control + B as the default switches a stored "off" to it,
+/// and records that it ran whatever the value, so an "off" chosen later stays. A file that does not
+/// parse is left untouched and nothing is recorded.
+pub fn migrate_prefix() -> std::io::Result<bool> {
+    let record = config_path().with_file_name("prefix-default-done");
+    if record.exists() {
+        return Ok(false);
+    }
+    let switched = match std::fs::read_to_string(config_path()) {
+        Ok(data) => {
+            let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&data) else { return Ok(false) };
+            if serde_json::from_value::<Config>(v.clone()).is_err() {
+                return Ok(false);
+            }
+            let off = v.get("prefix").and_then(serde_json::Value::as_str) == Some("off");
+            if let Some(obj) = v.as_object_mut().filter(|_| off) {
+                obj.insert("prefix".into(), "ctrl_b".into());
+                let bytes = serde_json::to_vec_pretty(&v).map_err(std::io::Error::other)?;
+                crate::paths::write_private(&config_path(), "json.tmp", &bytes)?;
+            }
+            off
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+        Err(e) => return Err(e),
+    };
+    std::fs::create_dir_all(record.parent().expect("config_path always has a parent"))?;
+    std::fs::write(&record, "")?;
+    Ok(switched)
 }
 
 /// (min, max) of each limited value: the file, Settings and the mouse drag all clamp to these.
@@ -432,6 +462,50 @@ pub(crate) mod tests {
         crate::paths::TEST_HOME.with(|h| h.replace(old));
         let _ = std::fs::remove_dir_all(&dir);
         result
+    }
+
+    #[test]
+    fn a_stored_off_becomes_control_b_once() {
+        with_temp_home(|| {
+            let path = config_path();
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, r#"{"sidebar_width": 30, "prefix": "off", "zz": 1}"#).unwrap();
+            assert!(migrate_prefix().unwrap());
+            let text = std::fs::read_to_string(&path).unwrap();
+            assert_eq!(load_checked().0.prefix, Prefix::CtrlB);
+            assert!(text.find("sidebar_width") < text.find("zz"), "order and unknown keys kept: {text}");
+            std::fs::write(&path, r#"{"prefix": "off"}"#).unwrap();
+            assert!(!migrate_prefix().unwrap(), "recorded: an off chosen later stays");
+            assert_eq!(load_checked().0.prefix, Prefix::Off);
+        });
+    }
+
+    #[test]
+    fn the_migration_record_is_written_whatever_the_value() {
+        with_temp_home(|| {
+            let path = config_path();
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, r#"{"prefix": "ctrl_a"}"#).unwrap();
+            assert!(!migrate_prefix().unwrap());
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), r#"{"prefix": "ctrl_a"}"#, "untouched");
+            std::fs::write(&path, r#"{"prefix": "off"}"#).unwrap();
+            assert!(!migrate_prefix().unwrap(), "ctrl-a without a record still wrote it");
+        });
+        with_temp_home(|| {
+            assert!(!migrate_prefix().unwrap(), "no file: the defaults already carry Control + B");
+            std::fs::write(config_path(), r#"{"prefix": "off"}"#).unwrap();
+            assert!(!migrate_prefix().unwrap());
+        });
+        with_temp_home(|| {
+            let path = config_path();
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            for broken in [r#"{"prefix": "off""#, r#"{"prefix": "off", "sidebar_width": "wide"}"#] {
+                std::fs::write(&path, broken).unwrap();
+                assert!(!migrate_prefix().unwrap());
+                assert_eq!(std::fs::read_to_string(&path).unwrap(), broken, "a file that does not parse is left alone");
+                assert!(!path.with_file_name("prefix-default-done").exists(), "and nothing is recorded");
+            }
+        });
     }
 
     #[test]

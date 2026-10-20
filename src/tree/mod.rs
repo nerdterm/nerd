@@ -817,8 +817,8 @@ mod tests {
         assert!(matches!(t.key(alt(KeyCode::Char('d'))), Outcome::Cd(p) if p == dir));
         assert!(matches!(t.key(alt(KeyCode::Char('p'))), Outcome::NewSpace(p) if p == dir));
         assert!(matches!(t.key(alt(KeyCode::Char('a'))), Outcome::AskCreate(p) if p == dir));
-        assert!(matches!(t.key(alt(KeyCode::Char('R'))), Outcome::AskRename(p) if p == dir));
-        assert!(matches!(t.key(alt(KeyCode::Char('D'))), Outcome::AskDelete(p) if p == dir));
+        assert!(matches!(t.key(alt(KeyCode::Char('l'))), Outcome::AskRename(p) if p == dir));
+        assert!(matches!(t.key(alt(KeyCode::Char('x'))), Outcome::AskDelete(p) if p == dir));
         assert!(matches!(t.key(alt(KeyCode::Char('e'))), Outcome::None), "a directory isn't for the editor");
 
         t.key(key(KeyCode::Down));
@@ -860,7 +860,7 @@ mod tests {
         // the strip has the pair's width now: entries a single column never had room for
         let (wide, _) = draw_wide(&mut t, 120, 20, 34);
         let strip = line_at(&wide, 17, 119);
-        assert!(strip.contains("⌥+shift+D delete") && strip.contains("⌥+H hidden"), "strip: {strip:?}");
+        assert!(strip.contains("⌥+X delete") && strip.contains("⌥+H hidden"), "strip: {strip:?}");
         rm(&d);
     }
 

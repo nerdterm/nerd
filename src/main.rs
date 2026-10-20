@@ -39,6 +39,7 @@ mod paths;
 mod plugin_list;
 mod plugins;
 mod policy;
+mod presets;
 mod pointer;
 mod proxy;
 mod preview;
@@ -145,12 +146,7 @@ fn run() -> std::io::Result<()> {
             return client::run(Some(resume_name(&args)), from_window);
         }
         Some("--install") => return install_autostart(),
-        Some("--install-keys") => {
-            ghostty::link()?;
-            println!("Keys written: {}\nIncluded from {}", ghostty::keys_path().display(), ghostty::ghostty_config().display());
-            return Ok(());
-        }
-        Some("--uninstall-keys") => return ghostty::unlink(),
+        Some("--preset") => return presets::main(&args[1..]),
         Some("--install-hook") => {
             let first = hook::first_installs();
             if !first.is_empty() {
@@ -177,7 +173,9 @@ fn run() -> std::io::Result<()> {
             return Ok(());
         }
         Some("--uninstall") => {
-            let _ = ghostty::unlink();
+            for e in presets::undo_all() {
+                eprintln!("nerd: preset not undone, {e}");
+            }
             return config::autostart::uninstall();
         }
         Some("--export-logs") => {
@@ -249,9 +247,9 @@ fn print_help() {
            --install         install autostart (LaunchAgent){}\n\
            --uninstall       remove autostart\n\
            --install-hook    status hook in every agent found (Claude Code, Codex, Cursor, ...){}\n\
-           --install-keys    option shortcuts for Ghostty, layout-independent{}\n\
-           --uninstall-keys  remove them\n\
            --uninstall-hook  remove the hooks\n\
+           --preset [T] [--undo]  Option as Alt, a margin and nerd's colours in ghostty, kitty, wezterm or iterm2,\n\
+                             showing every change and asking first; alone, which are applied\n\
            --plugin-check DIR [--catalog] [--json]  check a plugin folder: what it can do, and any problem\n\
            --plugin-add URL[@TAG]  install a plugin from https://github.com/OWNER/REPO, or from a folder you develop or checked\n\
                            yourself, after showing what it can do; --lock FILE installs a lock's\n\
@@ -269,16 +267,16 @@ fn print_help() {
            --sandbox-selftest  test the sandbox profile on itself\n\
            --version     version\n\
          \n\
-         Right click anything for its menu. Keys:\n\
-           ⌥+K  keys        ⌥+M  main menu   ⌥+/  search the pane\n\
-           ⌥+T  file tree   ⌥+N  navigator   ⌥+,  settings\n\
-           ⌥+C  new tab     ⌥+W  close pane  ⌥+Q  detach\n\
-           ⌥+-  split down  ⌥+\\  split side  ⌥+Z  full screen\n\
-           ⌥+S  sidebar     ⌥+U  update      ⌥+shift+arrow  move between panes and areas\n\
+         Right click anything for its menu. Keys: ⌃+B, then one of these (⌃+B twice sends it to the pane);\n\
+         where Option is sent as Alt (nerd --preset), ⌥ and the same key, with shift for an arrow:\n\
+           K  keys        M  main menu   /  search the pane\n\
+           T  file tree   N  navigator   ,  settings\n\
+           C  new tab     W  close pane  Q  detach\n\
+           -  split down  \\  split side  Z  full screen\n\
+           S  sidebar     U  update      an arrow  move between panes and areas\n\
            Esc close a menu, dialog or search",
         installed,
-        if hook::is_installed() { "   [installed]" } else { "" },
-        if ghostty::is_linked() { "   [installed]" } else { "" }
+        if hook::is_installed() { "   [installed]" } else { "" }
     );
 }
 

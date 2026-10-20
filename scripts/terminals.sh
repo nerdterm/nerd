@@ -2,8 +2,12 @@
 # Starts nerd in each macOS terminal on a test server of its own and prints what reached the server from there.
 # Input needs Accessibility and screenshots need Screen Recording for the terminal this runs in; without them those
 # columns say "no permission". Run it from Terminal.app; input goes only to the test window it opened.
-# usage: scripts/terminals.sh [ghostty kitty wezterm iterm]
+# --preset applies each terminal's nerd --preset to its test home and starts the terminal on that config alone, so
+# the Option columns show the preset's effect; iTerm2 reads only the real home's settings and is not checked so.
+# usage: scripts/terminals.sh [--preset] [ghostty kitty wezterm iterm]
 set -eu
+preset=
+if [ "${1:-}" = --preset ]; then preset=1; shift; fi
 cd "$(git rev-parse --show-toplevel)"
 nerd=${NERD:-$PWD/target/release/nerd}
 [ -x "$nerd" ] || { echo "terminals: no $nerd; run cargo build --release" >&2; exit 1; }
@@ -31,7 +35,7 @@ p3="0 153 194"
 clip='nerd-terminals-paste-ok'
 tab=$(printf '\t')
 table=$run/table
-echo "terminal${tab}attach${tab}TERM_PROGRAM${tab}graphics${tab}stray reply${tab}plain key${tab}Option${tab}Control Latin${tab}Control Cyrillic${tab}arrows${tab}paste${tab}mouse${tab}shortcuts${tab}colour${tab}new window" >"$table"
+echo "terminal${tab}attach${tab}TERM_PROGRAM${tab}graphics${tab}stray reply${tab}plain key${tab}Option${tab}Control Latin${tab}Control Cyrillic${tab}arrows${tab}paste${tab}mouse${tab}shortcuts${tab}prefix${tab}prefix, Russian${tab}colour${tab}new window" >"$table"
 notes=$run/notes
 : >"$notes"
 # A run stopped mid-paste still gives the clipboard back.
@@ -114,12 +118,21 @@ for t in "$@"; do
         printf 'for i in 1 2 3 4 5 6; do printf "\\033[48;2;%s;%s;%sm%%20s\\033[0m\\n" ""; done\n' $block >"$h/$rc"
     done
     c="/usr/bin/env HOME=$h NERD_SOCKET=$h/s.sock NERD_TRACE=1 $nerd"
-    asid='' as='' pid=''
+    asid='' as='' pid='' targs=''
+    if [ -n "$preset" ] && [ "$t" != iterm ]; then
+        # the preset's own locations under the test home, never the real ones
+        echo y | $clean -u XDG_CONFIG_HOME -u KITTY_CONFIG_DIRECTORY -u WEZTERM_CONFIG_FILE HOME="$h" "$nerd" --preset "$t" >"$run/$t-preset"
+        case $t in
+            ghostty) targs="--config-default-files=false --config-file=$h/.config/ghostty/config.ghostty" ;;
+            kitty) targs="--config=$h/.config/kitty/kitty.conf" ;;
+            wezterm) targs="--config-file $h/.wezterm.lua" ;;
+        esac
+    fi
     case $t in
-        # `open -n` starts a process of its own. Nothing but -e: Ghostty reads any other argument as configuration.
+        # `open -n` starts a process of its own. Nothing but -e and, with --preset, the config file: Ghostty reads any other argument as configuration.
         ghostty | kitty | wezterm)
             pgrep -f "$exe" >"$run/pids" || true
-            $clean open -na "$app.app" --args -e $c ;;
+            $clean open -na "$app.app" --args $targs -e $c ;;
         iterm)
             open -ga "$app" && sleep 2
             osascript -e "tell application \"$app\" to id of windows" 2>/dev/null | tr -s ', ' '\n' >"$run/as-before" || true
@@ -155,7 +168,7 @@ for t in "$@"; do
         elif [ "$keys" = 0 ]; then stray=none
         else stray="$keys keys"; fi
         if ! resolve; then
-            cells="no window${tab}no window${tab}no window${tab}no window${tab}no window${tab}no window${tab}no window${tab}no window${tab}no window"
+            cells="no window${tab}no window${tab}no window${tab}no window${tab}no window${tab}no window${tab}no window${tab}no window${tab}no window${tab}no window${tab}no window"
             lost "no test window (a full-screen Space or a locked screen keeps windows off it)"
         else
             colour=$screen
@@ -173,7 +186,7 @@ for t in "$@"; do
             if [ "$input" = ok ] && [ -n "$others" ]; then
                 # Events posted to one instance of an app can reach another instance of the same app, the user's own.
                 no="not checked: another $app is running"
-                cells="$no${tab}$no${tab}$no${tab}$no${tab}$no${tab}$no${tab}$no${tab}$no"
+                cells="$no${tab}$no${tab}$no${tab}$no${tab}$no${tab}$no${tab}$no${tab}$no${tab}$no${tab}$no"
                 echo "$t: another $app is running (pid $others), so no input was posted; quit it to check this row's input" >>"$notes"
             elif [ "$input" = ok ]; then
                 cells="$(try "char 0x0" "key 0")${tab}$(try "char ALT" "key 0 option")"
@@ -190,12 +203,21 @@ for t in "$@"; do
                 cells="$cells${tab}$(try "mouse Down(Left) 0x0 mouse Up(Left) 0x0" click)"
                 case $layout in
                     com.apple.keylayout.US | com.apple.keylayout.ABC)
-                        post_shortcuts >"$run/$t-shortcuts"
-                        cells="$cells${tab}$(shortcuts_cell "$t" <"$run/$t-shortcuts")" ;;
-                    *) cells="$cells${tab}not checked: the layout is ${layout#com.apple.keylayout.}, not U.S. or ABC" ;;
+                        if [ -n "$preset" ] && [ "$t" = iterm ]; then
+                            cells="$cells${tab}not checked: iTerm2 reads the real home"
+                        else
+                            post_shortcuts >"$run/$t-shortcuts"
+                            cells="$cells${tab}$(shortcuts_cell "$t" <"$run/$t-shortcuts")"
+                        fi
+                        post_prefix latin >"$run/$t-prefix"
+                        cells="$cells${tab}$(prefix_cell <"$run/$t-prefix")" ;;
+                    *) cells="$cells${tab}not checked: the layout is ${layout#com.apple.keylayout.}, not U.S. or ABC${tab}not checked: not a Latin layout" ;;
                 esac
+                # a Russian keyboard, as the Control Cyrillic column posts it: each key with the character it prints there
+                post_prefix russian >"$run/$t-prefix-russian"
+                cells="$cells${tab}$(prefix_cell <"$run/$t-prefix-russian")"
             else
-                cells="$input${tab}$input${tab}$input${tab}$input${tab}$input${tab}$input${tab}$input${tab}$input"
+                cells="$input${tab}$input${tab}$input${tab}$input${tab}$input${tab}$input${tab}$input${tab}$input${tab}$input${tab}$input"
             fi
             cells="$cells${tab}$colour"
         fi

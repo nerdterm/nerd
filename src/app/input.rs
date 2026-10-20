@@ -39,10 +39,12 @@ impl App {
         }
         // Taken before the areas, so the search, the tree and the sidebar never eat either half.
         let armed = std::mem::take(&mut self.prefix);
+        self.dirty |= armed;
         if let Some(p) = self.cfg.prefix.letter()
             && !self.overlay.is_open()
         {
-            let again = k.code == KeyCode::Char(p) && k.modifiers == KeyModifiers::CONTROL;
+            // read off the key, so Control + B arms it on a Russian layout too
+            let again = matches!(k.code, KeyCode::Char(c) if crate::keys::latin(c) == p) && k.modifiers == KeyModifiers::CONTROL;
             if armed && again {
                 // pressed twice, the chord belongs to the pane
                 if let Some(pane) = self.tab_mut().and_then(Tab::focused_mut) {
@@ -57,9 +59,15 @@ impl App {
             }
             if again {
                 self.prefix = true;
+                self.dirty = true;
                 return;
             }
         }
+        // after the prefix the tree takes its own `option` letters, shift or not; a pane gets the plain key
+        let k = match k.code {
+            KeyCode::Char(c) if armed && self.focus == Focus::Tree => KeyEvent::new(KeyCode::Char(crate::keys::latin(c)), KeyModifiers::ALT),
+            _ => k,
+        };
         // Esc leaves a zoomed section first, then closes one clicked last; otherwise it is the pane's
         if k.code == KeyCode::Esc && self.run.is_some() && !self.overlay.is_open() && self.search.is_none() && (self.run_zoom || self.run_keys) {
             if !std::mem::take(&mut self.run_zoom) {
@@ -667,7 +675,7 @@ impl App {
 
         // a click between the halves of the chord cancels it, or the next letter fires as a command
         if matches!(ev.kind, MouseEventKind::Down(_)) {
-            self.prefix = false;
+            self.dirty |= std::mem::take(&mut self.prefix);
         }
         if self.overlay.is_open() {
             self.overlay_mouse(ev, screen);

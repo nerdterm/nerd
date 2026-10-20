@@ -70,8 +70,48 @@ shortcuts_cell() {
         $2 == want { ok++; next }
         { bad = bad "; " $1 ": " $2 }
         END {
-            if (alt == 0 && plain > 0 && t == "kitty") { print "Option not sent as Alt: set macos_option_as_alt left"; exit }
-            if (alt == 0 && plain > 0 && t == "iterm") { print "Option not sent as Alt: set the Left Option key to Esc+"; exit }
+            if (alt == 0 && plain > 0 && t == "kitty") { print "Option not sent as Alt: nerd --preset kitty sets it"; exit }
+            if (alt == 0 && plain > 0 && t == "iterm") { print "Option not sent as Alt: nerd --preset iterm2 sets it"; exit }
             print "ok " ok + 0 "/" n bad
         }'
+}
+
+# The character a Russian layout prints on each shortcut's key; the same key's own where it prints that.
+russian() {
+    case $1 in
+        K) echo л ;; M) echo ь ;; /) echo . ;; T) echo е ;; N) echo т ;; ,) echo б ;; C) echo с ;; W) echo ц ;;
+        Z) echo я ;; S) echo ы ;; U) echo г ;; Q) echo й ;; *) echo "$1" ;;
+    esac
+}
+
+# Posts Control + B, then each shortcut's key with neither Option nor Shift, Escape after each, and prints
+# "name<tab>what arrived". With $1 = russian both carry the Russian layout's characters, as a Russian keyboard does.
+post_prefix() {
+    printf '%s\n' "$SHORTCUTS" | while read -r sc_name sc_code; do
+        sc_at=$(wc -c <"$log")
+        sc_got="focus lost"
+        sc_b=и sc_key=$(russian "$sc_name")
+        if [ "$1" != russian ]; then sc_b='' sc_key=''; fi
+        case $sc_name in shift+*) sc_key='' ;; esac
+        if step key 11 control $sc_b && step key "$sc_code" "" $sc_key; then
+            sc_i=0
+            while [ "$(arrived "$sc_at")" -lt 2 ] && [ $sc_i -lt 20 ]; do sleep 0.1; sc_i=$((sc_i + 1)); done
+            sc_got=$(since "$sc_at" "$(wc -c <"$log")")
+        fi
+        sc_at=$(wc -c <"$log")
+        step key 53 || true
+        sc_i=0
+        while [ "$(arrived "$sc_at")" -lt 1 ] && [ $sc_i -lt 10 ]; do sleep 0.1; sc_i=$((sc_i + 1)); done
+        printf '%s\t%s\n' "$sc_name" "${sc_got:-nothing}"
+    done
+}
+
+# Reads post_prefix's lines and says "ok N/N", or which did not arrive as Control + B and then the bare key.
+# Control and the B key may come as b or as и: nerd reads both off the key.
+prefix_cell() {
+    awk -F '\t' '
+        { n++; key = $1 ~ /^shift\+/ ? substr($1, 7) " 0x0" : "char 0x0" }
+        $2 == "Char(\047b\047) CONTROL " key || $2 == "Char(\047и\047) CONTROL " key { ok++; next }
+        { bad = bad "; " $1 ": " $2 }
+        END { print "ok " ok + 0 "/" n bad }'
 }

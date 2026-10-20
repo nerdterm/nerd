@@ -288,8 +288,16 @@ pub fn draw(f: &mut Frame, app: &App, view: &mut ViewState, geometry: &[crate::a
     let tabs_w = badge.map_or(right.width, |b| right.width.min(b.x.saturating_sub(right.x + 1)));
     let tabs_area = Rect { x: right.x, y: top.y, width: tabs_w, height: 1 };
     let (tab_rects, plus) = crate::chrome::draw_tabs(f.buffer_mut(), tabs_area, &tabs, app.focus == crate::app::Focus::Tabs, &theme);
-    let from = plus.or(tab_rects.last().map(|(r, _)| *r)).map_or(tabs_area.x, |r| r.right() + 1);
+    let mut from = plus.or(tab_rects.last().map(|(r, _)| *r)).map_or(tabs_area.x, |r| r.right() + 1);
     let end = badge.map_or(full.right().saturating_sub(TEXT_INSET), |b| b.x.saturating_sub(1));
+    if app.prefix {
+        let label = app.cfg.prefix.label();
+        let w = crate::slots::cells(label) as u16;
+        if end > from + w {
+            f.buffer_mut().set_string(from + 1, top.y, label, Style::default().fg(theme.accent));
+            from += w + 3;
+        }
+    }
     let seg_hits = draw_segments(f.buffer_mut(), app, from, end, top.y);
     view.hits.segments = seg_hits;
     view.hits.tabs = tab_rects;

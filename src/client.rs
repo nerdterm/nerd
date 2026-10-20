@@ -59,12 +59,6 @@ pub fn run(resume: Option<Option<String>>, from_window: bool) -> std::io::Result
 
     let tui = Tui::up(crate::config::load_or_init().mouse).map_err(early)?;
     let mut out = std::io::stdout();
-    // The key file is rewritten on every start, so an update carries a changed key map into
-    // the terminal without anyone running anything. Ghostty is asked to reread only when it
-    // actually changed, and only when its config pulls our file in.
-    if crate::ghostty::refresh().unwrap_or(false) && crate::ghostty::is_linked() {
-        reload_ghostty();
-    }
     // tmux/screen swallow Kitty graphics anyway, and turn the query itself into a pane title.
     let mux = in_multiplexer();
     // `tmux` and `ps` are asked with their output captured, so nothing of theirs reaches the screen.
@@ -76,6 +70,11 @@ pub fn run(resume: Option<Option<String>>, from_window: bool) -> std::io::Result
     let _ = out.flush();
 
     let dark = appearance_dark();
+    // Applied presets are rewritten on every start, so an update carries a changed key map into the terminal
+    // without anyone running anything; Ghostty is asked to reread only when its file changed.
+    if crate::presets::refresh(&crate::config::load_or_init(), || dark.unwrap_or(true)).unwrap_or(false) {
+        reload_ghostty();
+    }
     let appearance = appearance_poller(dark);
     let cell = cell_px(crossterm::terminal::window_size());
     let hello = ClientMsg::Hello {
@@ -433,7 +432,7 @@ fn encode(dark: Option<bool>) -> u8 {
 }
 
 /// macOS keeps `AppleInterfaceStyle` only while the appearance is dark; `None` when `defaults` can't answer.
-fn appearance_dark() -> Option<bool> {
+pub(crate) fn appearance_dark() -> Option<bool> {
     let out = crate::spawn::cmd("/usr/bin/defaults")
         .args(["read", "-g", "AppleInterfaceStyle"])
         .stderr(std::process::Stdio::null())
