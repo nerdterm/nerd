@@ -75,12 +75,22 @@ fn home() -> PathBuf {
     crate::config::home_dir()
 }
 
-/// An absolute path from the environment; tests never read the real one.
+#[cfg(test)]
+thread_local! {
+    static TEST_ENV: std::cell::RefCell<Vec<(&'static str, PathBuf)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// An absolute path from the environment; tests never read the real one, only what `set_env` gave this thread.
 fn env_path(key: &str) -> Option<PathBuf> {
-    if cfg!(test) {
-        return None;
-    }
+    #[cfg(test)]
+    return TEST_ENV.with(|e| e.borrow().iter().find(|(k, _)| *k == key).map(|(_, p)| p.clone()));
+    #[cfg(not(test))]
     std::env::var_os(key).map(PathBuf::from).filter(|p| p.is_absolute())
+}
+
+#[cfg(test)]
+fn set_env(key: &'static str, path: PathBuf) {
+    TEST_ENV.with(|e| e.borrow_mut().push((key, path)));
 }
 
 fn xdg() -> PathBuf {
@@ -142,7 +152,12 @@ fn ghostty_configs() -> Vec<PathBuf> {
 fn legacy() -> (PathBuf, PathBuf, String) {
     let keys = own("ghostty-keys.conf");
     let lines = format!("{}\nconfig-file = {}\n", crate::ghostty::MARK, keys.display());
-    (xdg().join("ghostty/config"), keys, lines)
+    (home().join(".config/ghostty/config"), keys, lines)
+}
+
+fn legacy_linked() -> bool {
+    let (old, _, lines) = legacy();
+    std::fs::read_to_string(old).is_ok_and(|s| s.contains(&lines))
 }
 
 fn ghostty_theme(t: &Theme) -> String {
@@ -399,13 +414,10 @@ fn set_margins(on: bool) -> std::io::Result<()> {
 
 // --- the plans ---
 
-/// Whether the terminal's config carries nerd's preset (or, for Ghostty, the old key link).
+/// Whether the terminal's config carries nerd's preset.
 pub fn applied(t: Terminal) -> bool {
     match t {
-        Terminal::Ghostty => {
-            let (old, _, lines) = legacy();
-            ghostty_configs().iter().any(|p| has_block(t, p)) || std::fs::read_to_string(old).is_ok_and(|s| s.contains(&lines))
-        }
+        Terminal::Ghostty => ghostty_configs().iter().any(|p| has_block(t, p)),
         Terminal::Kitty => has_block(t, &kitty_conf()),
         // nerd's file is there and the config WezTerm reads holds the line that loads it
         Terminal::Wezterm => {
@@ -416,10 +428,13 @@ pub fn applied(t: Terminal) -> bool {
     }
 }
 
-/// Applied or not; for WezTerm also nerd's file written while the user's config still lacks the line.
+/// Applied or not; for Ghostty also the link `--install-keys` made, which applying replaces; for WezTerm also
+/// nerd's file written while the user's config still lacks the line.
 pub fn status(t: Terminal) -> &'static str {
     if applied(t) {
         "applied"
+    } else if t == Terminal::Ghostty && legacy_linked() {
+        "old keys link"
     } else if t == Terminal::Wezterm && own("wezterm-preset.lua").exists() {
         "needs your line"
     } else {
@@ -673,6 +688,12 @@ pub fn refresh(cfg: &crate::config::Config, dark: impl Fn() -> bool) -> std::io:
             }
         }
     }
+    // until the old link is replaced, Ghostty loads the key file it names
+    let (_, keys, _) = legacy();
+    if !applied(Terminal::Ghostty) && legacy_linked() && read(&keys)?.as_deref() != Some(crate::ghostty::conf().as_str()) {
+        write(&keys, &crate::ghostty::conf())?;
+        ghostty_changed = true;
+    }
     Ok(ghostty_changed)
 }
 
@@ -689,11 +710,12 @@ pub fn touched(steps: &[Step]) -> String {
     names.join(", ")
 }
 
-/// Every applied preset taken back, for `nerd --uninstall`.
+/// Everything a preset left taken back, applied or not (the old key link, iTerm2's margins), for `nerd --uninstall`.
 pub fn undo_all() -> Vec<String> {
     let mut failed = Vec::new();
-    for t in ALL.into_iter().filter(|t| applied(*t)) {
+    for t in ALL {
         match undo_steps(t).and_then(|s| run(&s).map(|()| s)) {
+            Ok(s) if s.iter().all(|s| matches!(s, Step::Note(_))) => {}
             Ok(s) => crate::log::info(&format!("preset for {} undone by nerd --uninstall: {}", t.title(), touched(&s))),
             Err(e) => failed.push(format!("{}: {e}", t.title())),
         }
@@ -933,13 +955,35 @@ mod tests {
             std::fs::write(&old, format!("font-size = 13\n\n{lines}")).unwrap();
             std::fs::create_dir_all(keys.parent().unwrap()).unwrap();
             std::fs::write(&keys, "keybind = x\n").unwrap();
-            assert!(applied(Terminal::Ghostty), "the old link counts as applied");
+            assert!(!applied(Terminal::Ghostty), "the old link is not the preset");
+            assert_eq!(status(Terminal::Ghostty), "old keys link");
+            assert!(refresh(&Config::default(), || true).unwrap(), "Ghostty reloads the key file it loads");
+            assert_eq!(std::fs::read_to_string(&keys).unwrap(), crate::ghostty::conf(), "the old link's keys follow this build");
+            assert!(!own("ghostty-preset.conf").exists(), "nothing written that the old link does not load");
+            assert!(!refresh(&Config::default(), || true).unwrap());
+            let steps = apply_steps(Terminal::Ghostty, &Config::default(), true).unwrap();
+            assert!(steps.iter().any(|s| matches!(s, Step::Unappend(p, _) if *p == old)) && steps.iter().any(|s| matches!(s, Step::Append(..))), "apply replaces it");
             apply(Terminal::Ghostty);
             let s = std::fs::read_to_string(&old).unwrap();
             assert!(!s.contains(&lines) && s.starts_with("font-size = 13\n") && s.contains(&begin(Terminal::Ghostty)), "{s}");
             assert!(!keys.exists());
             undo(Terminal::Ghostty);
             assert_eq!(std::fs::read_to_string(&old).unwrap(), "font-size = 13\n");
+        });
+    }
+
+    #[test]
+    fn the_old_link_is_looked_for_where_install_keys_wrote_it_and_uninstall_takes_it_out() {
+        with_temp_home(|| {
+            set_env("XDG_CONFIG_HOME", home().join("elsewhere"));
+            let (old, keys, lines) = legacy();
+            assert_eq!(old, home().join(".config/ghostty/config"), "--install-keys never followed XDG_CONFIG_HOME");
+            std::fs::create_dir_all(old.parent().unwrap()).unwrap();
+            std::fs::write(&old, format!("font-size = 13\n\n{lines}")).unwrap();
+            std::fs::create_dir_all(keys.parent().unwrap()).unwrap();
+            std::fs::write(&keys, "keybind = x\n").unwrap();
+            assert!(undo_all().is_empty());
+            assert_eq!((std::fs::read_to_string(&old).unwrap().as_str(), keys.exists()), ("font-size = 13\n", false), "nerd --uninstall takes the old link out too");
         });
     }
 

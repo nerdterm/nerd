@@ -75,8 +75,8 @@ Every window except a context menu is drawn through `chrome::dialog`, and `chrom
 - Tab menu and space menu: **Isolation for new panes…**, with "as the space" or "as nerd's default".
 - Settings → Messages: Messaging, Programs in panes may stop or update nerd, Set up a topology…, Accounts…. The
   server stores them in policy.json, not in config.json.
-- Settings → Terminal: **Terminal preset…** lists Ghostty, kitty, WezTerm and iTerm2, each applied, not applied, or
-  (WezTerm) needs your line. A click on one opens "<terminal> preset": every file it writes or changes, then
+- Settings → Terminal: **Terminal preset…** lists Ghostty, kitty, WezTerm and iTerm2, each applied, not applied,
+  (Ghostty) old keys link, or (WezTerm) needs your line. A click on one opens "<terminal> preset": every file it writes or changes, then
   **[Enter] apply** (or **[Enter] undo** when it is applied) and **[Esc] cancel**; nothing changes before the button.
   For a WezTerm config nerd does not edit, the window shows the line to add in full, with **[Enter] copy the line**
   (it also writes nerd's file) and **[Esc] close**. The files are on the server's Mac, so a window from another Mac is
