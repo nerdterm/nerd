@@ -627,6 +627,11 @@ mod tests {
             let steps = steps.clone();
             app.overlay = Overlay::None;
             assert!(!crate::presets::applied(crate::presets::Terminal::Kitty), "nothing before the button");
+            app.client_inside = true;
+            app.perform(Pending::Preset(crate::presets::Terminal::Kitty, steps.clone(), false));
+            assert_eq!(app.notice.take().as_deref(), Some(INSIDE_REFUSED));
+            assert!(!crate::presets::applied(crate::presets::Terminal::Kitty), "refused from a window inside a pane");
+            app.client_inside = false;
             app.perform(Pending::Preset(crate::presets::Terminal::Kitty, steps, false));
             assert!(crate::presets::applied(crate::presets::Terminal::Kitty));
             open(&mut app);

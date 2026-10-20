@@ -201,6 +201,9 @@ struct Places {
     roots: Vec<PathBuf>,
     hook_files: Vec<PathBuf>,
     hook_dirs: Vec<PathBuf>,
+    /// Terminals' configs the environment moved away from the places `RUN_LATER_DIRS` names.
+    terminal_dirs: Vec<PathBuf>,
+    terminal_files: Vec<PathBuf>,
     /// `/private/var/run`: launchd's ssh agent and Docker's socket.
     run: PathBuf,
     /// The pane's own `SSH_AUTH_SOCK`.
@@ -214,6 +217,8 @@ impl Places {
             return Err("nerd has no home folder, so it cannot keep this pane out of ~/.ssh".into());
         }
         let agents = crate::agents::load_admitting(&crate::paths::state_root().join("plugins"), &|_| true);
+        let (mut terminal_dirs, terminal_files) = crate::presets::config_places();
+        terminal_dirs.retain(|d| !RUN_LATER_DIRS.iter().any(|r| home.join(r) == *d));
         Ok(Places {
             root: crate::paths::state_root(),
             tmp: PathBuf::from(std::env::var("TMPDIR").unwrap_or_else(|_| "/private/tmp".into())),
@@ -222,6 +227,8 @@ impl Places {
             roots: agents.iter().flat_map(|m| m.dir(&home).into_iter().chain(m.agent.data.iter().filter_map(|d| crate::agents::data_root(d)).map(|r| home.join(r)))).flat_map(|r| [r.with_extension("json"), r]).collect(),
             hook_files: agents.iter().filter_map(|m| m.config(&home)).collect(),
             hook_dirs: agents.iter().filter_map(|m| m.dir(&home)).map(|d| d.join("hooks")).collect(),
+            terminal_dirs,
+            terminal_files,
             run: "/private/var/run".into(),
             agent: std::env::var_os("SSH_AUTH_SOCK").map(PathBuf::from).filter(|p| p.is_absolute()),
             home,
@@ -295,8 +302,8 @@ fn text(p: &Places, files: &Files, network: &Network, cwd: &Path, msock: &Path, 
         } else {
             String::new()
         };
-        let literal = [p.exe.clone()].into_iter().chain(RUN_LATER.iter().map(|f| p.home.join(f))).chain(p.hook_files.iter().cloned());
-        let dirs = [root.clone()].into_iter().chain(RUN_LATER_DIRS.iter().map(|d| p.home.join(d))).chain(p.hook_dirs.iter().cloned());
+        let literal = [p.exe.clone()].into_iter().chain(RUN_LATER.iter().map(|f| p.home.join(f))).chain(p.terminal_files.iter().cloned()).chain(p.hook_files.iter().cloned());
+        let dirs = [root.clone()].into_iter().chain(RUN_LATER_DIRS.iter().map(|d| p.home.join(d))).chain(p.terminal_dirs.iter().cloned()).chain(p.hook_dirs.iter().cloned());
         // The door other accounts exec nerd from, Claude Code's message sockets, agents' memory (Claude, Qwen), Codex's databases shared by its sessions (queued prompts, remote control) and Qwen's workflow scripts a resume runs, which the owner's own sessions read.
         let doors = format!(
             " (regex #\"^/private/tmp/nerd-[0-9]+(/|$)\") (regex #\"^/private/tmp/cc-socks\") (regex #\"^{}/cc-socks\") (regex #\"^{esc}/\\.[^/]+/projects/[^/]+/memory(/|$)\") (regex #\"^{esc}/\\.codex/[^/]*\\.sqlite\") (regex #\"^{esc}/\\.qwen/projects/[^/]+/workflows(/|$)\")",
@@ -570,6 +577,8 @@ mod tests {
             roots: vec![home.join(".claude.json"), home.join(".claude"), home.join(".codex.json"), home.join(".codex")],
             hook_files: vec![home.join(".claude/settings.json")],
             hook_dirs: vec![home.join(".claude/hooks")],
+            terminal_dirs: vec![],
+            terminal_files: vec![],
             run: d.join("run"),
             agent: Some(d.join("agent/s.sock")),
             home,
@@ -588,6 +597,24 @@ mod tests {
     }
 
     #[test]
+    fn terminal_configs_the_environment_moved_are_not_writable_either() {
+        crate::config::tests::with_temp_home(|| {
+            let home = crate::paths::home().unwrap();
+            crate::presets::set_env("XDG_CONFIG_HOME", home.join("xdg"));
+            crate::presets::set_env("KITTY_CONFIG_DIRECTORY", home.join("k"));
+            crate::presets::set_env("WEZTERM_CONFIG_FILE", home.join("w.lua"));
+            let p = Places::here().unwrap();
+            let s = text(&p, &Files::Folder, &Network::None, &home.join("work"), &home.join("m.sock"), None).unwrap();
+            let rule = |kind: &str, sub: &str| format!("({kind} {})", quote(&canon(&home.join(sub))).unwrap());
+            for d in ["xdg/ghostty", "k", "xdg/wezterm", ".config/kitty"] {
+                assert!(s.contains(&rule("subpath", d)), "{d}: {s}");
+            }
+            assert!(s.contains(&rule("literal", "w.lua")), "{s}");
+            assert_eq!(s.matches(&rule("subpath", ".config/wezterm")).count(), 1, "a place already denied is not repeated");
+        });
+    }
+
+    #[test]
     fn the_profile_text_for_each_combination() {
         let d = Path::new("/Users/u/x");
         let p = Places {
@@ -599,6 +626,8 @@ mod tests {
             roots: vec!["/Users/u/.claude.json".into(), "/Users/u/.claude".into()],
             hook_files: vec!["/Users/u/.claude/settings.json".into()],
             hook_dirs: vec!["/Users/u/.claude/hooks".into()],
+            terminal_dirs: vec![],
+            terminal_files: vec![],
             run: "/private/var/run".into(),
             agent: Some("/Users/u/.1p/agent.sock".into()),
         };

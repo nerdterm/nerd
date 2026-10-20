@@ -90,7 +90,7 @@ fn env_path(key: &str) -> Option<PathBuf> {
 }
 
 #[cfg(test)]
-fn set_env(key: &'static str, path: PathBuf) {
+pub(crate) fn set_env(key: &'static str, path: PathBuf) {
     TEST_ENV.with(|e| e.borrow_mut().push((key, path)));
 }
 
@@ -437,6 +437,15 @@ fn set_prefs(on: bool) -> std::io::Result<()> {
     std::fs::remove_file(record)
 }
 
+/// The terminals' config folders, and WezTerm's file when the environment names one, where they are for this
+/// environment: an isolated pane writes none of them.
+pub fn config_places() -> (Vec<PathBuf>, Vec<PathBuf>) {
+    let mut dirs: Vec<PathBuf> = ghostty_configs().iter().chain([&kitty_conf(), &iterm_profile()]).filter_map(|p| p.parent()).map(Path::to_path_buf).collect();
+    dirs.extend([xdg().join("wezterm"), home().join(".config/wezterm")]);
+    dirs.dedup();
+    (dirs, env_path("WEZTERM_CONFIG_FILE").into_iter().collect())
+}
+
 // --- the plans ---
 
 /// Whether the terminal's config carries nerd's preset.
@@ -519,12 +528,12 @@ pub fn apply_steps(t: Terminal, cfg: &crate::config::Config, dark: bool) -> std:
         Terminal::Iterm2 => {
             if own_account() {
                 steps.push(Step::ItermPrefs(true));
-                steps.push(Step::Note("Open a new iTerm2 window: windows iTerm2 restores keep the profile they had. iTerm2 takes the margins on its next start.".into()));
+                // one row each: a window cuts a row at its edge
+                steps.push(Step::Note("Open a new iTerm2 window: windows iTerm2 restores keep the profile they had.".into()));
+                steps.push(Step::Note("iTerm2 takes the margins on its next start.".into()));
             } else {
-                steps.push(Step::Note(
-                    "iTerm2's margins and default profile are left as they are: HOME is not this account's home, and iTerm2 reads the account's settings. The preset is the profile named nerd."
-                        .into(),
-                ));
+                steps.push(Step::Note("iTerm2's margins and default profile are left as they are:".into()));
+                steps.push(Step::Note("HOME is not this account's home, and iTerm2 reads the account's settings.".into()));
             }
         }
     }
