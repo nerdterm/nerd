@@ -6,7 +6,7 @@ From a terminal outside nerd:
 nerd --stop
 nerd --uninstall-hook
 nerd --uninstall
-rm ~/.local/bin/nerd
+rm ~/.local/bin/nerd   # or, installed with Homebrew: brew uninstall nerd
 rm -rf ~/Library/Application\ Support/nerd
 ```
 
