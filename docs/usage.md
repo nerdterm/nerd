@@ -13,7 +13,7 @@
 
 ## Keys
 
-Every key repeats a menu item or a click. The shortcuts start with `⌥` (Option) and are made for a Latin layout (U.S., ABC). On a Cyrillic layout some of them work in Kitty and iTerm2, all of them in Ghostty with `nerd --install-keys`, and all of them with the tmux-style prefix where the terminal sends Control with the key under it (Kitty does); see below. **Keys and mouse…** in the main menu lists them all.
+Every key repeats a menu item or a click. The shortcuts start with `⌥` (Option) and are made for a Latin layout (U.S., ABC). On a Cyrillic layout some of them work in Kitty and iTerm2, all of them in Ghostty with `nerd --install-keys`, and on Russian and Russian – PC all of them with the tmux-style prefix where the terminal sends Control with the key under it (Kitty does); see below. On Russian – Phonetic the key after the prefix is read by the letter it prints, as if on Russian – PC, not by where it is. **Keys and mouse…** in the main menu lists them all.
 
 | Key | Action |
 |---|---|
