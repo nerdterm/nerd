@@ -26,9 +26,12 @@ check '    assert_match version.to_s, shell_output("#{bin}/nerd --version")'
 ! grep -q '^ *version ' "$stub/out" || { echo "publish-formula: a version line" >&2; fail=1; }
 ruby -W0 -c "$stub/out" >/dev/null || fail=1
 [ "$(cat "$stub/calls")" = "release download v1.2.3 --repo nerdterm/nerd -p nerd-v1.2.3-macos-arm64.tar.gz.sha256 -O -" ] || { echo "publish-formula: a dry run called $(cat "$stub/calls")" >&2; fail=1; }
-for bad in "1.2.3" "v1.2" "v1.2.3;x"; do
+for bad in "1.2.3" "v1.2" "v1.2.3;x" "v1.2.3
+x"; do
     PATH="$stub:$PATH" STUB=$stub SHA=$sha sh "$here/publish-formula.sh" --dry-run "$bad" >/dev/null 2>&1 && { echo "publish-formula: took the tag $bad" >&2; fail=1; }
 done
+PATH="$stub:$PATH" STUB=$stub SHA="$sha
+GARBAGE" sh "$here/publish-formula.sh" --dry-run v1.2.3 >/dev/null 2>&1 && { echo "publish-formula: took a checksum of two lines" >&2; fail=1; }
 PATH="$stub:$PATH" STUB=$stub SHA="not-a-sum" sh "$here/publish-formula.sh" --dry-run v1.2.3 >/dev/null 2>&1 && { echo "publish-formula: took a bad checksum" >&2; fail=1; }
 if [ "$fail" -eq 0 ]; then
     echo "publish-formula: the formula renders"
