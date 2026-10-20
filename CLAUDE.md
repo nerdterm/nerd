@@ -5,7 +5,7 @@ Terminal multiplexer for AI agents. Rust 2024, macOS only. Start with `README.md
 ## Rules
 
 - Everything in the repository is English: code, comments, UI strings, logs, docs, commits, issues, pull requests.
-- No telemetry. The only network code is the proxy (`src/proxy.rs`), run for an approved plugin or for a pane set to Only these providers: outside the server's sandbox, in a sandbox of its own, it connects only to the hosts and ports the plugin's manifest or the chosen agents' manifests name. The server runs under Seatbelt with networking denied. `cargo deny` stays clean.
+- No telemetry. The only network code is the proxy (`src/proxy.rs`), run for an approved plugin or for a pane set to Only these providers: outside the server's sandbox, in a sandbox of its own, it connects only to the hosts and ports the plugin's manifest or the chosen agents' manifests name. Beyond it nerd only starts programs: `git` and `ssh` when the person asks, and `/usr/bin/curl` for a release check (`src/release.rs`), on the person's word or once a day after they said yes, every check logged. The server runs under Seatbelt with networking denied. `cargo deny` stays clean.
 - A new way out of nerd (a program that can reach the network, a pane nerd starts or types into, a plugin permission) enters "What leaves nerd" in `docs/privacy-and-security.md` and the allowlist in `tests/egress.rs` in the same change, or not at all.
 - Dependencies: permissive licences only (MIT, Apache-2.0, BSD, Zlib, BSL-1.0, WTFPL). No copyleft.
 - The server has no tty: never call `Terminal::clear` or `cursor::position` in server code.
