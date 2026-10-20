@@ -2335,7 +2335,80 @@ mod tests {
         assert!(mail.contains("● coder → planner · held"), "a held message needs you, marked as a blocked agent is: {side:#?}");
         let (r, _) = app.view.sidebar_mail[0].clone();
         mouse_at(&mut app, MouseEventKind::Down(MouseButton::Left), (r.x + 2, r.y));
-        assert!(matches!(&app.overlay, Overlay::Messages(w) if w.at.as_deref() == Some(held.id.as_str())), "a click opens Messages on that row");
+        assert!(matches!(&app.overlay, Overlay::Messages(w) if w.message.as_deref() == Some(held.id.as_str())), "a click opens that message");
+    }
+
+    #[test]
+    fn every_way_in_opens_the_held_message_and_an_answer_moves_on() {
+        use crate::messages::{Click, Messages};
+        use crossterm::event::{MouseButton, MouseEventKind};
+        with_policy("held-view", || {
+            let mut app = named();
+            let held = || letter_to((4, "coder"), (Some(3), "reader"), crate::mail::State::Held(crate::mail::Hold::Route));
+            let (first, second) = (held(), held());
+            app.mail.add(first.clone());
+            app.mail.add(second.clone());
+            let showing = |app: &App| match &app.overlay {
+                Overlay::Messages(w) => w.message.clone(),
+                _ => None,
+            };
+            let left = MouseEventKind::Down(MouseButton::Left);
+            // the sidebar, then the rail: Deliver gives the next of the pair, and the last one answered closes the window
+            for rail in [false, true] {
+                app.sidebar = !rail;
+                app.overlay = Overlay::None;
+                screen(&mut app);
+                let (r, _) = app.view.sidebar_mail[0].clone();
+                mouse_at(&mut app, left, (r.x, r.y));
+                let shown = screen(&mut app);
+                assert!(shown.contains("Held message") && shown.contains("a route says to ask you first"), "rail {rail}: {shown}");
+                assert_eq!(showing(&app), Some(first.id.clone()), "rail {rail}");
+            }
+            click(&mut app, &Click::Act(MailAction::Deliver(first.id.clone())));
+            screen(&mut app);
+            assert_eq!(showing(&app), Some(second.id.clone()), "the next message of coder → reader");
+            click(&mut app, &Click::Act(MailAction::Drop(second.id.clone())));
+            screen(&mut app);
+            assert!(!app.overlay.is_open(), "opened from the sidebar, nothing left: closed");
+            // from the window: a held cell, a waiting row's head, Enter; nothing left goes back to the window
+            app.sidebar = true;
+            let (third, fourth) = (held(), held());
+            app.mail.add(third.clone());
+            app.mail.add(fourth.clone());
+            type Way = (&'static str, fn(&mut App, &str));
+            let ways: [Way; 3] = [
+                ("a held cell", |app, id| click(app, &Click::Waiting(id.into()))),
+                ("a waiting row's head", |app, id| {
+                    screen(app);
+                    let rows: Vec<Rect> = app.view.dialog.messages.hits.iter().filter(|(_, c)| *c == Click::Waiting(id.into())).map(|(r, _)| *r).collect();
+                    assert_eq!(rows.len(), 2, "the cell and the row");
+                    mouse_at(app, MouseEventKind::Down(MouseButton::Left), (rows[1].x, rows[1].y));
+                }),
+                ("Enter", |app, _| press(app, KeyCode::Enter)),
+            ];
+            for (way, open) in ways {
+                app.overlay = app.run_action(Action::Messages, &MenuCtx::Global);
+                screen(&mut app);
+                open(&mut app, &third.id);
+                assert!(screen(&mut app).contains("[Esc] back"), "{way}");
+                assert_eq!(showing(&app), Some(third.id.clone()), "{way}");
+                press(&mut app, KeyCode::Esc);
+                assert!(matches!(&app.overlay, Overlay::Messages(w) if w.message.is_none()), "{way}: Escape goes back to the window");
+            }
+            app.overlay = app.run_action(Action::ShowInbox, &MenuCtx::Pane(3));
+            screen(&mut app);
+            press(&mut app, KeyCode::Enter);
+            assert_eq!(showing(&app), Some(third.id.clone()), "Show inbox…: its rows open it too");
+            letter(&mut app, "x");
+            screen(&mut app);
+            assert_eq!(showing(&app), Some(fourth.id.clone()));
+            letter(&mut app, "x");
+            screen(&mut app);
+            assert!(matches!(&app.overlay, Overlay::Messages(w) if w.message.is_none() && w.inbox == Some(3)), "back in the inbox window");
+            app.overlay = Overlay::Messages(Messages::new());
+            screen(&mut app);
+            assert!(screen(&mut app).contains("nothing waits"));
+        });
     }
 
     #[test]
@@ -2487,9 +2560,29 @@ mod tests {
             press(&mut app, KeyCode::Enter);
             refused(&mut app, "reply");
             assert!(matches!(app.overlay, Overlay::Messages(_)), "back in the window after the prompt");
+            for (h, what) in [
+                (Click::Act(MailAction::Deliver(held.id.clone())), "the view's deliver"),
+                (Click::Act(MailAction::DeliverAllow(held.id.clone())), "the view's deliver, allow 1 hour"),
+                (Click::Act(MailAction::Drop(held.id.clone())), "the view's drop"),
+            ] {
+                open(&mut app, Messages::at(held.id.clone()));
+                click(&mut app, h);
+                refused(&mut app, what);
+                assert_eq!(app.mail.get(&held.id).map(|m| m.state.clone()), Some(crate::mail::State::Held(crate::mail::Hold::Route)), "{what}");
+            }
+            open(&mut app, Messages::at(held.id.clone()));
+            click(&mut app, Click::Reply(held.id.clone()));
+            letter(&mut app, "ok");
+            press(&mut app, KeyCode::Enter);
+            refused(&mut app, "the view's reply");
+            screen(&mut app);
+            assert!(matches!(&app.overlay, Overlay::Messages(w) if w.message.as_deref() == Some(held.id.as_str())), "the view stays after a refusal");
             open(&mut app, Messages::at(request.id.clone()));
             letter(&mut app, "a");
             refused(&mut app, "a route request's answer");
+            click(&mut app, Click::Act(MailAction::AnswerRequest { id: request.id.clone(), action: crate::policy::Action::No }));
+            refused(&mut app, "the view's no");
+            open(&mut app, Messages::new());
             letter(&mut app, "b");
             letter(&mut app, "all");
             press(&mut app, KeyCode::Enter);

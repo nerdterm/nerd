@@ -113,6 +113,7 @@ pub fn fit<H>(screen: Rect, lines: &[Line<H>], bottom: usize) -> Rect {
 }
 
 pub const CLOSE: &str = " [Esc] close ";
+const BACK: &str = " [Esc] back ";
 /// Delivered into Claude Code's inbox is not yet seen by the session: its own setting decides.
 const INBOX_NOTE: &str = "Claude Code's own crossSessionInbound setting may still hold it";
 
@@ -181,13 +182,19 @@ pub struct Messages {
     pub at: Option<String>,
     /// The routes map fills the screen.
     pub map_view: bool,
-    /// Opened from the menu, not from the window: leaving the map closes it.
+    /// The held-message view shows this waiting message, by id.
+    pub message: Option<String>,
+    /// Its sender and recipient: the next message between them follows it once it is answered.
+    pair: Option<(String, String)>,
+    /// Opened from outside the window (the menu, the sidebar): leaving the map or the message closes it.
     alone: bool,
     /// The first space group of the matrix when its columns do not all fit.
     start: usize,
     /// The routes map's first column and first line.
     pan: Cell<(usize, usize)>,
     scroll: Cell<usize>,
+    /// The first line of the shown message's text.
+    read: Cell<usize>,
     /// `at` was scrolled into view once.
     shown: Cell<bool>,
 }
@@ -377,9 +384,48 @@ impl Messages {
         Messages { selected: name, incoming, ..Self::default() }
     }
 
-    /// Opened on one waiting row.
+    /// Opened on one waiting message from outside the window.
     pub fn at(id: String) -> Self {
-        Messages { at: Some(id), ..Self::default() }
+        Messages { at: Some(id.clone()), message: Some(id), alone: true, ..Self::default() }
+    }
+
+    /// Before a frame: a shown message that no longer waits gives way to the next of its pair; false closes the window.
+    pub fn settle(&mut self, v: &MailView) -> bool {
+        let Some(id) = &self.message else { return true };
+        if let Some(m) = v.waiting.iter().find(|m| m.id == *id) {
+            self.pair.get_or_insert_with(|| (m.from.name().into(), m.to.name().into()));
+            return true;
+        }
+        self.read.set(0);
+        let next = self.pair.as_ref().and_then(|(f, t)| v.waiting.iter().find(|m| self.mine(m) && m.from.name() == f && m.to.name() == t));
+        match next {
+            Some(m) => {
+                self.message = Some(m.id.clone());
+                self.at = self.message.clone();
+                true
+            }
+            None => self.leave() == Out::None,
+        }
+    }
+
+    /// Out of the held-message view: back to the window, or closed when it was opened from outside.
+    fn leave(&mut self) -> Out {
+        if self.alone {
+            return Out::Close;
+        }
+        self.message = None;
+        self.pair = None;
+        Out::None
+    }
+
+    fn open(&mut self, id: String) {
+        self.at = Some(id.clone());
+        self.message = Some(id);
+        self.read.set(0);
+    }
+
+    fn shown<'a>(&self, v: &'a MailView) -> Option<&'a Message> {
+        self.message.as_ref().and_then(|id| v.waiting.iter().find(|m| m.id == *id))
     }
 
     /// One pane's threads and waiting mail.
@@ -402,6 +448,9 @@ impl Messages {
         if self.map_view {
             return self.draw_map(buf, screen, theme, v);
         }
+        if let Some(m) = self.shown(v) {
+            return self.draw_message(buf, screen, theme, m);
+        }
         let r = crate::chrome::fit(screen, u16::MAX, u16::MAX);
         let w = r.width.saturating_sub(2 * crate::chrome::DIALOG_FRAME.horizontal) as usize;
         let (lines, at) = self.lines(v, verdict, w, theme);
@@ -411,6 +460,46 @@ impl Messages {
         let d = draw(buf, r, "Messages", theme, &lines, self.scroll.get(), &[], CLOSE);
         self.scroll.set(self.scroll.get().min(d.rows.saturating_sub(d.room)));
         d
+    }
+
+    /// One waiting message: who to whom, why, its buttons on a line that stays, then its text, which scrolls.
+    fn draw_message(&self, buf: &mut Buffer, screen: Rect, theme: &Theme, m: &Message) -> Drawn<Click> {
+        let g = Style::default().bg(theme.ground);
+        let r = crate::chrome::fit(screen, u16::MAX, u16::MAX);
+        let w = r.width.saturating_sub(2 * crate::chrome::DIALOG_FRAME.horizontal) as usize;
+        let room = r.height.saturating_sub(2 * crate::chrome::DIALOG_FRAME.vertical + 2) as usize;
+        let head = match &m.state {
+            State::Held(Hold::RouteRequest) => format!("{} asks to write to {}", m.from.name(), m.to.name()),
+            _ => format!("{} → {}", m.from.name(), m.to.name()),
+        };
+        let mut lines: Vec<Line<Click>> = vec![vec![(head, g.fg(theme.text).add_modifier(Modifier::BOLD), None), (format!(" · waited {}", age(m)), g.fg(theme.muted), None)]];
+        if let State::Held(h) = &m.state {
+            lines.extend(crate::menu::wrap(&h.sentence(m), w).into_iter().map(|l| vec![(l, g.fg(theme.warn), None)]));
+        }
+        lines.push(Vec::new());
+        let mut row: Line<Click> = Vec::new();
+        for (key, word, click) in buttons(m) {
+            if !row.is_empty() && width(&row) + cells(key) + cells(word) + 3 > w {
+                lines.push(std::mem::take(&mut row));
+            }
+            button(&mut row, key, word, click, theme);
+        }
+        lines.push(row);
+        lines.push(vec![("─".repeat(w), g.fg(theme.border), None)]);
+        let text: Vec<String> = m.text.lines().flat_map(|l| crate::menu::wrap(l, w)).collect();
+        let mut seen = room.saturating_sub(lines.len());
+        let more = text.len() > seen;
+        if more {
+            seen = seen.saturating_sub(1);
+        }
+        let from = self.read.get().min(text.len().saturating_sub(seen));
+        self.read.set(from);
+        lines.extend(text.iter().skip(from).take(seen).map(|l| vec![(l.clone(), g.fg(theme.text), None)]));
+        if more {
+            lines.push(vec![(format!("lines {}–{} of {}", from + 1, from + seen, text.len()), g.fg(theme.faint), None)]);
+        }
+        let title = if matches!(m.state, State::Held(_)) { "Held message" } else { "Message" };
+        draw(buf, r, title, theme, &lines, 0, &[], if self.alone { CLOSE } else { BACK })
     }
 
     /// The routes map in the whole screen: the part of the grid from the pan, its position and the buttons that move it.
@@ -864,7 +953,22 @@ impl Messages {
             }
             return Out::None;
         }
-        let (_, current) = self.waiting(v);
+        if !self.settle(v) {
+            return Out::Close;
+        }
+        let view = self.message.is_some();
+        if view {
+            match k.code {
+                Esc => return self.leave(),
+                Up => return self.read_by(-1),
+                Down => return self.read_by(1),
+                PageUp => return self.read_by(-10),
+                PageDown => return self.read_by(10),
+                Char('a' | 'k' | 'n' | 'd' | 'h' | 'x' | 'r') => {}
+                _ => return Out::None,
+            }
+        }
+        let current = if view { self.shown(v) } else { self.waiting(v).1 };
         let id = current.map(|m| m.id.clone()).unwrap_or_default();
         let request = current.is_some_and(|m| m.state == State::Held(Hold::RouteRequest));
         let held = current.is_some_and(|m| matches!(m.state, State::Held(_)));
@@ -886,6 +990,10 @@ impl Messages {
             Char('h') if held && !request => Out::Act(MailAction::DeliverAllow(id)),
             Char('x') if current.is_some() && !request => Out::Act(MailAction::Drop(id)),
             Char('r') if current.is_some() && !request => Out::Reply(id),
+            Enter if current.is_some() => {
+                self.open(id);
+                Out::None
+            }
             Up => self.scroll_by(-1),
             Down => self.scroll_by(1),
             PageUp => self.scroll_by(-10),
@@ -896,6 +1004,11 @@ impl Messages {
 
     fn scroll_by(&mut self, by: isize) -> Out {
         self.scroll.set(self.scroll.get().saturating_add_signed(by));
+        Out::None
+    }
+
+    fn read_by(&mut self, by: isize) -> Out {
+        self.read.set(self.read.get().saturating_add_signed(by));
         Out::None
     }
 
@@ -936,6 +1049,20 @@ impl Messages {
             }
             return Out::None;
         }
+        if self.message.is_some() {
+            match ev.kind {
+                Down(MouseButton::Left) if d.close.contains((x, y).into()) || !d.frame.contains((x, y).into()) => return self.leave(),
+                Down(MouseButton::Left) => match hit {
+                    Some(Click::Act(a)) => return Out::Act(a),
+                    Some(Click::Reply(id)) => return Out::Reply(id),
+                    _ => {}
+                },
+                ScrollUp => return self.read_by(-3),
+                ScrollDown => return self.read_by(3),
+                _ => {}
+            }
+            return Out::None;
+        }
         match ev.kind {
             Down(MouseButton::Left) => {
                 if d.close.contains((x, y).into()) || !d.frame.contains((x, y).into()) {
@@ -951,7 +1078,7 @@ impl Messages {
                     Some(Click::Broadcast) => return Out::Broadcast,
                     Some(Click::Topology) => return Out::Topology,
                     Some(Click::MapView) => self.map_view = true,
-                    Some(Click::Waiting(id)) => self.at = Some(id),
+                    Some(Click::Waiting(id)) => self.open(id),
                     Some(Click::AllThreads) => self.inbox = None,
                     Some(Click::Card(_) | Click::Pan(..)) | None => {}
                 }
@@ -1007,42 +1134,42 @@ fn draw_card(grid: &mut Grid, x: usize, y: usize, cw: usize, c: &Card, on: bool,
     grid.put(x + 2, y + 3, &l3, g.fg(theme.muted), hit);
 }
 
+/// A waiting message's buttons: its key, its word and what it does.
+fn buttons(m: &Message) -> Vec<(&'static str, &'static str, Click)> {
+    let id = m.id.clone();
+    match &m.state {
+        State::Held(Hold::RouteRequest) => [("a", "allow", Action::Allow), ("k", "ask", Action::Ask), ("n", "no", Action::No)]
+            .into_iter()
+            .map(|(k, w, action)| (k, w, Click::Act(MailAction::AnswerRequest { id: id.clone(), action })))
+            .collect(),
+        State::Held(_) => vec![
+            ("d", "deliver", Click::Act(MailAction::Deliver(id.clone()))),
+            ("h", "deliver, allow 1 hour", Click::Act(MailAction::DeliverAllow(id.clone()))),
+            ("x", "drop", Click::Act(MailAction::Drop(id.clone()))),
+            ("r", "reply…", Click::Reply(id)),
+        ],
+        _ => vec![("r", "reply…", Click::Reply(id.clone())), ("x", "drop", Click::Act(MailAction::Drop(id)))],
+    }
+}
+
 /// A waiting row: who, to whom, why, how long; then its buttons, with keys on the row the keys act on.
 fn waiting_row(m: &Message, keys: bool, theme: &Theme) -> Vec<Line<Click>> {
     let g = Style::default().bg(theme.ground);
-    let id = m.id.clone();
-    let (head, buttons): (String, Vec<(&str, &str, Click)>) = match &m.state {
-        State::Held(Hold::RouteRequest) => (
-            format!("{} asks to write to {} · {}", m.from.name(), m.to.name(), age(m)),
-            [("a", "allow", Action::Allow), ("k", "ask", Action::Ask), ("n", "no", Action::No)]
-                .into_iter()
-                .map(|(k, w, action)| (k, w, Click::Act(MailAction::AnswerRequest { id: id.clone(), action })))
-                .collect(),
-        ),
-        State::Held(h) => (
-            format!("{} → {} · {} · {}", m.from.name(), m.to.name(), h.words(), age(m)),
-            vec![
-                ("d", "deliver", Click::Act(MailAction::Deliver(id.clone()))),
-                ("h", "deliver, allow 1 hour", Click::Act(MailAction::DeliverAllow(id.clone()))),
-                ("x", "drop", Click::Act(MailAction::Drop(id.clone()))),
-                ("r", "reply…", Click::Reply(id.clone())),
-            ],
-        ),
-        _ => (
-            format!("{} → {} · {}", m.from.name(), Party::You.name(), age(m)),
-            vec![("r", "reply…", Click::Reply(id.clone())), ("x", "drop", Click::Act(MailAction::Drop(id.clone())))],
-        ),
+    let head = match &m.state {
+        State::Held(Hold::RouteRequest) => format!("{} asks to write to {} · {}", m.from.name(), m.to.name(), age(m)),
+        State::Held(h) => format!("{} → {} · {} · {}", m.from.name(), m.to.name(), h.words(), age(m)),
+        _ => format!("{} → {} · {}", m.from.name(), Party::You.name(), age(m)),
     };
     let head_style = if keys { g.fg(theme.text).add_modifier(Modifier::BOLD) } else { g.fg(theme.text) };
     let mut l: Line<Click> = vec![("  ".into(), g, None)];
-    for (key, word, click) in buttons {
+    for (key, word, click) in buttons(m) {
         if keys {
             button(&mut l, key, word, click, theme);
         } else {
             chip(&mut l, word, None, Some(click), theme);
         }
     }
-    vec![vec![(head, head_style, Some(Click::Waiting(id)))], l]
+    vec![vec![(head, head_style, Some(Click::Waiting(m.id.clone())))], l]
 }
 
 #[cfg(test)]
@@ -1501,6 +1628,86 @@ mod tests {
         assert_eq!(key(&mut m, 'd'), Out::None);
         let mut m = Messages::at("m3".into());
         assert_eq!(key(&mut m, 'r'), Out::Reply("m3".into()));
-        assert_eq!(key(&mut m, 'm'), Out::Act(MailAction::SetMode(Mode::Strict)));
+        assert_eq!(key(&mut m, 'm'), Out::None, "the held view has only its message's keys");
+        assert_eq!(key(&mut Messages::new(), 'm'), Out::Act(MailAction::SetMode(Mode::Strict)));
+    }
+
+    /// The held view on `id`, settled against `v` as a frame would.
+    fn shown_on(id: &str, v: &MailView) -> Messages {
+        let mut m = Messages::at(id.into());
+        assert!(m.settle(v));
+        m
+    }
+
+    #[test]
+    fn the_held_view_fits_80x24_with_every_button_over_a_64_kib_text() {
+        let mut v = view();
+        v.waiting[0].state = State::Held(Hold::Limit("hops".into()));
+        v.waiting[0].hops = ["coder", "reader"].repeat(5).into_iter().map(String::from).collect();
+        v.waiting[0].text = "word ".repeat(crate::mail::MESSAGE_BYTES / 5);
+        let mut m = shown_on("m1", &v);
+        let (d, shown) = drawn(&m, &v, 80, 24);
+        assert_eq!((d.frame.width, d.frame.height), (70, 20));
+        assert!(shown.contains("coder → reader · waited 2m") && shown.contains("coder and reader have answered each other 8 times"), "{shown}");
+        assert!(shown.contains("[d] deliver  [h] deliver, allow 1 hour  [x] drop  [r] reply…") && shown.contains("[Esc] close"), "{shown}");
+        assert!(shown.contains("word word") && shown.contains("lines 1–"), "{shown}");
+        for (h, out) in [
+            (Click::Act(MailAction::Deliver("m1".into())), Out::Act(MailAction::Deliver("m1".into()))),
+            (Click::Act(MailAction::DeliverAllow("m1".into())), Out::Act(MailAction::DeliverAllow("m1".into()))),
+            (Click::Act(MailAction::Drop("m1".into())), Out::Act(MailAction::Drop("m1".into()))),
+            (Click::Reply("m1".into()), Out::Reply("m1".into())),
+        ] {
+            assert_eq!(press(&mut m, &d, &h), out);
+        }
+        let wheel = crossterm::event::MouseEvent { kind: crossterm::event::MouseEventKind::ScrollDown, column: 40, row: 15, modifiers: crossterm::event::KeyModifiers::NONE };
+        m.mouse(wheel, &d);
+        let (_, after) = drawn(&m, &v, 80, 24);
+        assert!(after.contains("lines 4–") && after.contains("[d] deliver"), "the text scrolls, the buttons stay: {after}");
+        assert_eq!(key(&mut m, &v, crossterm::event::KeyCode::Char('h')), Out::Act(MailAction::DeliverAllow("m1".into())), "keys repeat the buttons");
+        let close = crossterm::event::MouseEvent { kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left), column: d.close.x, row: d.close.y, modifiers: crossterm::event::KeyModifiers::NONE };
+        assert_eq!(m.mouse(close, &d), Out::Close, "opened from outside the window: close");
+    }
+
+    #[test]
+    fn the_view_of_a_request_and_of_a_message_to_you() {
+        let v = view();
+        let mut m = shown_on("m2", &v);
+        let (d, shown) = drawn(&m, &v, 80, 24);
+        assert!(shown.contains("vault asks to write to planner") && shown.contains("allow lets it write") && shown.contains("[a] allow  [k] ask  [n] no"), "{shown}");
+        assert_eq!(press(&mut m, &d, &Click::Act(MailAction::AnswerRequest { id: "m2".into(), action: Action::No })), Out::Act(MailAction::AnswerRequest { id: "m2".into(), action: Action::No }));
+        assert_eq!(key(&mut m, &v, crossterm::event::KeyCode::Char('d')), Out::None);
+        let m = shown_on("m3", &v);
+        let (_, shown) = drawn(&m, &v, 80, 24);
+        assert!(shown.contains("reader → you · waited") && shown.contains("[r] reply…  [x] drop") && !shown.contains("[d] deliver"), "{shown}");
+        assert!(!shown.contains("waits for you") && shown.contains("hi"), "no reason, the text: {shown}");
+    }
+
+    #[test]
+    fn every_way_in_from_the_window_opens_the_view_and_escape_comes_back() {
+        let mut v = view();
+        v.waiting.push(msg("m4", "coder", Some("reader"), State::Held(Hold::Route), 10));
+        let mut m = Messages::new();
+        let (d, _) = drawn(&m, &v, 140, 60);
+        assert_eq!(press(&mut m, &d, &Click::Waiting("m1".into())), Out::None);
+        assert!(m.settle(&v));
+        let (d, shown) = drawn(&m, &v, 140, 60);
+        assert!(shown.contains("Held message") && shown.contains("[Esc] back"), "{shown}");
+        let back = crossterm::event::MouseEvent { kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left), column: d.close.x, row: d.close.y, modifiers: crossterm::event::KeyModifiers::NONE };
+        assert_eq!(m.mouse(back, &d), Out::None);
+        assert!(drawn(&m, &v, 140, 60).1.contains("waiting for you"), "back in the window");
+        assert_eq!(key(&mut m, &v, crossterm::event::KeyCode::Enter), Out::None);
+        assert!(m.settle(&v) && drawn(&m, &v, 140, 60).1.contains("Held message"), "Enter opens the current row");
+        assert_eq!(key(&mut m, &v, crossterm::event::KeyCode::Esc), Out::None);
+        assert!(m.message.is_none(), "Escape: back");
+        // after an action the next held message of the pair, then back where it was opened from
+        m.message = Some("m1".into());
+        assert!(m.settle(&v));
+        v.waiting.retain(|x| x.id != "m1");
+        assert!(m.settle(&v) && m.message.as_deref() == Some("m4"), "the next of coder → reader");
+        v.waiting.retain(|x| x.id != "m4");
+        assert!(m.settle(&v) && m.message.is_none(), "none left: the window");
+        let mut alone = shown_on("m2", &v);
+        v.waiting.retain(|x| x.id != "m2");
+        assert!(!alone.settle(&v), "opened from the sidebar: nothing left closes the window");
     }
 }
