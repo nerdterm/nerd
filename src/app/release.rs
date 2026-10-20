@@ -200,7 +200,9 @@ impl App {
         if self.release_ask && !self.overlay.is_open() {
             self.offer_release_check();
         }
-        if self.release_at.elapsed() < RELEASE_EVERY || self.release_job.is_some() {
+        // Not under an open release window: a run in flight would refuse its install button.
+        let window = matches!(self.overlay, Overlay::Confirm(_, Pending::ReleaseInstall(_)));
+        if self.release_at.elapsed() < RELEASE_EVERY || self.release_job.is_some() || window {
             return;
         }
         self.release_at = Instant::now();

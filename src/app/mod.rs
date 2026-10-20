@@ -1442,9 +1442,13 @@ mod tests {
             crate::release::set_daily(true).unwrap();
             app.tick_release();
             assert!(app.release_job.is_none(), "at most every ten minutes");
+            app.overlay = app.release_window(found("v9.0.0"));
             app.release_at = Instant::now() - RELEASE_EVERY;
             app.tick_release();
-            assert!(matches!(app.release_job, Some((_, ReleaseAsk::Daily))));
+            assert!(app.release_job.is_none(), "not while the release window is open: its install would be refused");
+            app.overlay = Overlay::None;
+            app.tick_release();
+            assert!(matches!(app.release_job, Some((_, ReleaseAsk::Daily))), "at the next tick once it is closed");
             release_ends(&mut app, Said::Failed("could not reach GitHub".into()));
             assert!(app.notice.is_none() && app.toast.is_none(), "a daily failure is only logged");
             app.release_at = Instant::now() - RELEASE_EVERY;
