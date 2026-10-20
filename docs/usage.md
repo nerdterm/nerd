@@ -13,7 +13,7 @@
 
 ## Keys
 
-Every key repeats a menu item or a click. The shortcuts start with `⌥` (Option) and are made for a Latin layout (U.S., ABC). On a Cyrillic layout some of them work in Kitty and iTerm2, all of them in Ghostty with `nerd --install-keys`, and on Russian and Russian – PC all of them, except `⌥`+`\` on Russian, with the tmux-style prefix where the terminal sends Control with the key under it (Kitty does); see below. On Russian – Phonetic the key after the prefix is read by the letter it prints, as if on Russian – PC, not by where it is. **Keys and mouse…** in the main menu lists them all.
+Every key repeats a menu item or a click. The shortcuts start with `⌥` (Option) and are read from the key itself, not from what the keyboard layout prints on it, so they work the same on a Cyrillic layout once the terminal sends Option as Alt (see below). **Keys and mouse…** in the main menu lists them all.
 
 | Key | Action |
 |---|---|
@@ -42,19 +42,12 @@ The terminal must send Option as Alt. Some send the character the layout prints 
 
 | Terminal | Setting |
 |---|---|
-| Ghostty | Nothing on a U.S. Standard or U.S. International layout. Otherwise `macos-option-as-alt = left` in its config (`right` for the other key, `true` for both), then **Ghostty → Reload Configuration** |
-| Kitty | Nothing on the layouts named below the table. On others: `macos_option_as_alt left` in kitty.conf (`right` or `both`), then restart Kitty: reloading the config does not change it |
-| WezTerm | The left Option key sends Alt already. For the right one: `config.send_composed_key_when_right_alt_is_pressed = false` |
-| iTerm2 | Nothing on the layouts named below the table. On others: **Settings → Profiles → Keys → General**: Left Option key **Esc+**, and the right one too if you use it |
+| Ghostty | Nothing on a U.S. Standard or U.S. International layout, where both Option keys send Alt (`macos-option-as-alt = left` keeps the right one for symbols). Otherwise `macos-option-as-alt = left` in its config, then **Ghostty → Reload Configuration** |
+| Kitty | `macos_option_as_alt left` in kitty.conf, then restart Kitty: reloading the config does not change it |
+| WezTerm | Nothing: the left Option key sends Alt already |
+| iTerm2 | **Settings → Profiles → Keys → General**: Left Option key **Esc+** |
 
-In Kitty and iTerm2 on a U.S., U.S. International, ABC, Russian, Russian – PC or Russian – Phonetic layout, nerd reads the character Option types as Option and the key under it. The cost: the symbols Option types there, such as —, … and €, are not typed into panes. A character a layout types only with Option, such as @ or [ on the Russian layouts, is never read this way and stays typed. So some Option shortcuts do not arrive as shortcuts in Kitty and iTerm2:
-
-- U.S., U.S. International, ABC: `⌥`+`N`, `⌥`+`U`, and in the tree `⌥`+`E` and `⌥`+`I`, which are dead keys there.
-- Russian: `⌥`+`M`, `⌥`+`S`, `⌥`+`\`, `⌥`+`/`, `⌥`+`1`…`9`, and in the tree `⌥`+`shift`+`R`.
-- Russian – PC: `⌥`+`M`, `⌥`+`C`, `⌥`+`S`, `⌥`+`\`, `⌥`+`1`…`4`, `6`, `7`, `9`, and in the tree `⌥`+`O` and `⌥`+`A`.
-- Russian – Phonetic: `⌥`+`W`, `⌥`+`-`, `⌥`+`\`, `⌥`+`Z`, `⌥`+`/`, `⌥`+`1`…`4`, `9`, and in the tree `⌥`+`=`, `⌥`+`E`, `⌥`+`Y`, `⌥`+`A` and `⌥`+`H`.
-
-These are reached through the menu or the mouse, or by setting Kitty's `macos_option_as_alt` or iTerm2's Left Option key to **Esc+**, which gives every Option key back; the ones outside the file tree also with the tmux-style prefix on Russian and Russian – PC.
+Set the left Option key only: it then sends nerd's shortcuts, and the right one still types the layout's symbols, such as — and €.
 
 On a non-Latin layout Ghostty 1.3.1 still drops these keys; `nerd --install-keys` binds them to the physical keys in Ghostty's config, which works on any layout.
 

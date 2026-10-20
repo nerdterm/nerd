@@ -53,7 +53,7 @@ fn chord_rows(p: Prefix) -> &'static [(&'static str, &'static str)] {
 fn rows(prefix: Prefix) -> Vec<(Option<&'static str>, &'static str, &'static str)> {
     let mut out: Vec<(Option<&'static str>, &'static str, &'static str)> = Vec::new();
     for (i, g) in crate::keys::GLOBAL.iter().enumerate() {
-        out.push((i.eq(&0).then_some("⌥ and a letter, made for a Latin layout (U.S., ABC)"), g.label, g.what));
+        out.push((i.eq(&0).then_some("⌥ and a letter, with Option sent as Alt"), g.label, g.what));
     }
     out.push((None, "⌥+1..9", "switch to that tab"));
     // the arrow rows are headless and still belong to the `⌥` section above
@@ -370,7 +370,7 @@ mod tests {
         assert_eq!(
             heads(&h),
             vec![
-                "⌥ and a letter, made for a Latin layout (U.S., ABC)",
+                "⌥ and a letter, with Option sent as Alt",
                 "Mouse",
                 "Navigator",
                 "Tree",
@@ -436,7 +436,7 @@ mod tests {
         );
         assert!(found.len() < rows(Prefix::Off).len(), "list narrowed");
         assert!(
-            heads(&h).contains(&"⌥ and a letter, made for a Latin layout (U.S., ABC)"),
+            heads(&h).contains(&"⌥ and a letter, with Option sent as Alt"),
             "the heading of a section that kept a row"
         );
     }

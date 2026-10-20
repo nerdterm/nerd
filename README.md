@@ -96,7 +96,7 @@ Each agent is described by a manifest, `plugins/<name>/plugin.json` in the sourc
 
 nerd is checked in Ghostty, Kitty, WezTerm and iTerm2.
 
-- The Option shortcuts are made for a Latin layout (U.S., ABC): there they work in all four without a setting. On a Cyrillic layout some of them work in Kitty and iTerm2, all of them in Ghostty with `nerd --install-keys`, and on Russian and Russian – PC all of them, except ⌥+\ on Russian, with the tmux-style prefix where the terminal sends Control with the key under it (Kitty does). In Kitty and iTerm2 the symbols Option types, such as — and €, are not typed into panes: nerd reads them as Option and the key. Details in [Keys](docs/usage.md#keys).
+- The Option shortcuts need the terminal to send Option as Alt. Ghostty does on a U.S. layout and WezTerm for its left Option key; Kitty and iTerm2 need one setting. Set it for the left Option key, so the right one still types symbols such as — and €. nerd reads each shortcut by its key, so with the setting they work on a Cyrillic layout too (in Ghostty with `nerd --install-keys`). See [Keys](docs/usage.md#keys).
 - nerd asks the terminal two things when it starts: whether it draws images by the Kitty graphics protocol, and its device attributes. Programs in panes get the cursor position, device attributes and colours from nerd itself, so they do not depend on the terminal.
 - WezTerm and iTerm2 show colours in Display P3, so nerd's colours look more saturated there than in the others.
 - A margin around nerd, 16 points on every side; nerd sets the terminal's background, so the margin takes nerd's colour:

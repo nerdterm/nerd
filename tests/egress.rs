@@ -73,7 +73,6 @@ const ALLOW: &[(&str, &str, &str, &str, &str, &str)] = &[
     ("src/client.rs", "walk_to_app", "spawn", "\"ps\"", "local", "finds the terminal app"),
     ("src/client.rs", "open_window", "spawn", "\"/usr/bin/open\"", "local", "opens a terminal window"),
     ("src/client.rs", "appearance_dark", "spawn", "\"/usr/bin/defaults\"", "local", "reads light or dark mode"),
-    ("src/client.rs", "current_layout", "spawn", "\"/usr/bin/defaults\"", "local", "reads the keyboard layout and input method, in iTerm2 and kitty, at start, on a layout switch and every 2 s"),
     ("src/client.rs", "connect_or_spawn", "spawn", "exe --daemon", "local", "starts nerd's server"),
     ("src/daemon.rs", "start", "spawn", "& exe --version", "local", "asks the installed build its version"),
     ("src/daemon.rs", "handover_exec", "command", "std :: env :: current_exe ()", "local", "update in place: the new build takes over the open panes and sockets"),

@@ -449,11 +449,11 @@ fn appearance_poller(dark: Option<bool>) -> Appearance {
     appearance
 }
 
-/// A key event as the server should get it: with a `layout`, a character of its Option layer goes as Option and its key.
-fn outgoing(ev: Event, layout: Option<&str>) -> Option<Event> {
+/// A key event as the server should get it: Command and a letter is the terminal's own shortcut, and one it
+/// lets through would reach the pane as the letter.
+fn outgoing(ev: Event) -> Option<Event> {
     use crossterm::event::{KeyCode, KeyModifiers};
     match ev {
-        // Command and a letter is the terminal's own shortcut; one it lets through would reach the pane as the letter.
         Event::Key(k)
             if matches!(k.code, KeyCode::Char(_))
                 && k.modifiers.contains(KeyModifiers::SUPER)
@@ -461,70 +461,8 @@ fn outgoing(ev: Event, layout: Option<&str>) -> Option<Event> {
         {
             None
         }
-        Event::Key(k) => Some(Event::Key(layout.map_or(k, |l| crate::keys::option_layer(l, k)))),
         ev => Some(ev),
     }
-}
-
-/// iTerm2 and kitty type what the layout prints for Option and a key; Ghostty and WezTerm send the key.
-/// ceiling: over ssh from kitty TERM travels, and the layout read is the remote Mac's, not the one typed on;
-/// the way past is the local client reporting its own layout.
-fn types_option_chars(term_program: Option<&str>, term: Option<&str>) -> bool {
-    term_program == Some("iTerm.app") || term == Some("xterm-kitty")
-}
-
-/// The current layout as an index into `keys::OPTION_LAYOUTS` plus one; 0 for another layout or an input method on top.
-static LAYOUT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
-fn option_layout() -> Option<&'static str> {
-    crate::keys::OPTION_LAYOUTS.get(LAYOUT.load(std::sync::atomic::Ordering::Relaxed).checked_sub(1)?).copied()
-}
-
-/// `defaults read com.apple.HIToolbox AppleSelectedInputSources` lists an input method (Japanese, Chinese...):
-/// the layout under it is U.S. too, but what arrives is the method's text.
-fn input_method_on(selected: &str) -> bool {
-    // "Keyboard Input Method" is a method without modes; "Non Keyboard Input Method" (the accent popup) is not one.
-    selected.lines().any(|l| matches!(l.trim(), "InputSourceKind = \"Input Mode\";" | "InputSourceKind = \"Keyboard Input Method\";"))
-}
-
-/// The current layout's place in `keys::OPTION_LAYOUTS` plus one, or 0, as `defaults` reads it.
-fn current_layout() -> usize {
-    let read = |key| {
-        crate::spawn::cmd("/usr/bin/defaults")
-            .args(["read", "com.apple.HIToolbox", key])
-            .stderr(std::process::Stdio::null())
-            .output()
-            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-            .unwrap_or_default()
-    };
-    let id = read("AppleCurrentKeyboardLayoutInputSourceID");
-    let at = crate::keys::OPTION_LAYOUTS.iter().position(|l| *l == id.trim()).map_or(0, |i| i + 1);
-    if at > 0 && input_method_on(&read("AppleSelectedInputSources")) { 0 } else { at }
-}
-
-/// Read again when macOS says the input source changed; call on the main thread, which then runs
-/// `cf::run_pending` before reading each key. TIS would want the main queue; `defaults` does not.
-/// ceiling: a key typed within milliseconds of a switch can still meet the old layout. The notification is handled
-/// with the first key after the switch; a cfprefsd slower than that is caught by a second read 150 ms after it,
-/// and anything slower still by the 2 s poll.
-fn watch_layout() {
-    static STARTED: std::sync::Once = std::sync::Once::new();
-    STARTED.call_once(|| {
-        extern "C" fn changed(_: crate::cf::CFRef, _: *mut std::ffi::c_void, _: crate::cf::CFRef, _: *const std::ffi::c_void, _: crate::cf::CFRef) {
-            LAYOUT.store(current_layout(), std::sync::atomic::Ordering::Relaxed);
-            // Builder, not spawn: a panic cannot leave an extern "C" callback, and aborting would leave the terminal raw.
-            let _ = std::thread::Builder::new().spawn(|| {
-                std::thread::sleep(Duration::from_millis(150));
-                LAYOUT.store(current_layout(), std::sync::atomic::Ordering::Relaxed);
-            });
-        }
-        LAYOUT.store(current_layout(), std::sync::atomic::Ordering::Relaxed);
-        crate::cf::observe_distributed("com.apple.Carbon.TISNotifySelectedKeyboardInputSourceChanged", changed);
-        std::thread::spawn(|| loop {
-            std::thread::sleep(APPEARANCE_POLL);
-            LAYOUT.store(current_layout(), std::sync::atomic::Ordering::Relaxed);
-        });
-    });
 }
 
 /// What came down the stream, for telling a detach from a stop from a loss.
@@ -612,10 +550,6 @@ fn session(
     })?;
 
     let mut sent = encode(dark);
-    let option_chars = types_option_chars(std::env::var("TERM_PROGRAM").ok().as_deref(), std::env::var("TERM").ok().as_deref());
-    if option_chars {
-        watch_layout();
-    }
 
     'input: loop {
         if pump.is_finished() {
@@ -640,12 +574,7 @@ fn session(
         if !crossterm::event::poll(Duration::from_millis(50))? {
             continue;
         }
-        let ev = crossterm::event::read()?;
-        if option_chars {
-            // a layout switch notified before this key counts for it
-            crate::cf::run_pending();
-        }
-        let Some(ev) = outgoing(ev, option_layout().filter(|_| option_chars)) else {
+        let Some(ev) = outgoing(crossterm::event::read()?) else {
             continue;
         };
         if ClientMsg::Event(ev).write_to(&mut writer).is_err() {
@@ -1625,38 +1554,16 @@ fn _event_is_serializable(e: Event) -> String {
 mod tests {
 
     #[test]
-    fn option_characters_are_read_back_only_in_iterm2_and_kitty() {
-        assert!(super::types_option_chars(Some("iTerm.app"), Some("xterm-256color")));
-        assert!(super::types_option_chars(None, Some("xterm-kitty")), "kitty sets no TERM_PROGRAM");
-        assert!(!super::types_option_chars(Some("ghostty"), Some("xterm-ghostty")), "Ghostty sends Option as a key");
-        assert!(!super::types_option_chars(Some("WezTerm"), Some("xterm-256color")));
-        assert!(!super::types_option_chars(Some("tmux"), Some("tmux-256color")), "inside tmux the terminal is unknown");
-    }
-
-    #[test]
-    fn an_input_method_turns_the_option_layer_off() {
-        let layout_only = "(\n        {\n        \"Bundle ID\" = \"com.apple.PressAndHold\";\n        InputSourceKind = \"Non Keyboard Input Method\";\n    },\n        {\n        InputSourceKind = \"Keyboard Layout\";\n        \"KeyboardLayout ID\" = 252;\n        \"KeyboardLayout Name\" = ABC;\n    }\n)\n";
-        assert!(!super::input_method_on(layout_only), "a layout and the accent popup");
-        let japanese = "(\n        {\n        \"Bundle ID\" = \"com.apple.inputmethod.Kotoeri.RomajiTyping\";\n        \"Input Mode\" = \"com.apple.inputmethod.Japanese\";\n        InputSourceKind = \"Input Mode\";\n    },\n        {\n        InputSourceKind = \"Keyboard Layout\";\n        \"KeyboardLayout ID\" = 0;\n        \"KeyboardLayout Name\" = \"U.S.\";\n    }\n)\n";
-        assert!(super::input_method_on(japanese), "an IME on top of the U.S. layout");
-        let modeless = "(\n        {\n        \"Bundle ID\" = \"com.example.inputmethod\";\n        InputSourceKind = \"Keyboard Input Method\";\n    }\n)\n";
-        assert!(super::input_method_on(modeless), "an input method without modes");
-        assert!(!super::input_method_on(""), "defaults could not answer");
-    }
-
-    #[test]
-    fn command_letters_are_not_sent_and_option_characters_are_read_back_only_when_asked() {
+    fn command_and_a_letter_types_nothing() {
         use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
         let key = |c, m| Event::Key(KeyEvent::new(KeyCode::Char(c), m));
-        assert_eq!(super::outgoing(key('q', KeyModifiers::SUPER), None), None, "Command and a letter nerd has no use for types nothing");
-        assert_eq!(super::outgoing(key('Q', KeyModifiers::SUPER | KeyModifiers::SHIFT), None), None);
+        assert_eq!(super::outgoing(key('q', KeyModifiers::SUPER)), None, "Command and a letter nerd has no use for types nothing");
+        assert_eq!(super::outgoing(key('Q', KeyModifiers::SUPER | KeyModifiers::SHIFT)), None);
         let ctrl_cmd = key('q', KeyModifiers::SUPER | KeyModifiers::CONTROL);
-        assert_eq!(super::outgoing(ctrl_cmd.clone(), None), Some(ctrl_cmd), "with Control or Option it is still a key");
-        assert_eq!(super::outgoing(key('†', KeyModifiers::NONE), Some("com.apple.keylayout.US")), Some(key('t', KeyModifiers::ALT)), "iTerm2 on a U.S. layout");
-        assert_eq!(super::outgoing(key('†', KeyModifiers::NONE), None), Some(key('†', KeyModifiers::NONE)), "elsewhere it is typed");
-        assert_eq!(super::outgoing(key('a', KeyModifiers::NONE), Some("com.apple.keylayout.US")), Some(key('a', KeyModifiers::NONE)));
+        assert_eq!(super::outgoing(ctrl_cmd.clone()), Some(ctrl_cmd), "with Control or Option it is still a key");
+        assert_eq!(super::outgoing(key('†', KeyModifiers::NONE)), Some(key('†', KeyModifiers::NONE)), "what Option types is typed");
         let paste = Event::Paste("†".into());
-        assert_eq!(super::outgoing(paste.clone(), Some("com.apple.keylayout.US")), Some(paste), "a paste is text, not keys");
+        assert_eq!(super::outgoing(paste.clone()), Some(paste));
     }
 
     #[test]
