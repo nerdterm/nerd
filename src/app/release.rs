@@ -129,7 +129,7 @@ impl App {
             return Overlay::Confirm(c, Pending::ReleaseInstall(f.tag));
         }
         let body = format!("{said} Install downloads it from GitHub, checks it against the checksum published with it and puts it in ~/.local/bin; Update available then swaps the running servers for it.");
-        let c = Confirm::new(TITLE, body).rows(rows).labels(" [Enter] install ", " [Esc] later ").other(" [s] skip this release ");
+        let c = Confirm::new(TITLE, body).rows(rows).labels(" [Enter] install ", " [Esc] later ").other(" [s] skip this release ").click_yes();
         Overlay::Confirm(c, Pending::ReleaseInstall(f.tag))
     }
 

@@ -644,6 +644,10 @@ impl Confirm {
     /// Yes only by a click; the dialog opens on the button that does not act.
     pub fn click_yes(mut self) -> Self {
         self.click_yes = true;
+        // Enter does not press it, so its label must not say so.
+        if let Some(b) = self.buttons.first_mut() {
+            b.label = b.label.replacen(" [Enter] ", " ", 1);
+        }
         self.since = std::time::Instant::now();
         self.select(1)
     }
@@ -1061,6 +1065,7 @@ mod tests {
         c.key(k(crossterm::event::KeyCode::Left));
         assert_eq!(c.key(k(crossterm::event::KeyCode::Enter)), ConfirmOutcome::None, "not even with yes chosen");
         assert_eq!(Confirm::new("Close", "x").key(k(crossterm::event::KeyCode::Char('y'))), ConfirmOutcome::Yes, "other questions keep their keys");
+        assert!(!c.buttons[0].label.contains("[Enter]"), "a click-only yes does not name Enter: {}", c.buttons[0].label);
 
         // A click already on its way when it opened does not land on yes; a later one does.
         let screen = Rect::new(0, 0, 100, 30);
