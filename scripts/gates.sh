@@ -7,6 +7,7 @@ unset $(git rev-parse --local-env-vars)
 cd "$(git rev-parse --show-toplevel)"
 sh scripts/privacy.sh tree
 sh scripts/privacy.test.sh
+sh scripts/terminals.test.sh
 # Cargo never deletes old builds: a target/ another toolchain built (they share nothing) or past 4 GB starts over.
 if [ -f target/.rustc_info.json ] && { ! grep -qF -- "$(rustc -V)" target/.rustc_info.json || [ "$(du -sk target | cut -f1)" -gt 4194304 ]; }; then
     cargo clean

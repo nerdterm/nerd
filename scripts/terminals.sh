@@ -12,6 +12,9 @@ run=/tmp/nt/terminals/$stamp
 shots=$HOME/.cache/nerd-terminals/$stamp
 mkdir -p "$run" "$shots"
 swiftc -O -o "$run/post" scripts/terminals/post.swift
+. scripts/terminals/shortcuts.sh
+# The shortcuts are made for a Latin layout: the column is measured only on one.
+layout=$(defaults read com.apple.HIToolbox AppleCurrentKeyboardLayoutInputSourceID 2>/dev/null || true)
 post=$run/post
 input=ok; "$post" can input || input="no permission"
 screen=ok; "$post" can screen || screen="no permission"
@@ -28,7 +31,7 @@ p3="0 153 194"
 clip='nerd-terminals-paste-ok'
 tab=$(printf '\t')
 table=$run/table
-echo "terminal${tab}attach${tab}TERM_PROGRAM${tab}graphics${tab}stray reply${tab}plain key${tab}Option${tab}Control Latin${tab}Control Cyrillic${tab}arrows${tab}paste${tab}mouse${tab}colour${tab}new window" >"$table"
+echo "terminal${tab}attach${tab}TERM_PROGRAM${tab}graphics${tab}stray reply${tab}plain key${tab}Option${tab}Control Latin${tab}Control Cyrillic${tab}arrows${tab}paste${tab}mouse${tab}shortcuts${tab}colour${tab}new window" >"$table"
 notes=$run/notes
 : >"$notes"
 # A run stopped mid-paste still gives the clipboard back.
@@ -160,7 +163,7 @@ for t in "$@"; do
         elif [ "$keys" = 0 ]; then stray=none
         else stray="$keys keys"; fi
         if ! resolve; then
-            cells="no window${tab}no window${tab}no window${tab}no window${tab}no window${tab}no window${tab}no window${tab}no window"
+            cells="no window${tab}no window${tab}no window${tab}no window${tab}no window${tab}no window${tab}no window${tab}no window${tab}no window"
             lost "no test window (a full-screen Space or a locked screen keeps windows off it)"
         else
             colour=$screen
@@ -178,7 +181,7 @@ for t in "$@"; do
             if [ "$input" = ok ] && [ -n "$others" ]; then
                 # Events posted to one instance of an app can reach another instance of the same app, the user's own.
                 no="not checked: another $app is running"
-                cells="$no${tab}$no${tab}$no${tab}$no${tab}$no${tab}$no${tab}$no"
+                cells="$no${tab}$no${tab}$no${tab}$no${tab}$no${tab}$no${tab}$no${tab}$no"
                 echo "$t: another $app is running (pid $others), so no input was posted; quit it to check this row's input" >>"$notes"
             elif [ "$input" = ok ]; then
                 cells="$(try "char 0x0" "key 0")${tab}$(try "char ALT" "key 0 option")"
@@ -193,8 +196,27 @@ for t in "$@"; do
                 cells="$cells${tab}$(try "paste ${#clip} chars" "key 9 command")"
                 pbcopy <"$run/clipboard" && mv "$run/clipboard" "$run/clipboard.restored"
                 cells="$cells${tab}$(try "mouse Down(Left) 0x0 mouse Up(Left) 0x0" click)"
+                case $layout in
+                    com.apple.keylayout.US | com.apple.keylayout.ABC)
+                        printf '%s\n' "$SHORTCUTS" | while read -r name code; do
+                            case $name in shift+*) mods=option,shift ;; *) mods=option ;; esac
+                            at=$(wc -c <"$log")
+                            got="focus lost"
+                            if step key "$code" "$mods"; then
+                                i=0
+                                while [ "$(arrived "$at")" -lt 1 ] && [ $i -lt 20 ]; do sleep 0.1; i=$((i + 1)); done
+                                got=$(since "$at" "$(wc -c <"$log")")
+                            fi
+                            # Escape closes what the shortcut opened, and ends a dead key.
+                            step key 53 || true
+                            sleep 0.3
+                            printf '%s\t%s\n' "$name" "${got:-nothing}"
+                        done >"$run/$t-shortcuts"
+                        cells="$cells${tab}$(shortcuts_cell "$t" <"$run/$t-shortcuts")" ;;
+                    *) cells="$cells${tab}not checked: the layout is ${layout#com.apple.keylayout.}, not U.S. or ABC" ;;
+                esac
             else
-                cells="$input${tab}$input${tab}$input${tab}$input${tab}$input${tab}$input${tab}$input"
+                cells="$input${tab}$input${tab}$input${tab}$input${tab}$input${tab}$input${tab}$input${tab}$input"
             fi
             cells="$cells${tab}$colour"
         fi
