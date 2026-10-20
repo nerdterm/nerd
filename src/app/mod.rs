@@ -641,6 +641,32 @@ mod tests {
     }
 
     #[test]
+    fn a_terminal_preset_is_picked_and_applied_by_clicks_alone() {
+        use crossterm::event::{MouseButton, MouseEventKind};
+        crate::config::tests::with_temp_home(|| {
+            let mut app = with_one_space();
+            let tap = |app: &mut App, r: Rect| {
+                mouse_at(app, MouseEventKind::Down(MouseButton::Left), (r.x + 1, r.y));
+                mouse_at(app, MouseEventKind::Up(MouseButton::Left), (r.x + 1, r.y));
+            };
+            let mut s = crate::settings::Settings::new(&app.cfg);
+            s.choose("Terminal preset…");
+            app.overlay = Overlay::Settings(s);
+            let y = screen(&mut app).lines().position(|l| l.contains("Terminal preset…")).expect("the row drawn") as u16;
+            let r = app.view.dialog.rows.iter().find(|(r, _)| r.y == y).expect("a row there").0;
+            tap(&mut app, r);
+            assert!(matches!(&app.overlay, Overlay::Picker(p, _) if p.title == "Terminal preset"), "a click opens the list of terminals");
+            screen(&mut app);
+            let kitty = crate::presets::ALL.iter().position(|t| *t == crate::presets::Terminal::Kitty).unwrap();
+            let r = app.view.dialog.rects[kitty];
+            tap(&mut app, r);
+            assert!(matches!(&app.overlay, Overlay::Confirm(_, Pending::Preset(crate::presets::Terminal::Kitty, _, false))), "a click on a row opens it");
+            click_yes(&mut app);
+            assert!(crate::presets::applied(crate::presets::Terminal::Kitty), "the button applies it");
+        });
+    }
+
+    #[test]
     fn a_wezterm_config_nerd_does_not_edit_gets_the_line_shown_whole_and_copied_not_applied() {
         crate::config::tests::with_temp_home(|| {
             let mine = crate::config::home_dir().join(".wezterm.lua");
