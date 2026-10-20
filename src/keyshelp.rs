@@ -46,7 +46,7 @@ const ARROW: &str = "next pane that way, then the sidebar, the tree or the tabs"
 fn chord_rows(p: Prefix) -> &'static [(&'static str, &'static str)] {
     match p {
         Prefix::Off => &[],
-        Prefix::CtrlB => &[("⌃+B, then a key", CHORD), ("⌃+B, then an arrow", ARROW), ("⌃+B twice", "sends ⌃+B to the pane")],
+        Prefix::CtrlB => &[("⌃+B, then a key", CHORD), ("⌃+B, then an arrow", ARROW), ("⌃+B twice", "sends ⌃+B to the pane"), ("⌃+B twice, nerd in tmux", "tmux takes the first, nerd the second")],
         Prefix::CtrlA => &[("⌃+A, then a key", CHORD), ("⌃+A, then an arrow", ARROW), ("⌃+A twice", "sends ⌃+A to the pane")],
     }
 }
@@ -395,7 +395,7 @@ mod tests {
         assert!(listed.contains(&"⌃+A, then a key"), "{listed:?}");
         let with = rows(Prefix::CtrlB);
         assert_eq!(with[0].0, Some("The prefix, in every terminal"), "it comes first");
-        assert_eq!(with[3].0, Some("⌥ and a letter, with Option sent as Alt"), "and holds its own three rows only");
+        assert_eq!(with[4].0, Some("⌥ and a letter, with Option sent as Alt"), "and holds its own four rows only");
     }
 
     #[test]

@@ -13,7 +13,7 @@
 
 ## Keys
 
-Every key repeats a menu item or a click. nerd's key is `⌃`+`B` (Control + B, as in tmux): press it, let go, then press one of the keys below without `⌥` and without `shift`. `⌃`+`B` twice sends `⌃`+`B` to the program in the pane (the shell's back one character, vim's page up). Inside tmux it is still nerd's: press it twice to reach tmux. The key after it is read from the key itself, not from what the layout prints on it, and its case does not matter, so it works the same on a Cyrillic layout; `⌃`+`B` is read off its key too, where the terminal sends Control with the layout's letter. While nerd waits for the second key, the top row shows `⌃+B`. **Settings… → tmux-style prefix** switches it to `⌃`+`A` or turns it off.
+Every key repeats a menu item or a click. nerd's key is `⌃`+`B` (Control + B, as in tmux): press it, let go, then press one of the keys below without `⌥` and without `shift`. `⌃`+`B` twice sends `⌃`+`B` to the program in the pane (the shell's back one character, vim's page up). With nerd inside tmux, tmux takes the first `⌃`+`B`: press it twice to reach nerd. With tmux inside a nerd pane, nerd takes the first: press it twice to reach tmux. The key after it is read from the key itself, not from what the layout prints on it, and its case does not matter, so it works the same on a Cyrillic layout; `⌃`+`B` is read off its key too, where the terminal sends Control with the layout's letter. While nerd waits for the second key, the top row shows `⌃+B`. **Settings… → tmux-style prefix** switches it to `⌃`+`A` or turns it off.
 
 With a terminal that sends Option as Alt, `⌥` and the same key does the same in one press (see below). **Keys and mouse…** in the main menu lists them all.
 
