@@ -242,6 +242,7 @@ echo "Alacritty${tab}not checked: its Homebrew cask is disabled (fails Gatekeepe
 echo "Warp${tab}not checked: closed source, needs an account, has its own input editor" >>"$table"
 
 column -t -s "$tab" "$table"
+echo "Control Cyrillic and prefix, Russian: synthetic events carrying the Russian layout's characters, not a Russian layout in use; check them by hand on one."
 cat "$notes"
 if [ "$screen" = ok ]; then echo "screenshots: $shots"; fi
 echo "logs: $run"

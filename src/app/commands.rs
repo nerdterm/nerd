@@ -526,6 +526,7 @@ impl App {
     pub(super) fn perform(&mut self, what: Pending) {
         self.dirty = true;
         match what {
+            Pending::Preset(..) if self.client_inside => self.notice = Some(super::mail::INSIDE_REFUSED.into()),
             Pending::Preset(t, steps, undo) => {
                 let done = if undo { "undone" } else { "applied" };
                 let line = crate::presets::needs_line(&steps);

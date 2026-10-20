@@ -59,8 +59,9 @@ pub enum Step {
     Line(PathBuf, String),
     /// A file of nerd's own, removed.
     Remove(PathBuf),
-    /// iTerm2's margins, which are app-wide: set to 16 with the values before kept, or those put back.
-    Margins(bool),
+    /// iTerm2's margins, which are app-wide, and its default profile: set to 16 and nerd with the values before
+    /// kept, or those put back.
+    ItermPrefs(bool),
     /// For the human to do; printed only.
     Note(String),
 }
@@ -89,7 +90,7 @@ fn env_path(key: &str) -> Option<PathBuf> {
 }
 
 #[cfg(test)]
-fn set_env(key: &'static str, path: PathBuf) {
+pub(crate) fn set_env(key: &'static str, path: PathBuf) {
     TEST_ENV.with(|e| e.borrow_mut().push((key, path)));
 }
 
@@ -316,7 +317,7 @@ fn iterm(cfg: &crate::config::Config) -> Vec<Step> {
     };
     let mut p = serde_json::Map::new();
     p.insert("Name".into(), "nerd".into());
-    p.insert("Guid".into(), "nerd-preset".into());
+    p.insert("Guid".into(), GUID.into());
     p.insert("Option Key Sends".into(), 2.into());
     p.insert("Right Option Key Sends".into(), 0.into());
     p.insert("Use Separate Colors for Light and Dark Mode".into(), true.into());
@@ -332,6 +333,8 @@ fn iterm(cfg: &crate::config::Config) -> Vec<Step> {
 }
 
 const ITERM_KEYS: [&str; 2] = ["TerminalMargin", "TerminalVMargin"];
+const DEFAULT_KEY: &str = "Default Bookmark Guid";
+const GUID: &str = "nerd-preset";
 
 fn margins_record() -> PathBuf {
     own("iterm2-margins.json")
@@ -361,28 +364,41 @@ fn test_prefs() -> PathBuf {
     home().join("iterm2-prefs.json")
 }
 
-fn margin_now(key: &str) -> Option<i64> {
+/// One of iTerm2's settings as `defaults` prints it.
+fn pref_now(key: &str) -> Option<String> {
     if cfg!(test) {
         let all: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(test_prefs()).ok()?).ok()?;
-        return all.get(key)?.as_i64();
+        return all.get(key).map(|v| v.as_str().map_or_else(|| v.to_string(), str::to_string));
     }
     let out = crate::spawn::cmd("/usr/bin/defaults").args(["read", "com.googlecode.iterm2", key]).stderr(std::process::Stdio::null()).output().ok()?;
-    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().parse().ok()).flatten()
+    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
-/// `None` takes the key out.
-fn margin_set(key: &str, v: Option<i64>) -> std::io::Result<()> {
+fn margin_now(key: &str) -> Option<i64> {
+    pref_now(key)?.parse().ok()
+}
+
+/// The default profile before nerd's; nerd's own is never kept as the one to put back.
+fn default_before() -> serde_json::Value {
+    pref_now(DEFAULT_KEY).filter(|g| g != GUID).into()
+}
+
+/// A number is written as an integer, text as a string; `None` takes the key out.
+fn pref_set(key: &str, v: Option<&serde_json::Value>) -> std::io::Result<()> {
     if cfg!(test) {
         let mut all: serde_json::Map<String, serde_json::Value> = std::fs::read_to_string(test_prefs()).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
         match v {
-            Some(v) => all.insert(key.into(), v.into()),
+            Some(v) => all.insert(key.into(), v.clone()),
             None => all.remove(key),
         };
         return std::fs::write(test_prefs(), serde_json::to_string(&all).map_err(std::io::Error::other)?);
     }
-    let v = v.map(|v| v.to_string());
+    let v = v.map(|v| match v {
+        serde_json::Value::String(s) => ("-string", s.clone()),
+        v => ("-int", v.to_string()),
+    });
     let args: Vec<&str> = match &v {
-        Some(v) => vec!["write", "com.googlecode.iterm2", key, "-int", v],
+        Some((kind, v)) => vec!["write", "com.googlecode.iterm2", key, kind, v],
         None => vec!["delete", "com.googlecode.iterm2", key],
     };
     let out = crate::spawn::cmd("/usr/bin/defaults").args(&args).stderr(std::process::Stdio::piped()).output()?;
@@ -390,27 +406,45 @@ fn margin_set(key: &str, v: Option<i64>) -> std::io::Result<()> {
     if out.status.success() || v.is_none() { Ok(()) } else { Err(std::io::Error::other(format!("defaults: {}", String::from_utf8_lossy(&out.stderr).trim()))) }
 }
 
-fn set_margins(on: bool) -> std::io::Result<()> {
+fn set_prefs(on: bool) -> std::io::Result<()> {
     let record = margins_record();
     if on {
-        // the values before the first apply; a second apply keeps them
-        if !record.exists() {
-            let before: serde_json::Map<String, serde_json::Value> = ITERM_KEYS.iter().map(|k| (k.to_string(), margin_now(k).into())).collect();
+        // the values before the first apply; a second apply keeps them, and adds the default profile to a record without it
+        let mut before: serde_json::Map<String, serde_json::Value> = match read(&record)? {
+            Some(text) => serde_json::from_str(&text).map_err(std::io::Error::other)?,
+            None => ITERM_KEYS.iter().map(|k| (k.to_string(), margin_now(k).into())).collect(),
+        };
+        if !before.contains_key(DEFAULT_KEY) {
+            before.insert(DEFAULT_KEY.into(), default_before());
             std::fs::create_dir_all(nerd_dir())?;
             std::fs::write(&record, serde_json::to_string(&before).map_err(std::io::Error::other)?)?;
         }
         for k in ITERM_KEYS {
-            margin_set(k, Some(i64::from(MARGIN)))?;
+            pref_set(k, Some(&MARGIN.into()))?;
         }
-        return Ok(());
+        return pref_set(DEFAULT_KEY, Some(&GUID.into()));
     }
     let Some(text) = read(&record)? else { return Ok(()) };
     let before: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&text).map_err(std::io::Error::other)?;
-    // a margin no longer the preset's was set by the user since, and stays
+    let kept = |k: &str| before.get(k).filter(|v| !v.is_null());
+    // a value no longer the preset's was set by the user since, and stays
+    // ceiling: a running iTerm2 keeps its default in memory and writes its first profile over this; quitting it first is the way past
+    if pref_now(DEFAULT_KEY).as_deref() == Some(GUID) {
+        pref_set(DEFAULT_KEY, kept(DEFAULT_KEY))?;
+    }
     for k in ITERM_KEYS.into_iter().filter(|k| margin_now(k) == Some(i64::from(MARGIN))) {
-        margin_set(k, before.get(k).and_then(serde_json::Value::as_i64))?;
+        pref_set(k, kept(k))?;
     }
     std::fs::remove_file(record)
+}
+
+/// The terminals' config folders, and WezTerm's file when the environment names one, where they are for this
+/// environment: an isolated pane writes none of them.
+pub fn config_places() -> (Vec<PathBuf>, Vec<PathBuf>) {
+    let mut dirs: Vec<PathBuf> = ghostty_configs().iter().chain([&kitty_conf(), &iterm_profile()]).filter_map(|p| p.parent()).map(Path::to_path_buf).collect();
+    dirs.extend([xdg().join("wezterm"), home().join(".config/wezterm")]);
+    dirs.dedup();
+    (dirs, env_path("WEZTERM_CONFIG_FILE").into_iter().collect())
 }
 
 // --- the plans ---
@@ -494,14 +528,14 @@ pub fn apply_steps(t: Terminal, cfg: &crate::config::Config, dark: bool) -> std:
         }
         Terminal::Iterm2 => {
             if own_account() {
-                steps.push(Step::Margins(true));
+                steps.push(Step::ItermPrefs(true));
+                // one row each: a window cuts a row at its edge
+                steps.push(Step::Note("iTerm2 takes the default profile and the margins on its next start;".into()));
+                steps.push(Step::Note("then new windows use nerd, and windows it restores keep their profile.".into()));
             } else {
-                steps.push(Step::Note("iTerm2's margins are left as they are: HOME is not this account's home, and iTerm2 reads the account's settings.".into()));
+                steps.push(Step::Note("iTerm2's margins and default profile are left as they are:".into()));
+                steps.push(Step::Note("HOME is not this account's home, and iTerm2 reads the account's settings.".into()));
             }
-            steps.push(Step::Note(
-                "The preset is a profile named nerd. To use it everywhere: iTerm2 → Settings → Profiles → nerd → Other Actions → Set as Default. iTerm2 takes the margins on its next start."
-                    .into(),
-            ));
         }
     }
     Ok(steps)
@@ -554,12 +588,15 @@ pub fn undo_steps(t: Terminal) -> std::io::Result<Vec<Step>> {
             }
             remove(&mut steps, &["wezterm-preset.lua"]);
         }
+        // the default profile is put back before the profile it names goes
         Terminal::Iterm2 => {
+            if margins_record().exists() {
+                steps.push(Step::ItermPrefs(false));
+                steps.push(Step::Note("Quit iTerm2 first to get the default profile before back:".into()));
+                steps.push(Step::Note("an open iTerm2 makes its first profile the default instead.".into()));
+            }
             if iterm_profile().exists() {
                 steps.push(Step::Remove(iterm_profile()));
-            }
-            if margins_record().exists() {
-                steps.push(Step::Margins(false));
             }
         }
     }
@@ -594,12 +631,18 @@ pub fn describe(steps: &[Step], full: bool) -> Vec<String> {
                 out.extend(indent(line));
             }
             Step::Remove(p) => out.push(format!("remove {}", crate::paths::shown(p))),
-            Step::Margins(true) => out.push(format!(
-                "set iTerm2's margins, which every profile shares, to {MARGIN} (now {} and {}); undo puts them back",
-                margin_now(ITERM_KEYS[0]).map_or("unset".into(), |v| v.to_string()),
-                margin_now(ITERM_KEYS[1]).map_or("unset".into(), |v| v.to_string())
-            )),
-            Step::Margins(false) => out.push(format!("put iTerm2's margins back as they were, each one still at {MARGIN}")),
+            Step::ItermPrefs(true) => {
+                out.push(format!(
+                    "set iTerm2's margins, which every profile shares, to {MARGIN} (now {} and {}); undo puts them back",
+                    margin_now(ITERM_KEYS[0]).map_or("unset".into(), |v| v.to_string()),
+                    margin_now(ITERM_KEYS[1]).map_or("unset".into(), |v| v.to_string())
+                ));
+                out.push("make nerd iTerm2's default profile, for new windows; undo puts the one before back".into());
+            }
+            Step::ItermPrefs(false) => {
+                out.push(format!("put iTerm2's margins back as they were, each one still at {MARGIN}"));
+                out.push("put iTerm2's default profile back, if it is still nerd".into());
+            }
             Step::Note(n) => out.push(n.clone()),
         }
     }
@@ -612,11 +655,14 @@ pub fn run(steps: &[Step]) -> std::io::Result<()> {
         match s {
             Step::Write(p, text) => write(p, text)?,
             Step::Append(p, text) => {
-                let have = read(p)?.unwrap_or_default();
-                let sep = if have.is_empty() { "" } else { "\n" };
+                // a file of the user's, even an empty one, gets the newline unappend takes out with the block
+                let (have, sep) = read(p)?.map_or((String::new(), ""), |s| (s, "\n"));
                 write(p, &format!("{have}{sep}{text}"))?;
             }
-            Step::Unappend(p, text) => unappend(p, text)?,
+            Step::Unappend(p, text) => {
+                unappend(p, text)?;
+                prune(p)?;
+            }
             Step::Insert(p, line) => {
                 let have = read(p)?.unwrap_or_default();
                 let Some((at, _)) = wezterm_return(&have).filter(|(_, l)| l == line) else {
@@ -630,11 +676,14 @@ pub fn run(steps: &[Step]) -> std::io::Result<()> {
                     write(p, &format!("{}{}", &have[..at], &have[at + line.len()..]))?;
                 }
             }
-            Step::Remove(p) => match std::fs::remove_file(p) {
-                Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
-                _ => {}
-            },
-            Step::Margins(on) => set_margins(*on)?,
+            Step::Remove(p) => {
+                match std::fs::remove_file(p) {
+                    Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+                    _ => {}
+                }
+                prune(p)?;
+            }
+            Step::ItermPrefs(on) => set_prefs(*on)?,
             Step::Note(_) | Step::Line(..) => {}
         }
     }
@@ -643,12 +692,60 @@ pub fn run(steps: &[Step]) -> std::io::Result<()> {
 
 fn write(p: &Path, text: &str) -> std::io::Result<()> {
     if let Some(dir) = p.parent() {
+        // nerd's own folder and those above it are never a preset's to take away
+        let new: Vec<PathBuf> = dir.ancestors().take_while(|d| !d.exists()).filter(|d| !nerd_dir().starts_with(d) && !d.starts_with(nerd_dir())).map(Path::to_path_buf).collect();
         std::fs::create_dir_all(dir)?;
+        let mut made = folders();
+        let had = made.len();
+        // a recorded folder already there for a new file outlived an undo, and may be the user's now
+        if !p.exists() {
+            made.retain(|m| !dir.starts_with(m));
+        }
+        if !new.is_empty() || made.len() != had {
+            made.extend(new);
+            save_folders(&made)?;
+        }
     }
     std::fs::write(p, text)
 }
 
-/// Takes the block out with the newline apply put before it; refuses a block changed by hand.
+/// The folders a preset made outside nerd's own, kept so undo takes away those and no others.
+fn folders_record() -> PathBuf {
+    own("preset-folders.json")
+}
+
+/// A record that cannot be read counts as empty: the folders stay, and nothing is blocked.
+fn folders() -> Vec<PathBuf> {
+    read(&folders_record()).ok().flatten().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+}
+
+fn save_folders(made: &[PathBuf]) -> std::io::Result<()> {
+    if made.is_empty() {
+        return match std::fs::remove_file(folders_record()) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        };
+    }
+    std::fs::create_dir_all(nerd_dir())?;
+    std::fs::write(folders_record(), serde_json::to_string(made).map_err(std::io::Error::other)?)
+}
+
+/// The folders above `p` that a preset made, taken away while they are empty.
+fn prune(p: &Path) -> std::io::Result<()> {
+    let mut made = folders();
+    for d in p.ancestors().skip(1) {
+        if !made.iter().any(|m| m == d) {
+            break;
+        }
+        match std::fs::remove_dir(d) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => break,
+            _ => made.retain(|m| m != d),
+        }
+    }
+    save_folders(&made)
+}
+
+/// Takes the block out, and the newline apply put before it in a file of the user's; refuses a block changed by hand.
 fn unappend(p: &Path, text: &str) -> std::io::Result<()> {
     let Some(have) = read(p)? else { return Ok(()) };
     let made = text.replacen(": `nerd --preset", ", in a file nerd made: `nerd --preset", 1);
@@ -661,7 +758,7 @@ fn unappend(p: &Path, text: &str) -> std::io::Result<()> {
         }
         (None, None) => return Ok(()),
     };
-    let from = if at > 0 && have.as_bytes()[at - 1] == b'\n' { at - 1 } else { at };
+    let from = if !made && at > 0 && have.as_bytes()[at - 1] == b'\n' { at - 1 } else { at };
     let rest = format!("{}{}", &have[..from], &have[at + len..]);
     if made && rest.is_empty() {
         return std::fs::remove_file(p);
@@ -704,14 +801,14 @@ pub fn touched(steps: &[Step]) -> String {
         .iter()
         .filter_map(|s| match s {
             Step::Write(p, _) | Step::Append(p, _) | Step::Unappend(p, _) | Step::Insert(p, _) | Step::Uninsert(p, _) | Step::Remove(p) => Some(crate::paths::shown(p)),
-            Step::Margins(_) => Some("iTerm2's margins".into()),
+            Step::ItermPrefs(_) => Some("iTerm2's margins and default profile".into()),
             Step::Note(_) | Step::Line(..) => None,
         })
         .collect();
     names.join(", ")
 }
 
-/// Everything a preset left taken back, applied or not (the old key link, iTerm2's margins), for `nerd --uninstall`.
+/// Everything a preset left taken back, applied or not (the old key link, iTerm2's settings), for `nerd --uninstall`.
 pub fn undo_all() -> Vec<String> {
     let mut failed = Vec::new();
     for t in ALL {
@@ -774,16 +871,18 @@ mod tests {
     use crate::config::tests::with_temp_home;
     use crate::config::Config;
 
-    fn files(dir: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+    /// Every file with its bytes and every folder, as `None`.
+    fn files(dir: &Path) -> Vec<(PathBuf, Option<Vec<u8>>)> {
         let mut out = Vec::new();
         let mut stack = vec![dir.to_path_buf()];
         while let Some(d) = stack.pop() {
             for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
                 let p = e.path();
                 if p.is_dir() {
+                    out.push((p.clone(), None));
                     stack.push(p);
                 } else {
-                    out.push((p.clone(), std::fs::read(&p).unwrap()));
+                    out.push((p.clone(), Some(std::fs::read(&p).unwrap())));
                 }
             }
         }
@@ -808,7 +907,7 @@ mod tests {
                 std::fs::create_dir_all(config.parent().unwrap()).unwrap();
                 std::fs::write(&config, b).unwrap();
             }
-            let was = files(&home);
+            let mut was = files(&home);
             apply(t);
             assert!(applied(t), "{t:?} applied");
             apply(t);
@@ -828,7 +927,9 @@ mod tests {
             assert!(!applied(t), "{t:?} undone");
             // iTerm2's settings come back by value (iterm_gets_a_profile_and_its_margins_back), not by bytes
             let mut now = files(&home);
-            now.retain(|(p, _)| !p.ends_with("config.json") && *p != test_prefs());
+            // nerd's own folder is nerd --uninstall's to take away
+            now.retain(|(p, _)| !p.ends_with("config.json") && *p != test_prefs() && !nerd_dir().starts_with(p));
+            was.retain(|(p, _)| !nerd_dir().starts_with(p));
             assert_eq!(now, was, "{t:?} with {before:?}: undo is byte-identical");
         });
     }
@@ -897,6 +998,70 @@ mod tests {
             std::fs::write(&conf, &s).unwrap();
             undo(Terminal::Kitty);
             assert_eq!(std::fs::read_to_string(&conf).unwrap(), "# mine\nfont_size 13\ncursor_shape beam\n");
+        });
+    }
+
+    #[test]
+    fn a_line_put_above_the_block_keeps_its_newline_in_a_file_that_was_empty_or_missing() {
+        for empty in [true, false] {
+            with_temp_home(|| {
+                let conf = kitty_conf();
+                if empty {
+                    write(&conf, "").unwrap();
+                }
+                apply(Terminal::Kitty);
+                let s = std::fs::read_to_string(&conf).unwrap();
+                std::fs::write(&conf, format!("font_size 13\n{s}")).unwrap();
+                undo(Terminal::Kitty);
+                assert_eq!(std::fs::read_to_string(&conf).unwrap(), "font_size 13\n", "empty before: {empty}");
+            });
+        }
+    }
+
+    #[test]
+    fn undo_takes_away_only_the_folders_apply_made_and_only_while_empty() {
+        with_temp_home(|| {
+            let config = home().join(".config");
+            std::fs::create_dir_all(&config).unwrap();
+            apply(Terminal::Kitty);
+            undo(Terminal::Kitty);
+            assert!(config.is_dir() && !config.join("kitty").exists(), "the folder that was there stays, the one apply made goes");
+            assert!(!own("preset-folders.json").exists(), "the record goes with the last folder");
+
+            apply(Terminal::Ghostty);
+            let mine = config.join("ghostty/mine.conf");
+            std::fs::write(&mine, "x").unwrap();
+            undo(Terminal::Ghostty);
+            assert!(mine.exists(), "a folder holding a file of the user's stays");
+        });
+    }
+
+    #[test]
+    fn a_folder_undo_could_not_take_away_is_forgotten_once_a_preset_writes_into_it_again() {
+        with_temp_home(|| {
+            apply(Terminal::Kitty);
+            let dir = kitty_conf().parent().unwrap().to_path_buf();
+            let mine = dir.join("mine.conf");
+            std::fs::write(&mine, "x").unwrap();
+            undo(Terminal::Kitty);
+            apply(Terminal::Kitty);
+            std::fs::remove_file(&mine).unwrap();
+            undo(Terminal::Kitty);
+            assert!(dir.is_dir(), "there before the second apply, so it may be the user's now");
+        });
+    }
+
+    #[test]
+    fn an_unreadable_folder_record_blocks_nothing_and_its_folders_stay() {
+        with_temp_home(|| {
+            apply(Terminal::Kitty);
+            std::fs::write(own("preset-folders.json"), "{").unwrap();
+            undo(Terminal::Kitty);
+            assert!(!applied(Terminal::Kitty) && kitty_conf().parent().unwrap().is_dir(), "undone, and the folder the record named stays");
+            std::fs::write(own("preset-folders.json"), "{").unwrap();
+            apply(Terminal::Kitty);
+            std::fs::write(own("preset-folders.json"), "{").unwrap();
+            assert!(undo_all().is_empty(), "nerd --uninstall too");
         });
     }
 
@@ -1041,7 +1206,7 @@ mod tests {
     #[test]
     fn iterm_gets_a_profile_and_its_margins_back() {
         with_temp_home(|| {
-            margin_set("TerminalMargin", Some(5)).unwrap();
+            pref_set("TerminalMargin", Some(&5.into())).unwrap();
             apply(Terminal::Iterm2);
             assert_eq!((margin_now("TerminalMargin"), margin_now("TerminalVMargin")), (Some(16), Some(16)));
             let profile: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(iterm_profile()).unwrap()).unwrap();
@@ -1056,17 +1221,68 @@ mod tests {
     #[test]
     fn iterm_margins_changed_after_apply_stay_and_uninstall_restores_them_without_the_profile() {
         with_temp_home(|| {
-            margin_set("TerminalMargin", Some(5)).unwrap();
+            pref_set("TerminalMargin", Some(&5.into())).unwrap();
             apply(Terminal::Iterm2);
-            margin_set("TerminalVMargin", Some(8)).unwrap();
+            pref_set("TerminalVMargin", Some(&8.into())).unwrap();
             undo(Terminal::Iterm2);
             assert_eq!((margin_now("TerminalMargin"), margin_now("TerminalVMargin")), (Some(5), Some(8)), "a margin set after apply is the user's");
 
+            pref_set(DEFAULT_KEY, Some(&"ABC".into())).unwrap();
             apply(Terminal::Iterm2);
             std::fs::remove_file(iterm_profile()).unwrap();
             assert!(undo_all().is_empty());
             assert_eq!((margin_now("TerminalMargin"), margin_now("TerminalVMargin")), (Some(5), Some(8)), "the profile gone, the margins still come back");
+            assert_eq!(pref_now(DEFAULT_KEY).as_deref(), Some("ABC"), "and the default profile");
             assert!(!margins_record().exists());
+        });
+    }
+
+    #[test]
+    fn iterm_makes_nerd_the_default_profile_and_undo_puts_the_one_before_back() {
+        with_temp_home(|| {
+            pref_set(DEFAULT_KEY, Some(&"ABC".into())).unwrap();
+            let steps = apply_steps(Terminal::Iterm2, &Config::default(), true).unwrap();
+            let at = |steps: &[Step], f: fn(&Step) -> bool| steps.iter().position(f).unwrap();
+            assert!(at(&steps, |s| matches!(s, Step::Write(..))) < at(&steps, |s| matches!(s, Step::ItermPrefs(true))), "the profile is there before it is the default");
+            assert!(describe(&steps, false).iter().any(|l| l.contains("default profile")), "shown before it is made");
+            run(&steps).unwrap();
+            assert_eq!(pref_now(DEFAULT_KEY).as_deref(), Some(GUID));
+            apply(Terminal::Iterm2);
+            let steps = undo_steps(Terminal::Iterm2).unwrap();
+            assert!(at(&steps, |s| matches!(s, Step::ItermPrefs(false))) < at(&steps, |s| matches!(s, Step::Remove(..))), "the default goes back before its profile goes");
+            run(&steps).unwrap();
+            assert_eq!(pref_now(DEFAULT_KEY).as_deref(), Some("ABC"), "a second apply kept the one before");
+
+            apply(Terminal::Iterm2);
+            pref_set(DEFAULT_KEY, Some(&"XYZ".into())).unwrap();
+            undo(Terminal::Iterm2);
+            assert_eq!(pref_now(DEFAULT_KEY).as_deref(), Some("XYZ"), "a default chosen after apply is the user's");
+
+            pref_set(DEFAULT_KEY, None).unwrap();
+            apply(Terminal::Iterm2);
+            undo(Terminal::Iterm2);
+            assert_eq!(pref_now(DEFAULT_KEY), None, "absent before, absent after");
+        });
+    }
+
+    #[test]
+    fn a_margins_record_without_the_default_profile_gets_it_and_never_keeps_nerds_own() {
+        with_temp_home(|| {
+            // left by 0.13.0, which kept the margins only
+            write(&margins_record(), r#"{"TerminalMargin":5,"TerminalVMargin":null}"#).unwrap();
+            pref_set(DEFAULT_KEY, Some(&"ABC".into())).unwrap();
+            apply(Terminal::Iterm2);
+            undo(Terminal::Iterm2);
+            assert_eq!((pref_now(DEFAULT_KEY).as_deref(), margin_now("TerminalMargin")), (Some("ABC"), Some(5)));
+
+            // made the default by hand, as 0.13.0 told: undo takes the key out rather than point at a profile that is gone
+            write(&margins_record(), r#"{"TerminalMargin":null,"TerminalVMargin":null}"#).unwrap();
+            pref_set(DEFAULT_KEY, Some(&GUID.into())).unwrap();
+            apply(Terminal::Iterm2);
+            let record: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(margins_record()).unwrap()).unwrap();
+            assert!(record[DEFAULT_KEY].is_null(), "{record}");
+            undo(Terminal::Iterm2);
+            assert_eq!(pref_now(DEFAULT_KEY), None);
         });
     }
 

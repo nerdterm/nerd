@@ -627,6 +627,11 @@ mod tests {
             let steps = steps.clone();
             app.overlay = Overlay::None;
             assert!(!crate::presets::applied(crate::presets::Terminal::Kitty), "nothing before the button");
+            app.client_inside = true;
+            app.perform(Pending::Preset(crate::presets::Terminal::Kitty, steps.clone(), false));
+            assert_eq!(app.notice.take().as_deref(), Some(INSIDE_REFUSED));
+            assert!(!crate::presets::applied(crate::presets::Terminal::Kitty), "refused from a window inside a pane");
+            app.client_inside = false;
             app.perform(Pending::Preset(crate::presets::Terminal::Kitty, steps, false));
             assert!(crate::presets::applied(crate::presets::Terminal::Kitty));
             open(&mut app);
@@ -637,6 +642,32 @@ mod tests {
             app.caps.bye = true;
             app.overlay = app.preset_picker();
             assert!(matches!(app.overlay, Overlay::None) && app.notice.as_deref().is_some_and(|n| n.contains("nerd --preset")), "a window from another Mac is sent to the command there");
+        });
+    }
+
+    #[test]
+    fn a_terminal_preset_is_picked_and_applied_by_clicks_alone() {
+        use crossterm::event::{MouseButton, MouseEventKind};
+        crate::config::tests::with_temp_home(|| {
+            let mut app = with_one_space();
+            let tap = |app: &mut App, r: Rect| {
+                mouse_at(app, MouseEventKind::Down(MouseButton::Left), (r.x + 1, r.y));
+                mouse_at(app, MouseEventKind::Up(MouseButton::Left), (r.x + 1, r.y));
+            };
+            let mut s = crate::settings::Settings::new(&app.cfg);
+            s.choose("Terminal preset…");
+            app.overlay = Overlay::Settings(s);
+            let y = screen(&mut app).lines().position(|l| l.contains("Terminal preset…")).expect("the row drawn") as u16;
+            let r = app.view.dialog.rows.iter().find(|(r, _)| r.y == y).expect("a row there").0;
+            tap(&mut app, r);
+            assert!(matches!(&app.overlay, Overlay::Picker(p, _) if p.title == "Terminal preset"), "a click opens the list of terminals");
+            screen(&mut app);
+            let kitty = crate::presets::ALL.iter().position(|t| *t == crate::presets::Terminal::Kitty).unwrap();
+            let r = app.view.dialog.rects[kitty];
+            tap(&mut app, r);
+            assert!(matches!(&app.overlay, Overlay::Confirm(_, Pending::Preset(crate::presets::Terminal::Kitty, _, false))), "a click on a row opens it");
+            click_yes(&mut app);
+            assert!(crate::presets::applied(crate::presets::Terminal::Kitty), "the button applies it");
         });
     }
 
