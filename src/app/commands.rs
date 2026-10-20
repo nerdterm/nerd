@@ -364,7 +364,7 @@ impl App {
         let items = crate::presets::ALL
             .iter()
             .enumerate()
-            .map(|(id, t)| crate::menu::PickerItem { label: t.title().into(), detail: if crate::presets::applied(*t) { "applied" } else { "not applied" }.into(), id })
+            .map(|(id, t)| crate::menu::PickerItem { label: t.title().into(), detail: crate::presets::status(*t).into(), id })
             .collect();
         Overlay::Picker(crate::menu::Picker::new("Terminal preset", items), Pick::Preset)
     }
@@ -380,6 +380,14 @@ impl App {
                 return Overlay::None;
             }
         };
+        // the body wraps and a table row does not, so the line to add goes in the body, whole
+        if let Some((_, line)) = crate::presets::needs_line(&steps) {
+            let (says, rest): (Vec<_>, Vec<_>) = steps.iter().cloned().partition(|s| matches!(s, crate::presets::Step::Line(..)));
+            let body = format!("{} The button writes nerd's file and copies the line: {line}", crate::presets::describe(&says, false)[0]);
+            let rows = crate::presets::describe(&rest, false).into_iter().map(|l| vec![l]).collect();
+            let confirm = crate::menu::Confirm::new(format!("{} preset", t.title()), body).rows(rows).labels(" [Enter] copy the line ", " [Esc] close ");
+            return Overlay::Confirm(confirm, Pending::Preset(t, steps, false));
+        }
         let body = format!("Option as Alt on the left key, a 16 pt margin and nerd's colours. nerd --preset {} in a terminal prints every line.", t.name());
         let rows = crate::presets::describe(&steps, false).into_iter().map(|l| vec![l]).collect();
         let confirm = crate::menu::Confirm::new(format!("{} preset", t.title()), body).rows(rows).does(if undo { "undo" } else { "apply" });
@@ -520,7 +528,14 @@ impl App {
         match what {
             Pending::Preset(t, steps, undo) => {
                 let done = if undo { "undone" } else { "applied" };
+                let line = crate::presets::needs_line(&steps);
                 match crate::presets::run(&steps) {
+                    Ok(()) if let Some((p, line)) = line => {
+                        let p = crate::paths::shown(p);
+                        crate::log::info(&format!("preset for {} needs the user's line in {p}, copied from the menu: {}", t.title(), crate::presets::touched(&steps)));
+                        self.to_client.extend(crate::select::copy(&line));
+                        self.toast = Some(format!("{} preset not applied yet: the line is copied, add it to {p}", t.title()));
+                    }
                     Ok(()) => {
                         crate::log::info(&format!("preset for {} {done} from the menu: {}", t.title(), crate::presets::touched(&steps)));
                         self.toast = Some(format!("{} preset {done}", t.title()));

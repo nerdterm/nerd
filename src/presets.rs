@@ -51,6 +51,12 @@ pub enum Step {
     Append(PathBuf, String),
     /// That block taken out again; a file nerd made goes when nothing else is left in it.
     Unappend(PathBuf, String),
+    /// nerd's one marked line, put in a WezTerm config right before the `return` that ends it.
+    Insert(PathBuf, String),
+    /// That line taken out again, its bytes only.
+    Uninsert(PathBuf, String),
+    /// A line for the human to add to a WezTerm config nerd does not edit: shown whole, never written.
+    Line(PathBuf, String),
     /// A file of nerd's own, removed.
     Remove(PathBuf),
     /// iTerm2's margins, which are app-wide: set to 16 with the values before kept, or those put back.
@@ -229,16 +235,55 @@ fn wezterm(cfg: &crate::config::Config) -> Vec<Step> {
     vec![Step::Write(own("wezterm-preset.lua"), text)]
 }
 
-/// The lines a person adds to a WezTerm config nerd does not edit, for both shapes a config takes.
-fn wezterm_lines(path: &Path) -> String {
-    let load = wezterm_load();
+/// Marks nerd's line in a config of the user's, at its end.
+const WEZTERM_MARK: &str = "-- nerd preset for WezTerm: `nerd --preset wezterm --undo` takes it out";
+
+/// The line that hands the table `name` to nerd's file.
+fn wezterm_call(name: &str) -> String {
+    format!("{} if ok then nerd({name}) end", wezterm_load())
+}
+
+/// Where nerd's line goes in a config that ends with `return <name>`, `name` a `local` the file builds with
+/// `wezterm.config_builder()` or `{`: the start of that return line, and the marked line with the file's line ending.
+fn wezterm_return(s: &str) -> Option<(usize, String)> {
+    let body = s.trim_end();
+    let at = body.rfind('\n').map_or(0, |i| i + 1);
+    let name = body[at..].trim().strip_prefix("return ")?.trim();
+    if name.is_empty() || name.starts_with(|c: char| c.is_ascii_digit()) || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return None;
+    }
+    let built = s.lines().any(|l| {
+        let value = l.trim().strip_prefix("local ").and_then(|l| l.trim_start().strip_prefix(name)).and_then(|l| l.trim_start().strip_prefix('='));
+        value.map(str::trim_start).is_some_and(|v| v.starts_with('{') || v.starts_with("wezterm.config_builder()"))
+    });
+    let eol = if s.contains("\r\n") { "\r\n" } else { "\n" };
+    built.then(|| (at, format!("{} {WEZTERM_MARK}{eol}", wezterm_call(name))))
+}
+
+/// nerd's line as it sits in `s`, line ending included, rebuilt from the name it calls, so a hand edit does not match.
+fn wezterm_inserted(s: &str) -> Option<String> {
+    let line = s.split_inclusive('\n').find(|l| l.contains(WEZTERM_MARK))?;
+    let name = line.split("if ok then nerd(").nth(1)?.split(')').next()?;
+    let eol = if line.ends_with("\r\n") { "\r\n" } else { "\n" };
+    Some(format!("{} {WEZTERM_MARK}{eol}", wezterm_call(name)))
+}
+
+/// What a person reads about the line that a config nerd does not edit needs.
+fn wezterm_needs(path: &Path) -> String {
     format!(
-        "WezTerm reads {}, which nerd does not edit. Add, for a config that builds a `config` table, before `return config`:\n    \
-         {load} if ok then nerd(config) end\n\
-         or, for one that is `return {{ ... }}`, this line above it, and `return nerd({{ ... }})` in its place:\n    \
-         {load} if not ok then nerd = function(c) return c end end",
+        "WezTerm needs one line from you: nerd edits {} only when it ends with `return <table>` of a table built in it. \
+         Put this line right before the line that returns your config table, with that table's name in place of config. \
+         A file that is `return {{ ... }}`: make it `local config = {{ ... }}` and `return config`, then apply again, and nerd adds the line itself.",
         crate::paths::shown(path)
     )
+}
+
+/// The line a person must add, when the steps carry one.
+pub fn needs_line(steps: &[Step]) -> Option<(&Path, String)> {
+    steps.iter().find_map(|s| match s {
+        Step::Line(p, line) => Some((p.as_path(), line.clone())),
+        _ => None,
+    })
 }
 
 // --- iTerm2 ---
@@ -362,11 +407,23 @@ pub fn applied(t: Terminal) -> bool {
             ghostty_configs().iter().any(|p| has_block(t, p)) || std::fs::read_to_string(old).is_ok_and(|s| s.contains(&lines))
         }
         Terminal::Kitty => has_block(t, &kitty_conf()),
+        // nerd's file is there and the config WezTerm reads holds the line that loads it
         Terminal::Wezterm => {
-            let path = own("wezterm-preset.lua").display().to_string();
-            wezterm_configs().iter().any(|p| std::fs::read_to_string(p).is_ok_and(|s| s.contains(&path)))
+            own("wezterm-preset.lua").exists()
+                && wezterm_configs().iter().find(|p| p.exists()).and_then(|p| std::fs::read_to_string(p).ok()).is_some_and(|s| s.contains(&wezterm_load()))
         }
         Terminal::Iterm2 => iterm_profile().exists(),
+    }
+}
+
+/// Applied or not; for WezTerm also nerd's file written while the user's config still lacks the line.
+pub fn status(t: Terminal) -> &'static str {
+    if applied(t) {
+        "applied"
+    } else if t == Terminal::Wezterm && own("wezterm-preset.lua").exists() {
+        "needs your line"
+    } else {
+        "not applied"
     }
 }
 
@@ -412,7 +469,10 @@ pub fn apply_steps(t: Terminal, cfg: &crate::config::Config, dark: bool) -> std:
                     steps.push(Step::Append(home().join(".wezterm.lua"), block(t, &body, true)));
                 }
                 Some(p) if applied(t) => steps.push(Step::Note(format!("{} already loads the preset.", crate::paths::shown(p)))),
-                Some(p) => steps.push(Step::Note(wezterm_lines(p))),
+                Some(p) => match wezterm_return(&read(p)?.unwrap_or_default()) {
+                    Some((_, line)) => steps.push(Step::Insert(p.clone(), line)),
+                    None => steps.push(Step::Line(p.clone(), wezterm_call("config"))),
+                },
             }
             steps.push(Step::Note("WezTerm reloads its config by itself.".into()));
         }
@@ -465,6 +525,10 @@ pub fn undo_steps(t: Terminal) -> std::io::Result<Vec<Step>> {
             for p in wezterm_configs() {
                 match read(&p)? {
                     Some(s) if s.contains(&begin(t)) => unappend(&mut steps, &p, &body)?,
+                    Some(s) if s.contains(WEZTERM_MARK) => match wezterm_inserted(&s) {
+                        Some(line) if s.contains(&line) => steps.push(Step::Uninsert(p.clone(), line)),
+                        _ => return Err(std::io::Error::other(format!("{}: nerd's line was changed by hand, so it is left as it is", crate::paths::shown(&p)))),
+                    },
                     Some(s) if s.contains(&path) => steps.push(Step::Note(format!(
                         "The nerd lines in {} do nothing once the preset's file is gone; take them out when you like.",
                         crate::paths::shown(&p)
@@ -504,6 +568,15 @@ pub fn describe(steps: &[Step], full: bool) -> Vec<String> {
                 out.extend(indent(text));
             }
             Step::Unappend(p, _) => out.push(format!("take nerd's lines out of {}", crate::paths::shown(p))),
+            Step::Insert(p, line) => {
+                out.push(format!("add one line to {}, right before its return:", crate::paths::shown(p)));
+                out.extend(indent(line.trim_end()));
+            }
+            Step::Uninsert(p, _) => out.push(format!("take nerd's line out of {}", crate::paths::shown(p))),
+            Step::Line(p, line) => {
+                out.push(wezterm_needs(p));
+                out.extend(indent(line));
+            }
             Step::Remove(p) => out.push(format!("remove {}", crate::paths::shown(p))),
             Step::Margins(true) => out.push(format!(
                 "set iTerm2's margins, which every profile shares, to {MARGIN} (now {} and {}); undo puts them back",
@@ -528,12 +601,25 @@ pub fn run(steps: &[Step]) -> std::io::Result<()> {
                 write(p, &format!("{have}{sep}{text}"))?;
             }
             Step::Unappend(p, text) => unappend(p, text)?,
+            Step::Insert(p, line) => {
+                let have = read(p)?.unwrap_or_default();
+                let Some((at, _)) = wezterm_return(&have).filter(|(_, l)| l == line) else {
+                    return Err(std::io::Error::other(format!("{} changed after it was read; nothing was added", crate::paths::shown(p))));
+                };
+                write(p, &format!("{}{line}{}", &have[..at], &have[at..]))?;
+            }
+            Step::Uninsert(p, line) => {
+                let have = read(p)?.unwrap_or_default();
+                if let Some(at) = have.find(line.as_str()) {
+                    write(p, &format!("{}{}", &have[..at], &have[at + line.len()..]))?;
+                }
+            }
             Step::Remove(p) => match std::fs::remove_file(p) {
                 Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
                 _ => {}
             },
             Step::Margins(on) => set_margins(*on)?,
-            Step::Note(_) => {}
+            Step::Note(_) | Step::Line(..) => {}
         }
     }
     Ok(())
@@ -595,9 +681,9 @@ pub fn touched(steps: &[Step]) -> String {
     let names: Vec<String> = steps
         .iter()
         .filter_map(|s| match s {
-            Step::Write(p, _) | Step::Append(p, _) | Step::Unappend(p, _) | Step::Remove(p) => Some(crate::paths::shown(p)),
+            Step::Write(p, _) | Step::Append(p, _) | Step::Unappend(p, _) | Step::Insert(p, _) | Step::Uninsert(p, _) | Step::Remove(p) => Some(crate::paths::shown(p)),
             Step::Margins(_) => Some("iTerm2's margins".into()),
-            Step::Note(_) => None,
+            Step::Note(_) | Step::Line(..) => None,
         })
         .collect();
     names.join(", ")
@@ -626,7 +712,7 @@ pub fn main(args: &[String]) -> std::io::Result<()> {
         }
         println!("Option as Alt on the left key, a {MARGIN} pt margin and nerd's colours, per terminal:");
         for t in ALL {
-            println!("  {:<8} {}", t.name(), if applied(t) { "applied" } else { "not applied" });
+            println!("  {:<8} {}", t.name(), status(t));
         }
         println!("nerd --preset <terminal> shows the changes and asks first; --undo takes them back.");
         return Ok(());
@@ -649,6 +735,11 @@ pub fn main(args: &[String]) -> std::io::Result<()> {
         return Ok(());
     }
     run(&steps)?;
+    if let Some((p, _)) = needs_line(&steps) {
+        crate::log::info(&format!("preset for {} needs the user's line in {}, from the command line: {}", t.title(), crate::paths::shown(p), touched(&steps)));
+        println!("Not applied yet: WezTerm needs the line above in {}.", crate::paths::shown(p));
+        return Ok(());
+    }
     crate::log::info(&format!("preset for {} {} from the command line: {}", t.title(), if undo { "undone" } else { "applied" }, touched(&steps)));
     println!("Done.");
     Ok(())
@@ -704,7 +795,11 @@ mod tests {
                 Terminal::Wezterm => wezterm_configs(),
                 Terminal::Iterm2 => vec![],
             };
-            let blocks: usize = configs.iter().map(|p| std::fs::read_to_string(p).unwrap_or_default().matches(&begin(t)).count()).sum();
+            let blocks: usize = configs
+                .iter()
+                .map(|p| std::fs::read_to_string(p).unwrap_or_default())
+                .map(|s| s.matches(&begin(t)).count() + s.matches(WEZTERM_MARK).count())
+                .sum();
             assert_eq!(blocks, usize::from(t != Terminal::Iterm2), "{t:?}: one block however often it is applied");
             undo(t);
             assert!(!applied(t), "{t:?} undone");
@@ -724,6 +819,46 @@ mod tests {
             round_trip(Terminal::Iterm2, Path::new("Library/Preferences/x"), before);
         }
         round_trip(Terminal::Wezterm, Path::new(".wezterm.lua"), None);
+        for (path, before) in [
+            (".wezterm.lua", "local wezterm = require 'wezterm'\nlocal config = wezterm.config_builder()\nconfig.window_padding = { left = 2 }\nreturn config\n"),
+            (".config/wezterm/wezterm.lua", "local c = {\n  font_size = 13,\n}\n\nreturn c\n\n"),
+            (".wezterm.lua", "local config = {}\r\nconfig.font_size = 13\r\nreturn config\r\n"),
+            (".wezterm.lua", "local config = {}\nreturn config"),
+        ] {
+            round_trip(Terminal::Wezterm, Path::new(path), Some(before.as_bytes()));
+        }
+    }
+
+    #[test]
+    fn wezterm_puts_its_line_right_before_the_return_of_a_config_it_recognises() {
+        with_temp_home(|| {
+            let mine = home().join(".wezterm.lua");
+            let crlf = "local wezterm = require 'wezterm'\r\nlocal config = wezterm.config_builder()\r\nreturn config";
+            std::fs::write(&mine, crlf).unwrap();
+            apply(Terminal::Wezterm);
+            let line = format!("{} if ok then nerd(config) end {WEZTERM_MARK}", wezterm_load());
+            assert_eq!(std::fs::read_to_string(&mine).unwrap(), format!("local wezterm = require 'wezterm'\r\nlocal config = wezterm.config_builder()\r\n{line}\r\nreturn config"));
+            assert_eq!(status(Terminal::Wezterm), "applied");
+        });
+    }
+
+    #[test]
+    fn wezterm_undo_keeps_a_user_edit_and_refuses_its_line_changed_by_hand() {
+        with_temp_home(|| {
+            let mine = home().join(".wezterm.lua");
+            std::fs::write(&mine, "local config = {}\nreturn config\n").unwrap();
+            apply(Terminal::Wezterm);
+            let s = std::fs::read_to_string(&mine).unwrap().replacen("local config = {}\n", "local config = {}\nconfig.font_size = 13\n", 1);
+            std::fs::write(&mine, &s).unwrap();
+            undo(Terminal::Wezterm);
+            assert_eq!(std::fs::read_to_string(&mine).unwrap(), "local config = {}\nconfig.font_size = 13\nreturn config\n");
+
+            apply(Terminal::Wezterm);
+            let s = std::fs::read_to_string(&mine).unwrap().replace("if ok then", "if  ok then");
+            std::fs::write(&mine, &s).unwrap();
+            assert!(undo_steps(Terminal::Wezterm).and_then(|s| run(&s)).is_err(), "said, not guessed");
+            assert_eq!(std::fs::read_to_string(&mine).unwrap(), s);
+        });
     }
 
     #[test]
@@ -809,22 +944,26 @@ mod tests {
     }
 
     #[test]
-    fn wezterm_leaves_a_config_of_yours_alone_and_says_what_to_add() {
+    fn wezterm_says_it_needs_your_line_for_a_config_it_does_not_recognise() {
         with_temp_home(|| {
             let mine = home().join(".config/wezterm/wezterm.lua");
             std::fs::create_dir_all(mine.parent().unwrap()).unwrap();
             std::fs::write(&mine, "return {}\n").unwrap();
             let steps = apply_steps(Terminal::Wezterm, &Config::default(), true).unwrap();
-            assert!(!steps.iter().any(|s| matches!(s, Step::Append(..))), "nothing is appended to a config of yours");
-            let text = describe(&steps, false).join("\n");
-            assert!(text.contains("if ok then nerd(config) end") && text.contains("return nerd({ ... })"), "{text}");
+            assert!(!steps.iter().any(|s| matches!(s, Step::Append(..) | Step::Insert(..))), "a config nerd does not recognise is not edited");
+            let (_, line) = needs_line(&steps).expect("the line to add");
+            assert_eq!(line, format!("{} if ok then nerd(config) end", wezterm_load()));
+            let text = describe(&steps, true).join("\n");
+            assert!(text.contains("WezTerm needs one line from you") && text.contains(&line) && text.contains("local config = {"), "{text}");
             run(&steps).unwrap();
             assert_eq!(std::fs::read_to_string(&mine).unwrap(), "return {}\n");
             assert!(!applied(Terminal::Wezterm), "not until the line is there");
-            std::fs::write(&mine, format!("local config = {{}}\n{} if ok then nerd(config) end\nreturn config\n", wezterm_load())).unwrap();
+            assert_eq!(status(Terminal::Wezterm), "needs your line");
+            std::fs::write(&mine, format!("local config = {{}}\n{line}\nreturn config\n")).unwrap();
             assert!(applied(Terminal::Wezterm));
             undo(Terminal::Wezterm);
             assert!(!own("wezterm-preset.lua").exists());
+            assert_eq!(status(Terminal::Wezterm), "not applied");
         });
     }
 
@@ -844,6 +983,13 @@ mod tests {
                 let out = std::process::Command::new(lua).arg("-e").arg(&script).output().unwrap();
                 assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
             }
+            let mine = home().join(".wezterm.lua");
+            std::fs::write(&mine, "local wezterm = require 'wezterm'\nlocal config = wezterm.config_builder()\nconfig.font_size = 9\nreturn config\n").unwrap();
+            apply(Terminal::Wezterm);
+            let stub = "package.preload['wezterm'] = function() return { config_builder = function() return {} end } end\n";
+            let script = format!("{stub}local c = dofile('{}')\nassert(c.window_padding.left == '16pt' and c.font_size == 9)\n", mine.display());
+            let out = std::process::Command::new(lua).arg("-e").arg(&script).output().unwrap();
+            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
         });
     }
 

@@ -641,6 +641,32 @@ mod tests {
     }
 
     #[test]
+    fn a_wezterm_config_nerd_does_not_edit_gets_the_line_shown_whole_and_copied_not_applied() {
+        crate::config::tests::with_temp_home(|| {
+            let mine = crate::config::home_dir().join(".wezterm.lua");
+            std::fs::write(&mine, "return { font_size = 13 }\n").unwrap();
+            let mut app = with_one_space();
+            let wezterm = crate::presets::ALL.iter().position(|t| *t == crate::presets::Terminal::Wezterm).unwrap();
+            app.overlay = app.picked(wezterm, Pick::Preset);
+            let Overlay::Confirm(c, what @ Pending::Preset(_, _, false)) = std::mem::replace(&mut app.overlay, Overlay::None) else { panic!("the WezTerm window") };
+            let (_, line) = crate::presets::needs_line(match &what {
+                Pending::Preset(_, s, _) => s,
+                _ => unreachable!(),
+            })
+            .unwrap();
+            assert!(c.body.contains("WezTerm needs one line from you") && c.body.ends_with(&line), "the line, whole: {}", c.body);
+            assert!(c.body_lines(40).join(" ").contains("if ok then nerd(config) end"), "shown on a narrow window too");
+            app.to_client.clear();
+            app.perform(what);
+            assert!(String::from_utf8_lossy(&app.to_client).starts_with("\x1b]52;c;"), "the button copies the line");
+            assert!(app.toast.as_deref().is_some_and(|t| t.contains("not applied yet")), "{:?}", app.toast);
+            assert!(!crate::presets::applied(crate::presets::Terminal::Wezterm));
+            assert_eq!(crate::presets::status(crate::presets::Terminal::Wezterm), "needs your line");
+            assert_eq!(std::fs::read_to_string(&mine).unwrap(), "return { font_size = 13 }\n", "the config is not touched");
+        });
+    }
+
+    #[test]
     fn a_hooked_agent_is_unhooked_through_a_red_confirmation() {
         crate::config::tests::with_temp_home(|| {
             crate::session::tests::with_temp_state_dir("unhook", || {
