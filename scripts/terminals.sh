@@ -207,9 +207,11 @@ for t in "$@"; do
                                 while [ "$(arrived "$at")" -lt 1 ] && [ $i -lt 20 ]; do sleep 0.1; i=$((i + 1)); done
                                 got=$(since "$at" "$(wc -c <"$log")")
                             fi
-                            # Escape closes what the shortcut opened, and ends a dead key.
+                            # Escape closes what the shortcut opened, and ends a dead key; the next step starts once it has arrived.
+                            at=$(wc -c <"$log")
                             step key 53 || true
-                            sleep 0.3
+                            i=0
+                            while [ "$(arrived "$at")" -lt 1 ] && [ $i -lt 10 ]; do sleep 0.1; i=$((i + 1)); done
                             printf '%s\t%s\n' "$name" "${got:-nothing}"
                         done >"$run/$t-shortcuts"
                         cells="$cells${tab}$(shortcuts_cell "$t" <"$run/$t-shortcuts")" ;;
