@@ -428,6 +428,7 @@ fn set_prefs(on: bool) -> std::io::Result<()> {
     let before: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&text).map_err(std::io::Error::other)?;
     let kept = |k: &str| before.get(k).filter(|v| !v.is_null());
     // a value no longer the preset's was set by the user since, and stays
+    // ceiling: a running iTerm2 keeps its default in memory and writes its first profile over this; quitting it first is the way past
     if pref_now(DEFAULT_KEY).as_deref() == Some(GUID) {
         pref_set(DEFAULT_KEY, kept(DEFAULT_KEY))?;
     }
@@ -529,8 +530,8 @@ pub fn apply_steps(t: Terminal, cfg: &crate::config::Config, dark: bool) -> std:
             if own_account() {
                 steps.push(Step::ItermPrefs(true));
                 // one row each: a window cuts a row at its edge
-                steps.push(Step::Note("Open a new iTerm2 window: windows iTerm2 restores keep the profile they had.".into()));
-                steps.push(Step::Note("iTerm2 takes the margins on its next start.".into()));
+                steps.push(Step::Note("iTerm2 takes the default profile and the margins on its next start;".into()));
+                steps.push(Step::Note("then new windows use nerd, and windows it restores keep their profile.".into()));
             } else {
                 steps.push(Step::Note("iTerm2's margins and default profile are left as they are:".into()));
                 steps.push(Step::Note("HOME is not this account's home, and iTerm2 reads the account's settings.".into()));
@@ -591,6 +592,8 @@ pub fn undo_steps(t: Terminal) -> std::io::Result<Vec<Step>> {
         Terminal::Iterm2 => {
             if margins_record().exists() {
                 steps.push(Step::ItermPrefs(false));
+                steps.push(Step::Note("Quit iTerm2 first to get the default profile before back:".into()));
+                steps.push(Step::Note("an open iTerm2 makes its first profile the default instead.".into()));
             }
             if iterm_profile().exists() {
                 steps.push(Step::Remove(iterm_profile()));
@@ -692,8 +695,13 @@ fn write(p: &Path, text: &str) -> std::io::Result<()> {
         // nerd's own folder and those above it are never a preset's to take away
         let new: Vec<PathBuf> = dir.ancestors().take_while(|d| !d.exists()).filter(|d| !nerd_dir().starts_with(d) && !d.starts_with(nerd_dir())).map(Path::to_path_buf).collect();
         std::fs::create_dir_all(dir)?;
-        if !new.is_empty() {
-            let mut made = folders()?;
+        let mut made = folders();
+        let had = made.len();
+        // a recorded folder already there for a new file outlived an undo, and may be the user's now
+        if !p.exists() {
+            made.retain(|m| !dir.starts_with(m));
+        }
+        if !new.is_empty() || made.len() != had {
             made.extend(new);
             save_folders(&made)?;
         }
@@ -706,8 +714,9 @@ fn folders_record() -> PathBuf {
     own("preset-folders.json")
 }
 
-fn folders() -> std::io::Result<Vec<PathBuf>> {
-    read(&folders_record())?.map_or(Ok(Vec::new()), |s| serde_json::from_str(&s).map_err(std::io::Error::other))
+/// A record that cannot be read counts as empty: the folders stay, and nothing is blocked.
+fn folders() -> Vec<PathBuf> {
+    read(&folders_record()).ok().flatten().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
 }
 
 fn save_folders(made: &[PathBuf]) -> std::io::Result<()> {
@@ -723,7 +732,7 @@ fn save_folders(made: &[PathBuf]) -> std::io::Result<()> {
 
 /// The folders above `p` that a preset made, taken away while they are empty.
 fn prune(p: &Path) -> std::io::Result<()> {
-    let mut made = folders()?;
+    let mut made = folders();
     for d in p.ancestors().skip(1) {
         if !made.iter().any(|m| m == d) {
             break;
@@ -1017,17 +1026,42 @@ mod tests {
             apply(Terminal::Kitty);
             undo(Terminal::Kitty);
             assert!(config.is_dir() && !config.join("kitty").exists(), "the folder that was there stays, the one apply made goes");
+            assert!(!own("preset-folders.json").exists(), "the record goes with the last folder");
 
             apply(Terminal::Ghostty);
             let mine = config.join("ghostty/mine.conf");
             std::fs::write(&mine, "x").unwrap();
             undo(Terminal::Ghostty);
             assert!(mine.exists(), "a folder holding a file of the user's stays");
+        });
+    }
+
+    #[test]
+    fn a_folder_undo_could_not_take_away_is_forgotten_once_a_preset_writes_into_it_again() {
+        with_temp_home(|| {
+            apply(Terminal::Kitty);
+            let dir = kitty_conf().parent().unwrap().to_path_buf();
+            let mine = dir.join("mine.conf");
+            std::fs::write(&mine, "x").unwrap();
+            undo(Terminal::Kitty);
+            apply(Terminal::Kitty);
             std::fs::remove_file(&mine).unwrap();
-            apply(Terminal::Ghostty);
-            undo(Terminal::Ghostty);
-            assert!(!config.join("ghostty").exists(), "still remembered, and taken away once empty");
-            assert!(!own("preset-folders.json").exists(), "the record goes with the last folder");
+            undo(Terminal::Kitty);
+            assert!(dir.is_dir(), "there before the second apply, so it may be the user's now");
+        });
+    }
+
+    #[test]
+    fn an_unreadable_folder_record_blocks_nothing_and_its_folders_stay() {
+        with_temp_home(|| {
+            apply(Terminal::Kitty);
+            std::fs::write(own("preset-folders.json"), "{").unwrap();
+            undo(Terminal::Kitty);
+            assert!(!applied(Terminal::Kitty) && kitty_conf().parent().unwrap().is_dir(), "undone, and the folder the record named stays");
+            std::fs::write(own("preset-folders.json"), "{").unwrap();
+            apply(Terminal::Kitty);
+            std::fs::write(own("preset-folders.json"), "{").unwrap();
+            assert!(undo_all().is_empty(), "nerd --uninstall too");
         });
     }
 
