@@ -1423,6 +1423,27 @@ mod tests {
     }
 
     #[test]
+    fn after_the_prefix_the_tree_takes_its_option_keys_without_shift() {
+        let dir = crate::paths::test_dir("prefix-tree");
+        std::fs::write(dir.join("f.txt"), "x").unwrap();
+        let mut app = App::new(Config::default());
+        let tab = Tab { name: None, layout: Layout::new(1), panes: HashMap::new(), isolation_new: None };
+        app.spaces.push(Space { name: None, cwd: dir.clone(), tabs: vec![tab], active_tab: 0, isolation_new: None });
+        app.screen = Rect::new(0, 0, 160, 30);
+        app.toggle_tree();
+        until(&mut app, "the file", |a| screen(a).contains("f.txt"));
+        app.focus = Focus::Tree;
+        let ctrl_b = KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL);
+        app.key(ctrl_b);
+        app.key(KeyEvent::new(KeyCode::Char('X'), KeyModifiers::SHIFT));
+        assert!(app.overlay.is_open(), "⌥+X, delete, asks first");
+        app.overlay = Overlay::None;
+        app.key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+        assert!(!app.overlay.is_open(), "without the prefix the letter filters");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn the_changes_view_shows_what_the_git_worker_found() {
         let dir = crate::git::tests::init_repo("app-changes");
         std::fs::write(dir.join("README.md"), "test\nchanged\n").unwrap();
@@ -2538,6 +2559,9 @@ mod tests {
         app.key(ctrl('b'));
         app.key(bare('j'));
         assert_eq!(written(&mut pane), b"j", "a letter bound to nothing is typed, not swallowed");
+        app.key(ctrl('b'));
+        app.key(bare('x'));
+        assert_eq!(written(&mut pane), b"x", "a tree letter is the tree's only while the tree has the keys");
 
         app.key(ctrl('b'));
         app.key(ctrl('b'));
@@ -3338,7 +3362,7 @@ mod tests {
             let mut v = strings(what);
             v.extend(strings(&["—", view, hidden, "Filter names…", "Search contents… [⌥+G]", shape, "—", "Root one level up [⌫]", "Reload [⌥+R]", "—"]));
             v.extend(strings(zoom));
-            v.extend(strings(&["—", "Rename… [⌥+shift+R]", "Delete… [⌥+shift+D]", "—", "Close file tree [⌥+T]"]));
+            v.extend(strings(&["—", "Rename… [⌥+L]", "Delete… [⌥+X]", "—", "Close file tree [⌥+T]"]));
             v
         };
         let show = "Show hidden files [⌥+H]";

@@ -37,16 +37,13 @@ fn code(c: char) -> Option<String> {
 }
 
 /// Every letter the program answers to with `option`: the global ones, and the tree's own.
-/// `shift` is part of the key for the two the tree spells with it.
-fn letters() -> Vec<(char, bool)> {
-    let mut out: Vec<(char, bool)> = OPTION_LETTERS.iter().map(|c| (*c, false)).collect();
+fn letters() -> Vec<char> {
+    let mut out = OPTION_LETTERS.to_vec();
     for r in crate::tree::COMMAND.iter().filter(|r| r.alt) {
-        if let crossterm::event::KeyCode::Char(c) = r.code {
-            let shift = c.is_uppercase();
-            let c = c.to_ascii_lowercase();
-            if !out.contains(&(c, shift)) {
-                out.push((c, shift));
-            }
+        if let crossterm::event::KeyCode::Char(c) = r.code
+            && !out.contains(&c)
+        {
+            out.push(c);
         }
     }
     out
@@ -60,11 +57,10 @@ pub fn conf() -> String {
     for (key, csi) in [("left", "1;4D"), ("right", "1;4C"), ("up", "1;4A"), ("down", "1;4B")] {
         s.push_str(&format!("keybind = shift+alt+{key}=csi:{csi}\n"));
     }
-    for (c, shift) in letters() {
+    for c in letters() {
         if let Some(code) = code(c) {
             // `esc:` takes its value as-is (`ghostty.5.md`); doubling a backslash here sent two.
-            let (mods, text) = if shift { ("alt+shift+", c.to_ascii_uppercase()) } else { ("alt+", c) };
-            s.push_str(&format!("keybind = {mods}{code}=esc:{text}\n"));
+            s.push_str(&format!("keybind = alt+{code}=esc:{c}\n"));
         }
     }
     s
@@ -143,7 +139,7 @@ mod tests {
         }
         // the tree's own letters reach it through the same file, or a Russian layout loses them
         assert!(conf.contains("keybind = alt+key_e=esc:e"), "the tree's edit is missing");
-        assert!(conf.contains("keybind = alt+shift+key_d=esc:D"), "the tree's delete is missing");
+        assert!(conf.contains("keybind = alt+key_x=esc:x"), "the tree's delete is missing");
         assert_eq!(
             conf.lines().filter(|l| l.starts_with("keybind")).count(),
             letters().len() + 4,

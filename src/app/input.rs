@@ -63,6 +63,11 @@ impl App {
                 return;
             }
         }
+        // after the prefix the tree takes its own `option` letters, shift or not; a pane gets the plain key
+        let k = match k.code {
+            KeyCode::Char(c) if armed && self.focus == Focus::Tree => KeyEvent::new(KeyCode::Char(crate::keys::latin(c)), KeyModifiers::ALT),
+            _ => k,
+        };
         // Esc leaves a zoomed section first, then closes one clicked last; otherwise it is the pane's
         if k.code == KeyCode::Esc && self.run.is_some() && !self.overlay.is_open() && self.search.is_none() && (self.run_zoom || self.run_keys) {
             if !std::mem::take(&mut self.run_zoom) {

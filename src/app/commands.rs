@@ -1141,8 +1141,8 @@ impl App {
             ],
             plugin_group(if is_dir { crate::agents::Place::Folder } else { crate::agents::Place::File }, self.builtins),
             vec![
-                Item::new("Rename…", Action::TreeRename).key(k(Char('R'), true)),
-                Item::new("Delete…", Action::TreeDelete).key(k(Char('D'), true)),
+                Item::new("Rename…", Action::TreeRename).key(k(Char('l'), true)),
+                Item::new("Delete…", Action::TreeDelete).key(k(Char('x'), true)),
             ],
             vec![Item::new("Close file tree", Action::TreeClose).key(global_label(KeyActionName::Surface(4)))],
         ]);

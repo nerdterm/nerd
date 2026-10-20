@@ -23,7 +23,7 @@ taste.
    row but separators, so they always pick the same item. One exception: the items of Messages, Isolation and
    Accounts stay enabled in a window attached from inside a pane and refuse with a notice when chosen, because a
    greyed item cannot show the reason.
-9. **Keys are shown where they exist,** right-aligned, as printed on the key: ⌥+T, ⌥+shift+R. Menus, the key
+9. **Keys are shown where they exist,** right-aligned, as printed on the key: ⌥+T, ⌥+shift+arrow. Menus, the key
    list and docs/usage.md read them from the key tables (`keys::GLOBAL`, `tree::keys`).
 10. **A window is named after its item:** "Export logs…" opens "Export logs", and its result is "Logs exported".
     Titles, section headers and settings rows are sentence case; values are lowercase words.
