@@ -486,16 +486,18 @@ pub fn undo_steps(t: Terminal) -> std::io::Result<Vec<Step>> {
     Ok(steps)
 }
 
-/// The steps as a person reads them before saying yes.
-pub fn describe(steps: &[Step]) -> Vec<String> {
+/// The steps as a person reads them before saying yes; `full` adds what nerd's own files hold, which a window
+/// has no room for.
+pub fn describe(steps: &[Step], full: bool) -> Vec<String> {
     let indent = |s: &str| s.lines().map(|l| format!("    {l}")).collect::<Vec<_>>();
     let mut out = Vec::new();
     for s in steps {
         match s {
-            Step::Write(p, text) => {
+            Step::Write(p, text) if full => {
                 out.push(format!("write {}:", crate::paths::shown(p)));
                 out.extend(indent(text));
             }
+            Step::Write(p, _) => out.push(format!("write {}, a file of nerd's", crate::paths::shown(p))),
             Step::Append(p, text) => {
                 let new = if p.exists() { "" } else { ", a new file" };
                 out.push(format!("add to the end of {}{new}:", crate::paths::shown(p)));
@@ -624,7 +626,7 @@ pub fn main(args: &[String]) -> std::io::Result<()> {
         return Ok(());
     }
     println!("{} the {} preset will:", if undo { "Undoing" } else { "Applying" }, t.title());
-    for line in describe(&steps) {
+    for line in describe(&steps, true) {
         println!("  {line}");
     }
     print!("{}? [y/N] ", if undo { "Undo" } else { "Apply" });
@@ -806,7 +808,7 @@ mod tests {
             std::fs::write(&mine, "return {}\n").unwrap();
             let steps = apply_steps(Terminal::Wezterm, &Config::default(), true).unwrap();
             assert!(!steps.iter().any(|s| matches!(s, Step::Append(..))), "nothing is appended to a config of yours");
-            let text = describe(&steps).join("\n");
+            let text = describe(&steps, false).join("\n");
             assert!(text.contains("if ok then nerd(config) end") && text.contains("return nerd({ ... })"), "{text}");
             run(&steps).unwrap();
             assert_eq!(std::fs::read_to_string(&mine).unwrap(), "return {}\n");

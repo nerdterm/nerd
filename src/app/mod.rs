@@ -612,6 +612,35 @@ mod tests {
     }
 
     #[test]
+    fn a_terminal_preset_is_shown_then_applied_and_undone_from_settings() {
+        crate::config::tests::with_temp_home(|| {
+            let mut app = with_one_space();
+            let open = |app: &mut App| {
+                app.overlay = app.settings_outcome(crate::settings::Settings::new(&app.cfg), crate::settings::SettingsOutcome::Preset);
+                let Overlay::Picker(_, pick) = std::mem::replace(&mut app.overlay, Overlay::None) else { panic!("a list of terminals") };
+                app.overlay = app.picked(1, pick);
+            };
+            open(&mut app);
+            let Overlay::Confirm(c, Pending::Preset(crate::presets::Terminal::Kitty, steps, false)) = &app.overlay else { panic!("kitty, to apply") };
+            let lines = c.body_lines(200);
+            assert!(lines.iter().any(|l| l.contains("include ")), "the line added to kitty.conf is shown: {lines:?}");
+            let steps = steps.clone();
+            app.overlay = Overlay::None;
+            assert!(!crate::presets::applied(crate::presets::Terminal::Kitty), "nothing before the button");
+            app.perform(Pending::Preset(crate::presets::Terminal::Kitty, steps, false));
+            assert!(crate::presets::applied(crate::presets::Terminal::Kitty));
+            open(&mut app);
+            let Overlay::Confirm(_, what @ Pending::Preset(_, _, true)) = std::mem::replace(&mut app.overlay, Overlay::None) else { panic!("applied: the window offers undo") };
+            app.perform(what);
+            assert!(!crate::presets::applied(crate::presets::Terminal::Kitty));
+
+            app.caps.bye = true;
+            app.overlay = app.preset_picker();
+            assert!(matches!(app.overlay, Overlay::None) && app.notice.as_deref().is_some_and(|n| n.contains("nerd --preset")), "a window from another Mac is sent to the command there");
+        });
+    }
+
+    #[test]
     fn a_hooked_agent_is_unhooked_through_a_red_confirmation() {
         crate::config::tests::with_temp_home(|| {
             crate::session::tests::with_temp_state_dir("unhook", || {

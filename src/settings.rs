@@ -35,6 +35,7 @@ enum Item {
     Theme,
     Tmux,
     Prefix,
+    Preset,
     Hook,
     Messaging,
     PanesStop,
@@ -60,6 +61,7 @@ const ROWS: &[(Option<&str>, &str, Item)] = &[
     (None, "Ring the terminal bell", Item::NotifyBell),
     (Some("Terminal"), "Inside tmux", Item::Tmux),
     (None, "tmux-style prefix", Item::Prefix),
+    (None, "Terminal preset…", Item::Preset),
     (None, "History lines per pane", Item::Scrollback),
     (None, "Restore screens after a restart", Item::RestoreScreens),
     (Some("Messages"), "Messaging", Item::Messaging),
@@ -95,6 +97,7 @@ pub enum SettingsOutcome {
     Mail(crate::app::MailAction),
     Topology,
     Accounts,
+    Preset,
 }
 
 pub struct Settings {
@@ -325,7 +328,7 @@ impl Settings {
             Item::Hook => if self.hook_installed { "installed" } else { "not installed" }.into(),
             Item::Messaging => on_off(crate::policy::current().on),
             Item::PanesStop => if crate::policy::current().allow_from_panes { "yes" } else { "no" }.into(),
-            Item::Topology | Item::Accounts => String::new(),
+            Item::Topology | Item::Accounts | Item::Preset => String::new(),
         }
     }
 
@@ -383,6 +386,7 @@ impl Settings {
             Item::PanesStop => return SettingsOutcome::Mail(crate::app::MailAction::SetAllowFromPanes(!crate::policy::current().allow_from_panes)),
             Item::Topology => return SettingsOutcome::Topology,
             Item::Accounts => return SettingsOutcome::Accounts,
+            Item::Preset => return SettingsOutcome::Preset,
         }
         self.cfg = cfg.clone();
         SettingsOutcome::Changed
@@ -823,7 +827,7 @@ mod tests {
             ("Sidebar width", "34"), ("File tree width", "34"), ("Preview width", "60"),
             ("File preview", "on"), ("Wrap long lines", "off"), ("Images", "auto"), ("Show paths", "from home"),
             ("Play a sound", "on"), ("Ring the terminal bell", "on"),
-            ("Inside tmux", "ask"), ("tmux-style prefix", "⌃+B"), ("History lines per pane", "10000"), ("Restore screens after a restart", "on"),
+            ("Inside tmux", "ask"), ("tmux-style prefix", "⌃+B"), ("Terminal preset…", ""), ("History lines per pane", "10000"), ("Restore screens after a restart", "on"),
             ("Messaging", "on"), ("Programs in panes may stop or update nerd", "no"), ("Set up a topology…", ""), ("Accounts…", ""),
             ("Agent hooks", if s.hook_installed { "installed" } else { "not installed" }), ("Edit config.json…", ""),
         ];
