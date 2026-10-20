@@ -35,8 +35,9 @@ pull request, `chore(master): release X.Y.Z`. Replace `N` and `X.Y.Z` below with
    ```
 
 5. From a plain terminal (gh needs the keychain), in a clean checkout, build, test and attach the binary, which
-   publishes the release, then starts the nerdterm.dev build. It takes several minutes and ends with `attached
-   nerd-vX.Y.Z-macos-arm64.tar.gz to vX.Y.Z and published it` and `started the nerdterm.dev build`:
+   publishes the release, starts the nerdterm.dev build and points the Homebrew formula in nerdterm/homebrew-tap at
+   the new archive. It takes several minutes and ends with `attached nerd-vX.Y.Z-macos-arm64.tar.gz to vX.Y.Z and
+   published it`, `started the nerdterm.dev build` and `updated the Homebrew formula to X.Y.Z`:
 
    ```sh
    scripts/publish-binary.sh vX.Y.Z
@@ -47,6 +48,13 @@ pull request, `chore(master): release X.Y.Z`. Replace `N` and `X.Y.Z` below with
    ```sh
    gh release view vX.Y.Z --json isDraft,assets --jq '.isDraft, .assets[].name'
    ```
+
+If the formula step failed, run it alone: it reads the published checksum, so running it again is safe.
+`scripts/publish-formula.sh --dry-run vX.Y.Z` prints the formula without writing it.
+
+```sh
+scripts/publish-formula.sh vX.Y.Z
+```
 
 `release not found` in step 5 means step 3 or 4 is not done yet. No macOS runners in CI: the binary is built only on
 the maintainer's Mac, at the tag.

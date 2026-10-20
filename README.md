@@ -35,6 +35,14 @@ curl -fsSL https://nerdterm.dev/install.sh | sh
 
 The script downloads the latest release, checks its checksum, installs `nerd` into `~/.local/bin` and, if that folder is not on your `PATH`, adds it in `~/.zshrc`. Run it again to upgrade. `NERD_BINDIR` installs somewhere else. To install an archive you already have, run `sh install.sh nerd-….tar.gz` with its `.sha256` file beside it; without one the script refuses unless `NERD_INSTALL_UNVERIFIED=1` is set.
 
+Or with Homebrew, upgraded with `brew upgrade nerd`:
+
+```sh
+brew install nerdterm/tap/nerd
+```
+
+Keep one of the two: with both, the one earlier on your `PATH` runs, usually `~/.local/bin`.
+
 <details>
 <summary>Build from source</summary>
 
