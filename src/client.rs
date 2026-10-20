@@ -77,6 +77,7 @@ pub fn run(resume: Option<Option<String>>, from_window: bool) -> std::io::Result
 
     let dark = appearance_dark();
     let appearance = appearance_poller(dark);
+    let cell = cell_px(crossterm::terminal::window_size());
     let hello = ClientMsg::Hello {
         cwd,
         cols,
@@ -93,11 +94,12 @@ pub fn run(resume: Option<Option<String>>, from_window: bool) -> std::io::Result
         connects: true,
         reattach: None,
         machine: None,
+        cell_px: Some(cell),
     };
     crate::log::info(&format!("started in {}, mux={mux}", term_program()));
     let result = hello
         .write_to(&mut stream)
-        .and_then(|()| session(BufReader::new(stream.try_clone()?), stream, Vec::new(), terminal, mux, dark, &appearance, ssh_path(), true));
+        .and_then(|()| session(BufReader::new(stream.try_clone()?), stream, Vec::new(), terminal, mux, dark, &appearance, ssh_path(), true, cell));
     drop(tui);
     leave_with(result.as_ref());
     match result? {
@@ -184,6 +186,11 @@ fn leave_reason(signal: Option<String>, result: Result<&Seen, &std::io::Error>) 
 
 fn hostname() -> Option<String> {
     nix::unistd::gethostname().ok().map(|h| h.to_string_lossy().into_owned())
+}
+
+/// A row's height in device pixels, 0 when the terminal does not say.
+fn cell_px(size: std::io::Result<crossterm::terminal::WindowSize>) -> u16 {
+    size.ok().and_then(|w| w.height.checked_div(w.rows)).unwrap_or(0)
 }
 
 /// Raw mode and the alternate screen, undone on every way out: a return, a `?`, a panic.
@@ -523,6 +530,7 @@ fn session(
     appearance: &Appearance,
     ssh: PathBuf,
     connects: bool,
+    mut cell: u16,
 ) -> std::io::Result<Seen> {
     let instance = crate::session::instance_name();
     // Answers from ssh threads go out through the one writer the input loop owns.
@@ -550,6 +558,7 @@ fn session(
     })?;
 
     let mut sent = encode(dark);
+    // `cell` is what the Hello carried; only a change goes out.
 
     'input: loop {
         if pump.is_finished() {
@@ -577,6 +586,16 @@ fn session(
         let Some(ev) = outgoing(crossterm::event::read()?) else {
             continue;
         };
+        // Before the resize, so the logo the resize re-sends is already the new height's.
+        if let Event::Resize(..) = ev {
+            let now = cell_px(crossterm::terminal::window_size());
+            if now != cell {
+                cell = now;
+                if ClientMsg::CellHeight(now).write_to(&mut writer).is_err() {
+                    break;
+                }
+            }
+        }
         if ClientMsg::Event(ev).write_to(&mut writer).is_err() {
             break;
         }
@@ -992,6 +1011,7 @@ fn attach_remote(
 ) -> std::io::Result<(Seen, Option<i32>, String)> {
     let (cols, rows) = crossterm::terminal::size()?;
     let dark = appearance_dark();
+    let cell = cell_px(crossterm::terminal::window_size());
     let hello = ClientMsg::Hello {
         // Used only by an instance with no spaces; a path missing there starts the shell in that Mac's home.
         cwd: crate::config::home_dir(),
@@ -1009,6 +1029,7 @@ fn attach_remote(
         connects: false,
         reattach: Some(format!("nerd --remote {name} {}", inst.id)),
         machine: Some(name.to_string()),
+        cell_px: Some(cell),
     };
     let Relay { child, mut stdin, mut stdout, stderr } = spawn_relay(ssh, &entry.host, &inst.id)?;
     let _ = hello.write_to(&mut stdin);
@@ -1026,7 +1047,7 @@ fn attach_remote(
         if let Ok((c, r)) = crossterm::terminal::size() {
             let _ = ClientMsg::Event(Event::Resize(c, r)).write_to(&mut stdin);
         }
-        let result = session(stdout, stdin, first, None, mux, dark, appearance, ssh.to_path_buf(), false);
+        let result = session(stdout, stdin, first, None, mux, dark, appearance, ssh.to_path_buf(), false, cell);
         drop(tui);
         result?
     };
@@ -1862,7 +1883,17 @@ mod remote_tests {
             connects: false,
             reattach: Some("nerd --remote studio 1".into()),
             machine: Some("studio".into()),
+            cell_px: None,
         }
+    }
+
+    #[test]
+    fn the_row_height_is_the_pixels_over_the_rows_or_zero() {
+        let size = |rows, height| Ok(crossterm::terminal::WindowSize { rows, columns: 80, width: 1120, height });
+        assert_eq!(cell_px(size(40, 1400)), 35);
+        assert_eq!(cell_px(size(40, 0)), 0, "a terminal that reports no pixels");
+        assert_eq!(cell_px(size(0, 1400)), 0, "no rows, no division by zero");
+        assert_eq!(cell_px(Err(std::io::Error::other("no tty"))), 0);
     }
 
     fn outcome(seen: &Seen, exit: Option<i32>, said: &str) -> Outcome {

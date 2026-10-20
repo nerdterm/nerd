@@ -247,8 +247,8 @@ pub struct Repo {
 #[derive(Default)]
 pub struct ViewState {
     pub hits: crate::mouse::Hits,
-    /// Where the logo image stands on the client's screen, and in which theme: (x, y, dark). None: not shown.
-    pub logo_at: Option<(u16, u16, bool)>,
+    /// Where the logo image stands on the client's screen, in which theme and from which raster: (x, y, dark, height). None: not shown.
+    pub logo_at: Option<(u16, u16, bool, u16)>,
     /// Where the tree was in the last frame, for mouse routing.
     pub tree_rect: Option<Rect>,
     /// The frame around both halves: the title row carries □ and ×, so the mouse is routed by it.

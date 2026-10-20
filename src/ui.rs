@@ -21,9 +21,15 @@ const SIDE_GAP: u16 = 1;
 pub(crate) const TEXT_INSET: u16 = 2;
 /// The menu button, expanded or collapsed.
 const MENU: &str = "\u{2261}";
+macro_rules! wordmarks {
+    ($($h:literal),*) => {
+        [$(($h, include_bytes!(concat!("../brand/nerd-wordmark-dark-", $h, ".png")).as_slice(),
+            include_bytes!(concat!("../brand/nerd-wordmark-light-", $h, ".png")).as_slice())),*]
+    };
+}
 /// The logo's wordmark, one row high, where the terminal draws images; letters at about 80% of the height.
-const LOGO_DARK: &[u8] = include_bytes!("../brand/nerd-wordmark-dark-1688x375.png");
-const LOGO_LIGHT: &[u8] = include_bytes!("../brand/nerd-wordmark-light-1688x375.png");
+/// (row height in device pixels, dark, light), one per height scripts/brand.mjs renders.
+static LOGOS: [(u16, &[u8], &[u8]); 9] = wordmarks!(16, 20, 24, 28, 32, 36, 40, 48, 64);
 const LOGO_ID: u32 = 2;
 /// Cells the wordmark takes at one row high (its canvas is 4.5:1, a cell about 1:2).
 const LOGO_COLS: u16 = 9;
@@ -100,18 +106,26 @@ pub fn areas(app: &App, full: Rect) -> Areas {
 /// returns the bytes that do it.
 fn place_logo(app: &App, view: &mut ViewState, at: Option<(u16, u16)>) -> Vec<u8> {
     let dark = app.theme_dark;
-    let want = at.map(|(x, y)| (x, y, dark));
+    let (h, dark_png, light_png) = *logo_for(app.caps.cell_px);
+    let want = at.map(|(x, y)| (x, y, dark, h));
     if want == view.logo_at {
         return Vec::new();
     }
     view.logo_at = want;
     match want {
-        Some((x, y, dark)) => {
-            let png = if dark { LOGO_DARK } else { LOGO_LIGHT };
+        Some((x, y, dark, _)) => {
+            let png = if dark { dark_png } else { light_png };
             crate::preview::png_bytes(png, x, y, &format!("c={LOGO_COLS},r=1"), LOGO_ID)
         }
         None => crate::preview::clear_image_bytes(LOGO_ID),
     }
+}
+
+/// The wordmark for rows `cell_px` device pixels high: the shortest at least that tall, as terminals shrink
+/// images without smoothing; the tallest beyond them, and 32 when the client did not say.
+fn logo_for(cell_px: u16) -> &'static (u16, &'static [u8], &'static [u8]) {
+    let want = if cell_px == 0 { 32 } else { cell_px };
+    LOGOS.iter().find(|l| l.0 >= want).unwrap_or(&LOGOS[LOGOS.len() - 1])
 }
 
 /// The menu button: quiet strokes, or a filled badge while the menu holds a mark (a new build).
@@ -718,7 +732,7 @@ mod tests {
         let mut app = crate::app::App::new(cfg);
         app.apply_theme();
         let _ = logo(&mut app, Some((2, 0)));
-        assert_eq!(app.view.logo_at, Some((2, 0, true)));
+        assert_eq!(app.view.logo_at, Some((2, 0, true, 32)));
     }
 
     #[test]
@@ -739,6 +753,32 @@ mod tests {
 
         assert_eq!(sent(logo(&mut app, None)), "\x1b_Ga=d,d=i,i=2,q=2\x1b\\", "collapsed: the image goes");
         assert_eq!(sent(logo(&mut app, None)), "", "and only once");
+    }
+
+    #[test]
+    fn the_wordmark_comes_from_the_shortest_raster_at_least_a_row_tall() {
+        let h = |px| super::logo_for(px).0;
+        assert_eq!(h(0), 32, "the client did not say");
+        assert_eq!((h(16), h(17), h(25), h(35)), (16, 20, 28, 36));
+        assert_eq!(h(70), 64, "taller than all: the tallest");
+        // a PNG's width and height sit at bytes 16..24
+        let size = |png: &[u8]| (u32::from_be_bytes(png[16..20].try_into().unwrap()), u32::from_be_bytes(png[20..24].try_into().unwrap()));
+        for (h, dark, light) in super::LOGOS {
+            let want = (u32::from(h) * 9 / 2, u32::from(h));
+            assert_eq!((size(dark), size(light)), (want, want), "the {h} px wordmark is 4.5:1");
+        }
+    }
+
+    #[test]
+    fn another_row_height_sends_the_logo_again() {
+        let mut app = crate::app::App::new(crate::config::Config::default());
+        let png = |px| crate::preview::png_bytes(super::logo_for(px).1, 2, 0, "c=9,r=1", super::LOGO_ID);
+        app.caps.cell_px = 18;
+        assert_eq!(logo(&mut app, Some((2, 0))), png(18));
+        app.caps.cell_px = 19;
+        assert!(logo(&mut app, Some((2, 0))).is_empty(), "the same raster: nothing to send");
+        app.caps.cell_px = 35;
+        assert_eq!(logo(&mut app, Some((2, 0))), png(35), "another display: the taller raster replaces it");
     }
 
     #[test]

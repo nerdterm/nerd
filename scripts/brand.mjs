@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 // Draws the app icon tiles and rasterises everything in brand/ that is derived.
-// Run from the repository root: node scripts/brand.mjs
+// Run from the repository root: node scripts/brand.mjs (--wordmark: only the sidebar's wordmark rasters)
 //
 // Hand-drawn sources it never touches: nerd-logo-{light,dark}.svg and
 // nerd-wordmark-{light,dark}.svg, whose lettering is already outlines.
 // The N below is an outline too, so no asset depends on a font being installed.
 
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -120,21 +120,35 @@ async function png(t, th, px, out) {
   await shot(src, out, px, px);
 }
 
-for (const [band, t] of Object.entries(TIERS))
-  for (const [name, th] of Object.entries(THEMES))
-    writeFileSync(`${OUT}/nerd-appicon-${name}${band}.svg`, tile(t, th) + '\n');
+const wordmarkOnly = process.argv.includes('--wordmark');
+
+if (!wordmarkOnly)
+  for (const [band, t] of Object.entries(TIERS))
+    for (const [name, th] of Object.entries(THEMES))
+      writeFileSync(`${OUT}/nerd-appicon-${name}${band}.svg`, tile(t, th) + '\n');
 
 // A raster per size anything asks for, each drawn from the band that size belongs to rather
 // than downscaled from the one above it, which is the whole reason three bands exist.
 const RASTERS = [16, 32, 64, 128, 256, 512, 1024];
 const bandFor = (px) => px <= 16 ? '-16px' : px < 64 ? '-32px' : '';
 
+// The sidebar draws the wordmark nine cells by one row: 4.5:1 is that box at a 1:2 cell, so it is not stretched.
+// One raster per row height in device pixels, the list in src/ui.rs: terminals shrink images without
+// mipmaps, so each is drawn near the size it is shown at.
+const ROWS = [16, 20, 24, 28, 32, 36, 40, 48, 64];
+
 for (const [name, th] of Object.entries(THEMES)) {
-  for (const px of RASTERS) await png(TIERS[bandFor(px)], th, px, `${OUT}/nerd-appicon-${name}-${px}.png`);
-  // Both lockups at twice their canvas: enough for retina, and nothing here is ever printed.
-  await shot(`${OUT}/nerd-logo-${name}.svg`, `${OUT}/nerd-logo-${name}-1792x808.png`, 896, 404, 2);
-  // The sidebar draws the wordmark nine cells by one row: 4.5:1 is that box at a 1:2 cell, so it is not stretched.
-  await shot(`${OUT}/nerd-wordmark-${name}.svg`, `${OUT}/nerd-wordmark-${name}-1688x375.png`, 1688, 375);
+  if (!wordmarkOnly) {
+    for (const px of RASTERS) await png(TIERS[bandFor(px)], th, px, `${OUT}/nerd-appicon-${name}-${px}.png`);
+    // Both lockups at twice their canvas: enough for retina, and nothing here is ever printed.
+    await shot(`${OUT}/nerd-logo-${name}.svg`, `${OUT}/nerd-logo-${name}-1792x808.png`, 896, 404, 2);
+  }
+  const svg = readFileSync(`${OUT}/nerd-wordmark-${name}.svg`, 'utf8');
+  for (const h of ROWS) {
+    const src = join(tmp, `wordmark-${name}-${h}.svg`);
+    writeFileSync(src, svg.replace(/width="\d+" height="\d+"/, `width="${4.5 * h}" height="${h}"`));
+    await shot(src, `${OUT}/nerd-wordmark-${name}-${h}.png`, 4.5 * h, h);
+  }
 }
 
 // The two .icns are not generated here. They are built from the Icon Composer artwork in
@@ -142,4 +156,4 @@ for (const [name, th] of Object.entries(THEMES)) {
 
 // The last Chrome is still writing its profile as it dies, so the sweep retries.
 rmSync(tmp, {recursive: true, force: true, maxRetries: 20, retryDelay: 200});
-console.log(`${OUT}: app icon svg+png, wordmark png`);
+console.log(`${OUT}: ${wordmarkOnly ? '' : 'app icon svg+png, '}wordmark png`);

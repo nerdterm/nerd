@@ -430,7 +430,7 @@ fn serve(started: &mut bool) -> std::io::Result<()> {
                     info(&format!("client {id} detached: {how}"));
                     late = None;
                 }
-                Inbound::Event(id, _) | Inbound::Detach(id, _) | Inbound::Appearance(id, _) | Inbound::Remote(id, ..) if id != current => {}
+                Inbound::Event(id, _) | Inbound::Detach(id, _) | Inbound::Appearance(id, _) | Inbound::CellHeight(id, _) | Inbound::Remote(id, ..) if id != current => {}
                 Inbound::Remote(_, name, result, window, ssh_failed) => {
                     app.remote_listed(name, result, window, ssh_failed);
                     redraw = true;
@@ -438,6 +438,10 @@ fn serve(started: &mut bool) -> std::io::Result<()> {
                 Inbound::Appearance(_, dark) => {
                     app.caps.dark = Some(dark);
                     app.apply_theme();
+                    redraw = true;
+                }
+                Inbound::CellHeight(_, px) => {
+                    app.caps.cell_px = px;
                     redraw = true;
                 }
                 Inbound::Event(_, Event::Resize(c, r)) => {

@@ -28,6 +28,7 @@ pub enum Inbound {
     Event(u64, Event),
     Remote(u64, String, Result<Vec<crate::proto::RemoteInstance>, String>, bool, bool),
     Appearance(u64, bool),
+    CellHeight(u64, u16),
     /// How the socket ended and the state of the client's processes at that moment.
     Detach(u64, String),
     Shutdown,
@@ -388,6 +389,11 @@ pub fn read_client(id: u64, stream: UnixStream, tx: Inbox, greeted: bool, waitin
             }
             Ok(Some(ClientMsg::Appearance(dark))) => {
                 if tx.send(Inbound::Appearance(id, dark)).is_err() {
+                    return;
+                }
+            }
+            Ok(Some(ClientMsg::CellHeight(px))) => {
+                if tx.send(Inbound::CellHeight(id, px)).is_err() {
                     return;
                 }
             }
