@@ -186,12 +186,17 @@ fn curl_args(url: &str, out: &Path, max_secs: u32) -> Vec<String> {
     a
 }
 
+/// What curl would read from the environment: a proxy, its own settings, other certificates, a TLS key log.
+fn curl_drops(k: &str) -> bool {
+    k.to_ascii_lowercase().ends_with("_proxy") || k.starts_with("CURL_") || ["SSL_CERT_FILE", "SSL_CERT_DIR", "SSLKEYLOGFILE", "XDG_CONFIG_HOME"].contains(&k)
+}
+
 /// One GET into `out`; a refusal by GitHub is told apart from no network.
 fn curl(url: &str, out: &Path, max_secs: u32) -> Result<(), String> {
     let mut cmd = crate::spawn::cmd(curl_exe());
     for (k, _) in std::env::vars_os() {
         let k = k.to_string_lossy();
-        if k.to_ascii_lowercase().ends_with("_proxy") || k.starts_with("CURL_") || ["SSL_CERT_FILE", "SSL_CERT_DIR", "XDG_CONFIG_HOME"].contains(&k.as_ref()) {
+        if curl_drops(&k) {
             cmd.env_remove(k.as_ref());
         }
     }
@@ -406,6 +411,10 @@ mod tests {
         assert_eq!(a.last().map(String::as_str), Some(API), "the url is last, after `--`");
         assert_eq!(a[a.len() - 2], "--");
         assert_eq!(API, "https://api.github.com/repos/nerdterm/nerd/releases/latest", "no override in any build");
+        for k in ["https_proxy", "ALL_PROXY", "CURL_HOME", "SSL_CERT_FILE", "SSL_CERT_DIR", "XDG_CONFIG_HOME", "SSLKEYLOGFILE"] {
+            assert!(curl_drops(k), "{k}");
+        }
+        assert!(!curl_drops("HOME") && !curl_drops("PATH"));
     }
 
     #[test]
