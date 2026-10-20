@@ -506,13 +506,17 @@ fn current_layout() -> usize {
 
 /// Read again when macOS says the input source changed; call on the main thread, which then runs
 /// `cf::run_pending` before reading each key. TIS would want the main queue; `defaults` does not.
-/// ceiling: a key typed within milliseconds of a switch can still meet the old layout, and if cfprefsd is
-/// slower than the notification the 2 s poll behind it is what catches up.
+/// ceiling: a key typed within milliseconds of a switch can still meet the old layout; a cfprefsd slower than
+/// the notification is caught by a second read 150 ms later, and anything slower still by the 2 s poll.
 fn watch_layout() {
     static STARTED: std::sync::Once = std::sync::Once::new();
     STARTED.call_once(|| {
         extern "C" fn changed(_: crate::cf::CFRef, _: *mut std::ffi::c_void, _: crate::cf::CFRef, _: *const std::ffi::c_void, _: crate::cf::CFRef) {
             LAYOUT.store(current_layout(), std::sync::atomic::Ordering::Relaxed);
+            std::thread::spawn(|| {
+                std::thread::sleep(Duration::from_millis(150));
+                LAYOUT.store(current_layout(), std::sync::atomic::Ordering::Relaxed);
+            });
         }
         LAYOUT.store(current_layout(), std::sync::atomic::Ordering::Relaxed);
         crate::cf::observe_distributed("com.apple.Carbon.TISNotifySelectedKeyboardInputSourceChanged", changed);
