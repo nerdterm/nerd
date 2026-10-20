@@ -3,7 +3,7 @@
 | Problem | Solution |
 |---|---|
 | `zsh: killed nerd` right after installing from source | The binary was copied over the old one. Reinstall with `install` and `codesign` as in [Build from source](../README.md#installation). |
-| `⌥` keys type characters instead of acting | Set the terminal to send Option as Alt; see [Keys](usage.md#keys). |
+| `⌥` keys type characters instead of acting | Press `⌃`+`B`, then the key, which works in any terminal; or `nerd --preset <terminal>` sets the terminal to send Option as Alt. See [Keys](usage.md#keys). |
 | A supported agent shows no state, or the wrong one | Install the hook: **Settings… → Agent hooks**, or `nerd --install-hook`. |
 | A hooked Codex shows no state | Codex runs no new hook until you approve it: at its "Hooks need review" prompt, choose "Trust all and continue". |
 | `nerd send` says `cannot reach nerd` | The agent's own sandbox blocks the socket; see [Messages](messages-between-agents.md). |

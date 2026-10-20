@@ -13,9 +13,11 @@
 
 ## Keys
 
-Every key repeats a menu item or a click. The shortcuts start with `⌥` (Option) and are read from the key itself, not from what the keyboard layout prints on it, so they work the same on a Cyrillic layout once the terminal sends Option as Alt (see below). **Keys and mouse…** in the main menu lists them all.
+Every key repeats a menu item or a click. nerd's key is `⌃`+`B` (Control + B, as in tmux): press it, let go, then press one of the keys below without `⌥` and without `shift`. `⌃`+`B` twice sends `⌃`+`B` to the program in the pane (the shell's back one character, vim's page up). Inside tmux it is still nerd's: press it twice to reach tmux. The key after it is read from the key itself, not from what the layout prints on it, and its case does not matter, so it works the same on a Cyrillic layout; `⌃`+`B` is read off its key too, where the terminal sends Control with the layout's letter. While nerd waits for the second key, the top row shows `⌃+B`. **Settings… → tmux-style prefix** switches it to `⌃`+`A` or turns it off.
 
-| Key | Action |
+With a terminal that sends Option as Alt, `⌥` and the same key does the same in one press (see below). **Keys and mouse…** in the main menu lists them all.
+
+| Key, after `⌃`+`B` or with `⌥` | Action |
 |---|---|
 | `⌥`+`K` | Keys and mouse: every key and click |
 | `⌥`+`M` | Main menu |
@@ -32,26 +34,24 @@ Every key repeats a menu item or a click. The shortcuts start with `⌥` (Option
 | `⌥`+`U` | Update to the installed build; panes keep running |
 | `⌥`+`Q` | Detach, asking first; the server keeps running |
 | `⌥`+`1`…`9` | Switch to that tab |
-| `⌥`+`shift`+arrow | The next pane in that direction; from the last pane, the area beyond it: the sidebar, the file tree, or the tab bar |
+| an arrow after `⌃`+`B`, or `⌥`+`shift`+arrow | The next pane in that direction; from the last pane, the area beyond it: the sidebar, the file tree, or the tab bar |
 | arrows, `return` | Inside the sidebar or the tab bar |
 | `Esc` | Close a menu or dialog, or leave an area for the pane |
 
-**Settings… → tmux-style prefix** turns on `⌃`+`B` or `⌃`+`A`; after it, a key without `⌥` does what `⌥` and that key do, and the prefix pressed twice goes to the pane. It is off by default, because while it is on, the shell and an outer tmux never see that key.
+The file tree's own keys (**Tree** in **Keys and mouse…**) work after `⌃`+`B` too, while the tree has the keys.
 
-The terminal must send Option as Alt. Some send the character the layout prints for Option and the key instead, until told otherwise:
+### Terminal presets
 
-| Terminal | Setting |
+`⌥` and a key needs the terminal to send Option as Alt, which no macOS terminal does on every layout out of the box. `nerd --preset <terminal>`, or **Settings… → Terminal preset…**, sets it up for Ghostty, kitty, WezTerm or iTerm2, together with a 16 point margin and nerd's colours. It shows every change first and makes it only on your word; `nerd --preset <terminal> --undo` takes it back, and `nerd --preset` alone says which are applied. What each one does:
+
+| Terminal | The preset |
 |---|---|
-| Ghostty | Nothing on a U.S. Standard or U.S. International layout, where both Option keys send Alt (`macos-option-as-alt = left` keeps the right one for symbols). Otherwise `macos-option-as-alt = left` in its config, then **Ghostty → Reload Configuration** |
-| Kitty | `macos_option_as_alt left` in kitty.conf, then restart Kitty: reloading the config does not change it |
-| WezTerm | Nothing: the left Option key sends Alt already |
-| iTerm2 | **Settings → Profiles → Keys → General**: Left Option key **Esc+** |
+| Ghostty | Writes `ghostty-preset.conf` and two colour files in nerd's folder: `macos-option-as-alt = left`, `window-padding-x/y = 16` with `window-padding-balance`, `theme = light:…,dark:…` with nerd's colours, and the Option keys bound to their physical keys, so they work on a non-Latin layout, where Ghostty 1.3.1 drops them otherwise. Adds `config-file = ?…` in a marked block at the end of the Ghostty config it loads last (`config.ghostty` in `~/.config/ghostty` when there is none). An include is read after the file that names it, so the preset wins over the same settings there. It replaces `nerd --install-keys`, whose line it takes out |
+| kitty | Writes `kitty-preset.conf` in nerd's folder: `macos_option_as_alt left`, `window_padding_width 16` and nerd's colours for the appearance at the time; adds `include …` in a marked block at the end of kitty.conf, made if missing. Restart kitty: reloading the config does not change Option |
+| WezTerm | Writes `wezterm-preset.lua` in nerd's folder, a function that sets the left Option key to send Alt, a 16 pt margin and nerd's colours for the current appearance. With no WezTerm config, nerd makes `~/.wezterm.lua` that calls it; a config of yours is not edited, and nerd prints the line to add |
+| iTerm2 | Adds a dynamic profile named nerd (left Option key Esc+, right Option normal, nerd's colours for light and dark) and sets iTerm2's margins, which every profile shares, to 16, keeping the values before for undo. Make the profile the default in **Settings → Profiles → Other Actions → Set as Default**; iTerm2 takes the margins on its next start |
 
-Set the left Option key only: it then sends nerd's shortcuts, and the right one still types the layout's symbols, such as — and €.
-
-On a non-Latin layout Ghostty 1.3.1 still drops these keys; `nerd --install-keys` binds them to the physical keys in Ghostty's config, which works on any layout.
-
-Control with a non-Latin letter, such as the tmux-style prefix on a Cyrillic layout: Kitty sends it as Control and the Latin letter on the same key. In the other terminals, switch to a Latin layout for Control shortcuts.
+The right Option key keeps typing the layout's symbols, such as — and €. nerd rewrites its own preset files when it starts, so a new build's keys and your `colors` reach the terminal; a theme changed later reaches it at the next start.
 
 ## Commands
 
@@ -68,9 +68,8 @@ Control with a non-Latin letter, such as the tmux-style prefix on a Cyrillic lay
 | `nerd --install-hook` | Install the hook into every supported agent found. Also **Settings… → Agent hooks** |
 | `nerd --uninstall-hook` | Take the hook out of every agent |
 | `nerd --install` | Start nerd at login |
-| `nerd --uninstall` | Stop starting nerd at login, and remove what `--install-keys` added |
-| `nerd --install-keys` | Option keys on the physical keys in Ghostty, for any layout |
-| `nerd --uninstall-keys` | Remove them |
+| `nerd --uninstall` | Stop starting nerd at login, and undo every terminal preset |
+| `nerd --preset [TERMINAL] [--undo]` | Option as Alt, a margin and nerd's colours in `ghostty`, `kitty`, `wezterm` or `iterm2`, after showing every change; `--undo` takes it back; alone, which are applied. Also **Settings… → Terminal preset…**. It replaces `--install-keys` and `--uninstall-keys` |
 | `nerd --plugin-add URL[@TAG]` | Install a plugin from a public GitHub repository or a local folder, after showing what it can do. Also **Plugins…** |
 | `nerd --plugin-update [NAME]` | Install a plugin's newer release, asking again when it can do more |
 | `nerd --plugin-remove NAME` | Remove a plugin; `--data` also deletes its data |
