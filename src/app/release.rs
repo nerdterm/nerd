@@ -190,7 +190,7 @@ impl App {
             return;
         }
         let body = "Should nerd ask GitHub once a day whether a new release is out? It only tells you: installing waits for your click. Every check is logged, and Settings changes this answer.";
-        let c = crate::menu::Confirm::new("Check for new releases", body).labels(" [Enter] yes, daily ", " [Esc] ask later ").other(" [n] no ").click_yes();
+        let c = crate::menu::Confirm::new("Check for new releases", body).labels(" [Enter] yes, daily ", " [Esc] ask later ").other(" [d] don't check ").click_yes();
         self.overlay = Overlay::Confirm(c, Pending::ReleaseDaily);
         self.dirty = true;
     }

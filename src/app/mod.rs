@@ -1493,6 +1493,10 @@ mod tests {
             app.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
             assert_eq!(crate::release::daily(), None, "Esc asks again with the next window");
             app.offer_release_check();
+            press(&mut app, KeyCode::Char('d'));
+            assert_eq!(crate::release::daily(), Some(false), "the third button's own letter says no");
+            std::fs::remove_file(crate::release::check_path()).unwrap();
+            app.offer_release_check();
             click_yes(&mut app);
             assert_eq!(crate::release::daily(), Some(true));
             assert!(!app.overlay.is_open());
