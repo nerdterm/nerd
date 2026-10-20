@@ -17,12 +17,12 @@ case_ ghostty 'ok 3/3' "K${tab}char ALT
 1${tab}char ALT
 shift+Left${tab}Left SHIFT | ALT
 "
-case_ iterm 'Option not sent as Alt: set the Left Option key to Esc+' "K${tab}char 0x0
+case_ iterm 'Option not sent as Alt: nerd --preset iterm2 sets it' "K${tab}char 0x0
 1${tab}char 0x0
 N${tab}nothing
 shift+Up${tab}Up SHIFT | ALT
 "
-case_ kitty 'Option not sent as Alt: set macos_option_as_alt left' "K${tab}char 0x0
+case_ kitty 'Option not sent as Alt: nerd --preset kitty sets it' "K${tab}char 0x0
 shift+Up${tab}Up SHIFT | ALT
 "
 case_ ghostty 'ok 1/2; N: nothing' "K${tab}char ALT
@@ -58,6 +58,52 @@ if [ "$(printf '%s\n' "$rows" | cut -f1)" != "$(printf '%s\n' "$SHORTCUTS" | cut
 fi
 case_ iterm 'ok 27/27' "$rows
 "
+
+prefix_case() {
+    n=$((n + 1))
+    got=$(printf '%s' "$2" | prefix_cell)
+    if [ "$got" != "$1" ]; then
+        echo "case $n FAILED: prefix: want '$1' got '$got'" >&2
+        fail=1
+    fi
+}
+prefix_case 'ok 3/3' "K${tab}Char('b') CONTROL char 0x0
+T${tab}Char('и') CONTROL char 0x0
+shift+Left${tab}Char('b') CONTROL Left 0x0
+"
+prefix_case "ok 0/2; K: char 0x0 char 0x0; T: Char('b') CONTROL char ALT" "K${tab}char 0x0 char 0x0
+T${tab}Char('b') CONTROL char ALT
+"
+
+# post_prefix against the same kind of stand-in: Control + B, then the bare key; on a Russian layout both carry
+# the layout's characters, and every one posted must be the key's own.
+posted=$(mktemp)
+trap 'rm -f "$log" "$posted"' EXIT
+step() {
+    name="nerd 1" code=x mods=x at=0 i=99 as=x box=x wid=x sub=x
+    echo "$*" >>"$posted"
+    case $2 in
+        53) echo "x DEBUG server[1] trace key Esc KeyModifiers(0x0)" >>"$log" ;;
+        11) echo "x DEBUG server[1] trace key Char('b') KeyModifiers(CONTROL)" >>"$log" ;;
+        123) echo "x DEBUG server[1] trace key Left KeyModifiers(0x0)" >>"$log" ;;
+        124) echo "x DEBUG server[1] trace key Right KeyModifiers(0x0)" >>"$log" ;;
+        126) echo "x DEBUG server[1] trace key Up KeyModifiers(0x0)" >>"$log" ;;
+        125) echo "x DEBUG server[1] trace key Down KeyModifiers(0x0)" >>"$log" ;;
+        *) echo "x DEBUG server[1] trace key char KeyModifiers(0x0)" >>"$log" ;;
+    esac
+}
+for layout in latin russian; do
+    : >"$posted"
+    prefix_case 'ok 27/27' "$(post_prefix $layout)
+"
+    n=$((n + 1))
+    # T is key 17, which prints е on a Russian layout; an arrow carries no character on either
+    if [ $layout = russian ]; then b='key 11 control и' t='key 17  е'; else b='key 11 control' t='key 17 '; fi
+    if [ "$(grep -cxF "$b" "$posted")" != 27 ] || ! grep -qxF "$t" "$posted" || ! grep -qxF 'key 123 ' "$posted"; then
+        echo "case $n FAILED: post_prefix $layout posted: $(head -4 "$posted" | tr '\n' '|')" >&2
+        fail=1
+    fi
+done
 if [ "$fail" -eq 0 ]; then
     echo "terminals: $n cases pass"
 else
