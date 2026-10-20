@@ -61,16 +61,17 @@ post_shortcuts() {
 }
 
 # Reads "name<tab>what the trace showed" per shortcut posted for terminal $1 and says "ok N/N", or which did not
-# arrive as Option and the key. In kitty and iTerm2 Option + N and U are dead keys on U.S. and say so.
+# arrive as Option and the key. kitty and iTerm2 type Option's characters unless told to send Alt: that says so.
 shortcuts_cell() {
     awk -F '\t' -v t="$1" '
-        { n++; want = ($1 ~ /^shift\+/) ? substr($1, 7) " SHIFT | ALT" : "char ALT" }
+        { n++; letter = $1 !~ /^shift\+/; want = letter ? "char ALT" : substr($1, 7) " SHIFT | ALT" }
+        letter && $2 == "char ALT" { alt++ }
+        letter && $2 == "char 0x0" { plain++ }
         $2 == want { ok++; next }
-        (t == "kitty" || t == "iterm") && ($1 == "N" || $1 == "U") && $2 == "nothing" { dead = dead (dead ? ", " : "") $1; next }
         { bad = bad "; " $1 ": " $2 }
         END {
-            out = "ok " ok + 0 "/" n
-            if (dead) out = out ", dead key (menu): " dead
-            print out bad
+            if (alt == 0 && plain > 0 && t == "kitty") { print "Option not sent as Alt: set macos_option_as_alt left"; exit }
+            if (alt == 0 && plain > 0 && t == "iterm") { print "Option not sent as Alt: set the Left Option key to Esc+"; exit }
+            print "ok " ok + 0 "/" n bad
         }'
 }
