@@ -292,12 +292,21 @@ fn serve(started: &mut bool) -> std::io::Result<()> {
         info(&format!("reaped {reaped} finished child processes left from before"));
     }
     crate::battery::start();
-    // The build that runs owns the key map, so it writes the file; an update in place carries
-    // its clients over, and a client start is too late for a map that changed under them.
-    let keys_changed = crate::ghostty::refresh().unwrap_or(false);
-    if keys_changed {
-        info("key file rewritten for this build");
-    }
+    // The build that runs owns the key map and the colours, so it rewrites the applied presets' files; an update
+    // in place carries its clients over, and a client start is too late for a map that changed under them.
+    // ceiling: at start only; a theme changed later reaches the terminal at the next start.
+    let keys_changed = match crate::presets::refresh(&app.cfg, || crate::client::appearance_dark().unwrap_or(true)) {
+        Ok(changed) => {
+            if changed {
+                info("presets: Ghostty's file rewritten for this build");
+            }
+            changed
+        }
+        Err(e) => {
+            warn(&format!("presets: rewriting nerd's files failed: {e}"));
+            false
+        }
+    };
 
     let mut first = false;
     if let Some((id, fd, cols, rows, mux)) = handover.as_ref().and_then(|h| h.client) {
