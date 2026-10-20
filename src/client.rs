@@ -449,9 +449,9 @@ fn appearance_poller(dark: Option<bool>) -> Appearance {
     appearance
 }
 
-/// A key event as the server should get it: a modifier alone is not sent, and with `us_option` a character
-/// of the U.S. Option layer goes as Option and its key.
-fn outgoing(ev: Event, us_option: bool) -> Option<Event> {
+/// A key event as the server should get it: a modifier alone is not sent, and with a `layout` a character
+/// of its Option layer goes as Option and its key.
+fn outgoing(ev: Event, layout: Option<&str>) -> Option<Event> {
     use crossterm::event::{KeyCode, KeyModifiers};
     match ev {
         Event::Key(k) if matches!(k.code, KeyCode::Modifier(_)) => None,
@@ -463,7 +463,7 @@ fn outgoing(ev: Event, us_option: bool) -> Option<Event> {
         {
             None
         }
-        Event::Key(k) if us_option => Some(Event::Key(crate::keys::us_option(k))),
+        Event::Key(k) => Some(Event::Key(layout.map_or(k, |l| crate::keys::option_layer(l, k)))),
         ev => Some(ev),
     }
 }
@@ -475,8 +475,12 @@ fn types_option_chars(term_program: Option<&str>, term: Option<&str>) -> bool {
     term_program == Some("iTerm.app") || term == Some("xterm-kitty")
 }
 
-/// On a U.S. layout with no input method on top, what Option types is read back as Option and the key.
-static US_LAYOUT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// The current layout as an index into `keys::OPTION_LAYOUTS` plus one; 0 for another layout or an input method on top.
+static LAYOUT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+fn option_layout() -> Option<&'static str> {
+    crate::keys::OPTION_LAYOUTS.get(LAYOUT.load(std::sync::atomic::Ordering::Relaxed).checked_sub(1)?).copied()
+}
 
 /// `defaults read com.apple.HIToolbox AppleSelectedInputSources` lists an input method (Japanese, Chinese...):
 /// the layout under it is U.S. too, but what arrives is the method's text.
@@ -487,7 +491,7 @@ fn input_method_on(selected: &str) -> bool {
 
 /// Polled like the appearance, from one thread per process; TIS would want the main queue.
 /// ceiling: a layout switched just before a key can take up to 2 s to count.
-fn watch_us_layout() {
+fn watch_layout() {
     static STARTED: std::sync::Once = std::sync::Once::new();
     STARTED.call_once(|| {
         let read = |key| {
@@ -498,15 +502,15 @@ fn watch_us_layout() {
                 .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
                 .unwrap_or_default()
         };
-        let us = move || {
-            ["com.apple.keylayout.US", "com.apple.keylayout.ABC", "com.apple.keylayout.USInternational-PC"]
-                .contains(&read("AppleCurrentKeyboardLayoutInputSourceID").trim())
-                && !input_method_on(&read("AppleSelectedInputSources"))
+        let current = move || {
+            let id = read("AppleCurrentKeyboardLayoutInputSourceID");
+            let at = crate::keys::OPTION_LAYOUTS.iter().position(|l| *l == id.trim()).map_or(0, |i| i + 1);
+            if at > 0 && input_method_on(&read("AppleSelectedInputSources")) { 0 } else { at }
         };
-        US_LAYOUT.store(us(), std::sync::atomic::Ordering::Relaxed);
+        LAYOUT.store(current(), std::sync::atomic::Ordering::Relaxed);
         std::thread::spawn(move || loop {
             std::thread::sleep(APPEARANCE_POLL);
-            US_LAYOUT.store(us(), std::sync::atomic::Ordering::Relaxed);
+            LAYOUT.store(current(), std::sync::atomic::Ordering::Relaxed);
         });
     });
 }
@@ -598,7 +602,7 @@ fn session(
     let mut sent = encode(dark);
     let option_chars = types_option_chars(std::env::var("TERM_PROGRAM").ok().as_deref(), std::env::var("TERM").ok().as_deref());
     if option_chars {
-        watch_us_layout();
+        watch_layout();
     }
 
     'input: loop {
@@ -624,7 +628,7 @@ fn session(
         if !crossterm::event::poll(Duration::from_millis(50))? {
             continue;
         }
-        let Some(ev) = outgoing(crossterm::event::read()?, option_chars && US_LAYOUT.load(std::sync::atomic::Ordering::Relaxed)) else {
+        let Some(ev) = outgoing(crossterm::event::read()?, option_layout().filter(|_| option_chars)) else {
             continue;
         };
         if ClientMsg::Event(ev).write_to(&mut writer).is_err() {
@@ -1628,17 +1632,17 @@ mod tests {
         use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, ModifierKeyCode};
         let key = |c, m| Event::Key(KeyEvent::new(KeyCode::Char(c), m));
         let option = Event::Key(KeyEvent::new(KeyCode::Modifier(ModifierKeyCode::LeftAlt), KeyModifiers::ALT));
-        assert_eq!(super::outgoing(option.clone(), false), None, "a terminal that reports Option alone: nothing has a use for it");
-        assert_eq!(super::outgoing(option, true), None);
-        assert_eq!(super::outgoing(key('q', KeyModifiers::SUPER), false), None, "Command and a letter nerd has no use for types nothing");
-        assert_eq!(super::outgoing(key('Q', KeyModifiers::SUPER | KeyModifiers::SHIFT), false), None);
+        assert_eq!(super::outgoing(option.clone(), None), None, "a terminal that reports Option alone: nothing has a use for it");
+        assert_eq!(super::outgoing(option, Some("com.apple.keylayout.US")), None);
+        assert_eq!(super::outgoing(key('q', KeyModifiers::SUPER), None), None, "Command and a letter nerd has no use for types nothing");
+        assert_eq!(super::outgoing(key('Q', KeyModifiers::SUPER | KeyModifiers::SHIFT), None), None);
         let ctrl_cmd = key('q', KeyModifiers::SUPER | KeyModifiers::CONTROL);
-        assert_eq!(super::outgoing(ctrl_cmd.clone(), false), Some(ctrl_cmd), "with Control or Option it is still a key");
-        assert_eq!(super::outgoing(key('†', KeyModifiers::NONE), true), Some(key('t', KeyModifiers::ALT)), "iTerm2 on a U.S. layout");
-        assert_eq!(super::outgoing(key('†', KeyModifiers::NONE), false), Some(key('†', KeyModifiers::NONE)), "elsewhere it is typed");
-        assert_eq!(super::outgoing(key('a', KeyModifiers::NONE), true), Some(key('a', KeyModifiers::NONE)));
+        assert_eq!(super::outgoing(ctrl_cmd.clone(), None), Some(ctrl_cmd), "with Control or Option it is still a key");
+        assert_eq!(super::outgoing(key('†', KeyModifiers::NONE), Some("com.apple.keylayout.US")), Some(key('t', KeyModifiers::ALT)), "iTerm2 on a U.S. layout");
+        assert_eq!(super::outgoing(key('†', KeyModifiers::NONE), None), Some(key('†', KeyModifiers::NONE)), "elsewhere it is typed");
+        assert_eq!(super::outgoing(key('a', KeyModifiers::NONE), Some("com.apple.keylayout.US")), Some(key('a', KeyModifiers::NONE)));
         let paste = Event::Paste("†".into());
-        assert_eq!(super::outgoing(paste.clone(), true), Some(paste), "a paste is text, not keys");
+        assert_eq!(super::outgoing(paste.clone(), Some("com.apple.keylayout.US")), Some(paste), "a paste is text, not keys");
     }
 
     #[test]
