@@ -545,6 +545,7 @@ pub(crate) mod tests {
                 connects: true,
                 reattach: Some("nerd --remote studio 1".into()),
                 machine: Some("studio".into()),
+                cell_px: 0,
             },
             clients: Vec::new(),
             next_id: 1,
@@ -977,6 +978,7 @@ pub(crate) mod tests {
                 connects: true,
                 reattach: Some("nerd --remote studio 1".into()),
                 machine: Some("studio".into()),
+                cell_px: 35,
             },
             clients: vec![record],
             next_id: 3,
@@ -1006,6 +1008,7 @@ pub(crate) mod tests {
         assert_eq!(h.clients[0].ended, Some((1_700_000_100, crate::clients::End::TakenOver)));
         assert_eq!(h.snapshot.version, 2);
         assert!(!h.caps.opens_windows, "128de23 did not carry it: the client is asked again");
+        assert_eq!(h.caps.cell_px, 0, "128de23 did not carry the row height: unknown until the client says");
 
         let w: WorkspaceSnapshot = serde_json::from_str(include_str!("../tests/fixtures/session-128de23.json")).unwrap();
         assert_eq!(w.version, 2);
@@ -1021,6 +1024,7 @@ pub(crate) mod tests {
     fn opening_windows_survives_a_handover() {
         let h: Handover = serde_json::from_slice(&serde_json::to_vec(&golden_handover()).unwrap()).unwrap();
         assert!(h.caps.opens_windows);
+        assert_eq!(h.caps.cell_px, 35, "the row height survives a handover");
         assert_eq!(h.broker_pid, 4321, "the broker pid survives a handover");
     }
 

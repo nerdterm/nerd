@@ -50,10 +50,16 @@ pub enum ClientMsg {
         /// The machine from this client's config that the server runs on; its window titles end in ` @ <machine>`.
         #[serde(default)]
         machine: Option<String>,
+        /// A row's height in device pixels, 0 when the terminal does not say; `None` from an older client,
+        /// and left off the wire then, which keeps the v1 hello as it was.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cell_px: Option<u16>,
     },
     Event(crossterm::event::Event),
     /// The macOS appearance changed while attached: dark or not.
     Appearance(bool),
+    /// The row height in device pixels changed while attached (another display, another font size); an older server logs it and goes on.
+    CellHeight(u16),
     Detach,
     Shutdown,
     Update,
@@ -239,12 +245,14 @@ pub struct ClientCaps {
     pub reattach: Option<String>,
     /// The machine name the client knows this server by, for ` @ <machine>` in its window title.
     pub machine: Option<String>,
+    /// A row's height in device pixels; 0 when unknown.
+    pub cell_px: u16,
 }
 
 impl ClientCaps {
     /// `None` for any message but Hello. The way back and the machine name reach the screen, so they are checked here.
     pub fn from_v1_hello(msg: &ClientMsg) -> Option<Self> {
-        let ClientMsg::Hello { mux, screen, graphics, terminal, opened_by_nerd, opens_windows, dark, bye, connects, reattach, machine, .. } = msg else {
+        let ClientMsg::Hello { mux, screen, graphics, terminal, opened_by_nerd, opens_windows, dark, bye, connects, reattach, machine, cell_px, .. } = msg else {
             return None;
         };
         Some(Self {
@@ -260,6 +268,7 @@ impl ClientCaps {
             reattach: reattach.clone().filter(|r| !r.is_empty() && !r.chars().any(char::is_control)),
             // The same check as a machine name in config.json: it goes into the window title.
             machine: machine.clone().filter(|m| crate::config::RemoteEntry { name: m.clone(), host: "h".into() }.check().is_ok()),
+            cell_px: cell_px.unwrap_or(0),
         })
     }
 }
@@ -396,7 +405,7 @@ mod tests {
     fn screen_rides_the_hello_only_when_it_is_true() {
         let hello = |screen| ClientMsg::Hello {
             cwd: "/tmp".into(), cols: 80, rows: 24, mux: true, screen, graphics: None, terminal: None, opened_by_nerd: false, opens_windows: false,
-            dark: None, host: None, bye: false, connects: false, reattach: None, machine: None,
+            dark: None, host: None, bye: false, connects: false, reattach: None, machine: None, cell_px: None,
         };
         let json = |m: &ClientMsg| serde_json::to_string(m).unwrap();
         assert!(!json(&hello(false)).contains("screen"), "the v1 hello is unchanged for tmux");
@@ -425,6 +434,7 @@ mod tests {
             connects: false,
             reattach: Some("nerd --remote studio 1".into()),
             machine: Some("studio".into()),
+            cell_px: Some(35),
         }
             .write_to(&mut buf)
             .unwrap();
@@ -437,8 +447,9 @@ mod tests {
         ClientMsg::Remote { name: "studio".into(), result: Ok(vec![one.clone()]), window: true, ssh_failed: false }.write_to(&mut buf).unwrap();
 
         let mut r = std::io::Cursor::new(buf);
-        let Some(ClientMsg::Hello { cols: 120, host, bye, connects, reattach, machine, .. }) = ClientMsg::read_from(&mut r).unwrap() else { panic!("hello expected") };
+        let Some(ClientMsg::Hello { cols: 120, host, bye, connects, reattach, machine, cell_px, .. }) = ClientMsg::read_from(&mut r).unwrap() else { panic!("hello expected") };
         assert_eq!(machine.as_deref(), Some("studio"));
+        assert_eq!(cell_px, Some(35));
         assert_eq!(host.as_deref(), Some("MacBook-Air"));
         assert_eq!((bye, connects, reattach.as_deref()), (true, false, Some("nerd --remote studio 1")));
         assert!(matches!(ClientMsg::read_from(&mut r).unwrap(), Some(ClientMsg::Event(Event::Key(_)))));
@@ -471,7 +482,7 @@ mod tests {
 
     #[test]
     fn caps_are_read_from_a_v1_hello_and_checked_once() {
-        let hello = r#"{"Hello":{"cwd":"/tmp","cols":120,"rows":40,"mux":true,"graphics":true,"terminal":"/Applications/Ghostty.app","opened_by_nerd":true,"opens_windows":true,"dark":false,"host":"MacBook-Air","bye":true,"connects":true,"reattach":"nerd --remote studio 1","machine":"studio"}}"#;
+        let hello = r#"{"Hello":{"cwd":"/tmp","cols":120,"rows":40,"mux":true,"graphics":true,"terminal":"/Applications/Ghostty.app","opened_by_nerd":true,"opens_windows":true,"dark":false,"host":"MacBook-Air","bye":true,"connects":true,"reattach":"nerd --remote studio 1","machine":"studio","cell_px":35}}"#;
         let caps = ClientCaps::from_v1_hello(&serde_json::from_str(hello).unwrap()).unwrap();
         assert_eq!(
             caps,
@@ -487,6 +498,7 @@ mod tests {
                 connects: true,
                 reattach: Some("nerd --remote studio 1".into()),
                 machine: Some("studio".into()),
+                cell_px: 35,
             }
         );
         let old = r#"{"Hello":{"cwd":"/tmp","cols":80,"rows":24,"reattach":"a\u001bb","machine":"no spaces allowed"}}"#;
@@ -517,6 +529,15 @@ mod tests {
             r#"{"Remote":{"name":"studio","result":{"Err":"no route"},"window":false,"ssh_failed":true}}"#,
         ];
         for line in lines {
+            let msg: ClientMsg = serde_json::from_str(line).unwrap_or_else(|e| panic!("{line}: {e}"));
+            assert_eq!(serde_json::to_string(&msg).unwrap(), line);
+        }
+    }
+
+    /// What a newer client adds to the v1 wire; an older daemon ignores the field and logs the message.
+    #[test]
+    fn the_row_height_is_pinned() {
+        for line in [r#"{"CellHeight":35}"#, r#"{"Hello":{"cwd":"/tmp","cols":80,"rows":24,"mux":false,"graphics":true,"terminal":null,"opened_by_nerd":false,"opens_windows":false,"dark":null,"host":null,"bye":false,"connects":true,"reattach":null,"machine":null,"cell_px":35}}"#] {
             let msg: ClientMsg = serde_json::from_str(line).unwrap_or_else(|e| panic!("{line}: {e}"));
             assert_eq!(serde_json::to_string(&msg).unwrap(), line);
         }
