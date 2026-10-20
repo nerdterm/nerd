@@ -489,28 +489,36 @@ fn input_method_on(selected: &str) -> bool {
     selected.lines().any(|l| matches!(l.trim(), "InputSourceKind = \"Input Mode\";" | "InputSourceKind = \"Keyboard Input Method\";"))
 }
 
-/// Polled like the appearance, from one thread per process; TIS would want the main queue.
-/// ceiling: a layout switched just before a key can take up to 2 s to count.
+/// The current layout's place in `keys::OPTION_LAYOUTS` plus one, or 0, as `defaults` reads it.
+fn current_layout() -> usize {
+    let read = |key| {
+        crate::spawn::cmd("/usr/bin/defaults")
+            .args(["read", "com.apple.HIToolbox", key])
+            .stderr(std::process::Stdio::null())
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+            .unwrap_or_default()
+    };
+    let id = read("AppleCurrentKeyboardLayoutInputSourceID");
+    let at = crate::keys::OPTION_LAYOUTS.iter().position(|l| *l == id.trim()).map_or(0, |i| i + 1);
+    if at > 0 && input_method_on(&read("AppleSelectedInputSources")) { 0 } else { at }
+}
+
+/// Read again when macOS says the input source changed; call on the main thread, which then runs
+/// `cf::run_pending` before reading each key. TIS would want the main queue; `defaults` does not.
+/// ceiling: a key typed within milliseconds of a switch can still meet the old layout, and if cfprefsd is
+/// slower than the notification the 2 s poll behind it is what catches up.
 fn watch_layout() {
     static STARTED: std::sync::Once = std::sync::Once::new();
     STARTED.call_once(|| {
-        let read = |key| {
-            crate::spawn::cmd("/usr/bin/defaults")
-                .args(["read", "com.apple.HIToolbox", key])
-                .stderr(std::process::Stdio::null())
-                .output()
-                .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-                .unwrap_or_default()
-        };
-        let current = move || {
-            let id = read("AppleCurrentKeyboardLayoutInputSourceID");
-            let at = crate::keys::OPTION_LAYOUTS.iter().position(|l| *l == id.trim()).map_or(0, |i| i + 1);
-            if at > 0 && input_method_on(&read("AppleSelectedInputSources")) { 0 } else { at }
-        };
-        LAYOUT.store(current(), std::sync::atomic::Ordering::Relaxed);
-        std::thread::spawn(move || loop {
+        extern "C" fn changed(_: crate::cf::CFRef, _: *mut std::ffi::c_void, _: crate::cf::CFRef, _: *const std::ffi::c_void, _: crate::cf::CFRef) {
+            LAYOUT.store(current_layout(), std::sync::atomic::Ordering::Relaxed);
+        }
+        LAYOUT.store(current_layout(), std::sync::atomic::Ordering::Relaxed);
+        crate::cf::observe_distributed("com.apple.Carbon.TISNotifySelectedKeyboardInputSourceChanged", changed);
+        std::thread::spawn(|| loop {
             std::thread::sleep(APPEARANCE_POLL);
-            LAYOUT.store(current(), std::sync::atomic::Ordering::Relaxed);
+            LAYOUT.store(current_layout(), std::sync::atomic::Ordering::Relaxed);
         });
     });
 }
@@ -628,7 +636,12 @@ fn session(
         if !crossterm::event::poll(Duration::from_millis(50))? {
             continue;
         }
-        let Some(ev) = outgoing(crossterm::event::read()?, option_layout().filter(|_| option_chars)) else {
+        let ev = crossterm::event::read()?;
+        if option_chars {
+            // a layout switch notified before this key counts for it
+            crate::cf::run_pending();
+        }
+        let Some(ev) = outgoing(ev, option_layout().filter(|_| option_chars)) else {
             continue;
         };
         if ClientMsg::Event(ev).write_to(&mut writer).is_err() {

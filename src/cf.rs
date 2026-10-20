@@ -1,4 +1,4 @@
-//! CoreFoundation, declared by hand for the few calls nerd makes: the battery and the clock.
+//! CoreFoundation, declared by hand for the few calls nerd makes: the battery, the clock and the keyboard layout.
 
 use std::ffi::{c_char, c_void};
 
@@ -37,6 +37,32 @@ unsafe extern "C" {
     pub fn CFDateFormatterCreateStringWithAbsoluteTime(alloc: CFRef, formatter: CFRef, at: f64) -> CFRef;
     pub fn CFAbsoluteTimeGetCurrent() -> f64;
     pub fn CFTimeZoneResetSystem();
+    pub fn CFNotificationCenterGetDistributedCenter() -> CFRef;
+    pub fn CFNotificationCenterAddObserver(center: CFRef, observer: *const c_void, callback: Notified, name: CFRef, object: *const c_void, behavior: isize);
+    pub fn CFRunLoopRunInMode(mode: CFRef, seconds: f64, return_after_source_handled: u8) -> i32;
+}
+
+/// A notification callback: center, observer, name, object, user info.
+pub type Notified = extern "C" fn(CFRef, *mut c_void, CFRef, *const c_void, CFRef);
+
+/// Calls `changed` each time any process posts the distributed notification `name`. CF delivers it on the main
+/// thread's run loop, whoever registered: it fires only from `run_pending`, called on the main thread.
+pub fn observe_distributed(name: &str, changed: Notified) {
+    let name = Owned::string(name);
+    // SAFETY: a live CFString, which the center retains; the observer is never taken off.
+    unsafe {
+        let center = CFNotificationCenterGetDistributedCenter();
+        if !center.is_null() && !name.0.is_null() {
+            // CFNotificationSuspensionBehaviorDeliverImmediately
+            CFNotificationCenterAddObserver(center, std::ptr::null(), changed, name.0, std::ptr::null(), 4);
+        }
+    }
+}
+
+/// Handles what has arrived for this thread's run loop, without waiting.
+pub fn run_pending() {
+    // SAFETY: runs the calling thread's own run loop once, returning at once when nothing is there.
+    unsafe { CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.0, 1) };
 }
 
 pub const UTF8: u32 = 0x0800_0100;
@@ -75,3 +101,4 @@ pub fn text(s: CFRef) -> String {
     // SAFETY: CFStringGetCString wrote a NUL-terminated string into buf.
     unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) }.to_string_lossy().into_owned()
 }
+
