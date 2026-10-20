@@ -449,12 +449,10 @@ fn appearance_poller(dark: Option<bool>) -> Appearance {
     appearance
 }
 
-/// A key event as the server should get it: a modifier alone is not sent, and with a `layout` a character
-/// of its Option layer goes as Option and its key.
+/// A key event as the server should get it: with a `layout`, a character of its Option layer goes as Option and its key.
 fn outgoing(ev: Event, layout: Option<&str>) -> Option<Event> {
     use crossterm::event::{KeyCode, KeyModifiers};
     match ev {
-        Event::Key(k) if matches!(k.code, KeyCode::Modifier(_)) => None,
         // Command and a letter is the terminal's own shortcut; one it lets through would reach the pane as the letter.
         Event::Key(k)
             if matches!(k.code, KeyCode::Char(_))
@@ -1647,12 +1645,9 @@ mod tests {
     }
 
     #[test]
-    fn a_modifier_alone_is_not_sent_and_option_characters_are_read_back_only_when_asked() {
-        use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, ModifierKeyCode};
+    fn command_letters_are_not_sent_and_option_characters_are_read_back_only_when_asked() {
+        use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
         let key = |c, m| Event::Key(KeyEvent::new(KeyCode::Char(c), m));
-        let option = Event::Key(KeyEvent::new(KeyCode::Modifier(ModifierKeyCode::LeftAlt), KeyModifiers::ALT));
-        assert_eq!(super::outgoing(option.clone(), None), None, "a terminal that reports Option alone: nothing has a use for it");
-        assert_eq!(super::outgoing(option, Some("com.apple.keylayout.US")), None);
         assert_eq!(super::outgoing(key('q', KeyModifiers::SUPER), None), None, "Command and a letter nerd has no use for types nothing");
         assert_eq!(super::outgoing(key('Q', KeyModifiers::SUPER | KeyModifiers::SHIFT), None), None);
         let ctrl_cmd = key('q', KeyModifiers::SUPER | KeyModifiers::CONTROL);

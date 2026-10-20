@@ -54,7 +54,7 @@ In Kitty and iTerm2 on a U.S., U.S. International, ABC, Russian, Russian – PC 
 - Russian – PC: `⌥`+`M`, `⌥`+`C`, `⌥`+`S`, `⌥`+`\`, `⌥`+`1`…`4`, `6`, `7`, `9`, and in the tree `⌥`+`O` and `⌥`+`A`.
 - Russian – Phonetic: `⌥`+`W`, `⌥`+`-`, `⌥`+`\`, `⌥`+`Z`, `⌥`+`/`, `⌥`+`1`…`4`, `9`, and in the tree `⌥`+`=`, `⌥`+`E`, `⌥`+`Y`, `⌥`+`A` and `⌥`+`H`.
 
-These are reached through the menu or the mouse, with the tmux-style prefix, or by setting Kitty's `macos_option_as_alt` or iTerm2's Left Option key to **Esc+**, which gives every Option key back.
+These are reached through the menu or the mouse, or by setting Kitty's `macos_option_as_alt` or iTerm2's Left Option key to **Esc+**, which gives every Option key back; the ones outside the file tree also with the tmux-style prefix on Russian and Russian – PC.
 
 On a non-Latin layout Ghostty 1.3.1 still drops these keys; `nerd --install-keys` binds them to the physical keys in Ghostty's config, which works on any layout.
 
