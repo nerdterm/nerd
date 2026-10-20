@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.13.0](https://github.com/nerdterm/nerd/compare/v0.12.4...v0.13.0) (2026-10-20)
+
+
+### Added
+
+* Control + B is nerd's key by default; terminal presets for Option, margin and colours ([#83](https://github.com/nerdterm/nerd/issues/83)) ([850c2c1](https://github.com/nerdterm/nerd/commit/850c2c1aefe14e7064c8c6a913686bb215f1eb23))
+* Isolation chooses which of an agent's providers a pane may reach ([#73](https://github.com/nerdterm/nerd/issues/73)) ([d210646](https://github.com/nerdterm/nerd/commit/d210646b6dd103654d0d3d48df8f83e16f03c340))
+
+
+### Fixed
+
+* publishing a release rebuilds nerdterm.dev right away ([#71](https://github.com/nerdterm/nerd/issues/71)) ([7372d31](https://github.com/nerdterm/nerd/commit/7372d31a8b446de1afdd542ed206fa4526785c3e))
+* the sidebar logo is drawn from a raster near the terminal's row height ([#82](https://github.com/nerdterm/nerd/issues/82)) ([9ffc957](https://github.com/nerdterm/nerd/commit/9ffc957a5ee281bbde1dcd34c2c8872b180f09db))
+
 ## [0.12.4](https://github.com/nerdterm/nerd/compare/v0.12.3...v0.12.4) (2026-10-18)
 
 
