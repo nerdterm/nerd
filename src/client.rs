@@ -77,6 +77,7 @@ pub fn run(resume: Option<Option<String>>, from_window: bool) -> std::io::Result
 
     let dark = appearance_dark();
     let appearance = appearance_poller(dark);
+    let cell = cell_px(crossterm::terminal::window_size());
     let hello = ClientMsg::Hello {
         cwd,
         cols,
@@ -93,12 +94,12 @@ pub fn run(resume: Option<Option<String>>, from_window: bool) -> std::io::Result
         connects: true,
         reattach: None,
         machine: None,
-        cell_px: Some(cell_px(crossterm::terminal::window_size())),
+        cell_px: Some(cell),
     };
     crate::log::info(&format!("started in {}, mux={mux}", term_program()));
     let result = hello
         .write_to(&mut stream)
-        .and_then(|()| session(BufReader::new(stream.try_clone()?), stream, Vec::new(), terminal, mux, dark, &appearance, ssh_path(), true));
+        .and_then(|()| session(BufReader::new(stream.try_clone()?), stream, Vec::new(), terminal, mux, dark, &appearance, ssh_path(), true, cell));
     drop(tui);
     leave_with(result.as_ref());
     match result? {
@@ -529,6 +530,7 @@ fn session(
     appearance: &Appearance,
     ssh: PathBuf,
     connects: bool,
+    mut cell: u16,
 ) -> std::io::Result<Seen> {
     let instance = crate::session::instance_name();
     // Answers from ssh threads go out through the one writer the input loop owns.
@@ -556,8 +558,7 @@ fn session(
     })?;
 
     let mut sent = encode(dark);
-    // The Hello carried it; only a change goes out.
-    let mut cell = cell_px(crossterm::terminal::window_size());
+    // `cell` is what the Hello carried; only a change goes out.
 
     'input: loop {
         if pump.is_finished() {
@@ -1010,6 +1011,7 @@ fn attach_remote(
 ) -> std::io::Result<(Seen, Option<i32>, String)> {
     let (cols, rows) = crossterm::terminal::size()?;
     let dark = appearance_dark();
+    let cell = cell_px(crossterm::terminal::window_size());
     let hello = ClientMsg::Hello {
         // Used only by an instance with no spaces; a path missing there starts the shell in that Mac's home.
         cwd: crate::config::home_dir(),
@@ -1027,7 +1029,7 @@ fn attach_remote(
         connects: false,
         reattach: Some(format!("nerd --remote {name} {}", inst.id)),
         machine: Some(name.to_string()),
-        cell_px: Some(cell_px(crossterm::terminal::window_size())),
+        cell_px: Some(cell),
     };
     let Relay { child, mut stdin, mut stdout, stderr } = spawn_relay(ssh, &entry.host, &inst.id)?;
     let _ = hello.write_to(&mut stdin);
@@ -1045,7 +1047,7 @@ fn attach_remote(
         if let Ok((c, r)) = crossterm::terminal::size() {
             let _ = ClientMsg::Event(Event::Resize(c, r)).write_to(&mut stdin);
         }
-        let result = session(stdout, stdin, first, None, mux, dark, appearance, ssh.to_path_buf(), false);
+        let result = session(stdout, stdin, first, None, mux, dark, appearance, ssh.to_path_buf(), false, cell);
         drop(tui);
         result?
     };
