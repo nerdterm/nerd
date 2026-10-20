@@ -570,6 +570,9 @@ impl App {
     /// The broker's word on a process it ran: the Plugins window's fetch, or a plugin.
     pub fn exec_note(&mut self, n: crate::broker::ExecNote) {
         use crate::broker::ExecNote;
+        if self.release_note(&n) {
+            return;
+        }
         let (ExecNote::Started { id, .. } | ExecNote::Failed { id, .. } | ExecNote::Exited { id, .. }) = &n;
         if !self.plugin_job.as_ref().is_some_and(|j| j.exec == *id && j.done.is_none()) {
             return self.plugins.note(n);

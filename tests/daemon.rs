@@ -60,6 +60,10 @@ fn setup_env(name: &str) -> Env {
     let dir = std::env::temp_dir().join(format!("nerd-daemon-test-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
+    // Answered already: the first-start question would cover the screens these tests read.
+    let nerd = dir.join("Library/Application Support/nerd");
+    std::fs::create_dir_all(&nerd).unwrap();
+    std::fs::write(nerd.join("update-check"), "off\n").unwrap();
     Env { socket: dir.join("nerd.sock"), dir }
 }
 
@@ -1973,6 +1977,8 @@ fn a_plugin_hears_only_what_it_subscribed_to_cannot_leave_its_sandbox_and_dies_w
     // How MySQL turns its history off: /dev/null must stay readable and writable.
     std::os::unix::fs::symlink("/dev/null", home.join(".mysql_history")).unwrap();
     std::fs::write(home.join(".zshrc"), "").unwrap();
+    std::fs::create_dir_all(home.join("Library/Application Support/nerd")).unwrap();
+    std::fs::write(home.join("Library/Application Support/nerd/update-check"), "off\n").unwrap();
     std::fs::write(env.dir.join("policy.json"), ALLOW_FROM_PANES).unwrap();
     std::fs::create_dir_all(env.dir.join("plugin-data/other")).unwrap();
     std::fs::write(env.dir.join("plugin-data/other/secret"), "secret").unwrap();

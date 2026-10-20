@@ -41,6 +41,7 @@ enum Item {
     PanesStop,
     Topology,
     Accounts,
+    ReleaseCheck,
 }
 
 const ROWS: &[(Option<&str>, &str, Item)] = &[
@@ -68,6 +69,7 @@ const ROWS: &[(Option<&str>, &str, Item)] = &[
     (None, "Programs in panes may stop or update nerd", Item::PanesStop),
     (None, "Set up a topology…", Item::Topology),
     (None, "Accounts…", Item::Accounts),
+    (Some("Updates"), "Check for new releases", Item::ReleaseCheck),
     (Some("Agents"), "Agent hooks", Item::Hook),
     (None, "Edit config.json…", Item::EditConfig),
 ];
@@ -98,6 +100,8 @@ pub enum SettingsOutcome {
     Topology,
     Accounts,
     Preset,
+    /// Check for new releases: stored per Mac by the app, never in config.json.
+    ReleaseCheck(bool),
 }
 
 pub struct Settings {
@@ -329,6 +333,7 @@ impl Settings {
             Item::Messaging => on_off(crate::policy::current().on),
             Item::PanesStop => if crate::policy::current().allow_from_panes { "yes" } else { "no" }.into(),
             Item::Topology | Item::Accounts | Item::Preset => String::new(),
+            Item::ReleaseCheck => if crate::release::daily() == Some(true) { "daily" } else { "off" }.into(),
         }
     }
 
@@ -387,6 +392,7 @@ impl Settings {
             Item::Topology => return SettingsOutcome::Topology,
             Item::Accounts => return SettingsOutcome::Accounts,
             Item::Preset => return SettingsOutcome::Preset,
+            Item::ReleaseCheck => return SettingsOutcome::ReleaseCheck(crate::release::daily() != Some(true)),
         }
         self.cfg = cfg.clone();
         SettingsOutcome::Changed
@@ -829,13 +835,14 @@ mod tests {
             ("Play a sound", "on"), ("Ring the terminal bell", "on"),
             ("Inside tmux", "ask"), ("tmux-style prefix", "⌃+B"), ("Terminal preset…", ""), ("History lines per pane", "10000"), ("Restore screens after a restart", "on"),
             ("Messaging", "on"), ("Programs in panes may stop or update nerd", "no"), ("Set up a topology…", ""), ("Accounts…", ""),
+            ("Check for new releases", "off"),
             ("Agent hooks", if s.hook_installed { "installed" } else { "not installed" }), ("Edit config.json…", ""),
         ];
         assert_eq!(shown.len(), want.len());
         for (got, want) in shown.iter().zip(want) {
             assert_eq!((got.0.as_str(), got.1.as_str()), want);
         }
-        let heads: Vec<&str> = ["Look", "Layout", "Files", "When an agent needs you", "Terminal", "Messages", "Agents"].into();
+        let heads: Vec<&str> = ["Look", "Layout", "Files", "When an agent needs you", "Terminal", "Messages", "Updates", "Agents"].into();
         let at: Vec<usize> = heads.iter().map(|h| text.iter().position(|l| l.trim_matches(|c| c == '│' || c == ' ') == *h).expect(h)).collect();
         assert!(at.windows(2).all(|w| w[0] < w[1]), "{at:?}");
         assert!(text.iter().any(|l| l.contains("──────")), "a rule sits above Edit config.json");

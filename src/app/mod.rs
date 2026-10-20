@@ -24,6 +24,7 @@ mod input;
 mod lifecycle;
 mod mail;
 mod model;
+mod release;
 mod remote;
 #[cfg(test)]
 pub(crate) mod snapshots;
@@ -32,6 +33,7 @@ pub use commands::*;
 pub use lifecycle::*;
 pub use mail::*;
 pub use model::*;
+pub use release::*;
 pub use remote::*;
 
 /// Where the keys go. Panes are the default; the rest are reached with control and an arrow,
@@ -62,6 +64,8 @@ pub enum More {
     Update,
     /// This build just took over: what it brought.
     Updated,
+    /// The daily check found a newer release: its window.
+    Release,
 }
 
 pub struct App {
@@ -189,6 +193,14 @@ pub struct App {
     pub update_changes: Vec<Vec<String>>,
     /// The human skipped that build: no card and no mark for it.
     pub update_skipped: bool,
+    /// The release check or install the broker runs for this server: its exec id and who asked.
+    pub release_job: Option<(usize, ReleaseAsk)>,
+    /// The newer release the last check found, neither installed nor skipped: its card's window and the menu's mark.
+    pub release_found: Option<crate::release::Found>,
+    /// When the daily check was last looked at.
+    release_at: Instant,
+    /// The first-start question waits for this window's first dialog to close.
+    release_ask: bool,
     /// After an update: what this build brought over the one before; None when that build did not say which it was.
     pub updated_changes: Option<Vec<Vec<String>>>,
     /// What the card's "… more" opens, while the card still shows this text.
@@ -371,6 +383,10 @@ impl App {
             update_info: String::new(),
             update_changes: Vec::new(),
             update_skipped: false,
+            release_job: None,
+            release_found: None,
+            release_at: Instant::now() - RELEASE_EVERY,
+            release_ask: false,
             updated_changes: None,
             toast_more: None,
             clients: Vec::new(),
@@ -1348,6 +1364,155 @@ mod tests {
         (app.graphics, app.caps.mux) = (true, false);
         until(&mut app, "kitty bytes", |a| String::from_utf8_lossy(&frame(a).1).contains("a=T,f=100,i=1"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A state folder and a HOME of this test's own: the release answer lives next to config.json.
+    fn with_release_home(tag: &str, f: impl FnOnce()) {
+        crate::session::tests::with_temp_state_dir(tag, || {
+            let old = crate::paths::TEST_HOME.with(|h| h.replace(Some(crate::paths::test_dir(tag))));
+            f();
+            crate::paths::TEST_HOME.with(|h| h.replace(old));
+        });
+    }
+
+    /// The broker's run ended, leaving `said`.
+    fn release_ends(app: &mut App, said: crate::release::Said) {
+        let (id, _) = app.release_job.expect("a release run");
+        crate::release::leave(&said).unwrap();
+        app.exec_note(crate::broker::ExecNote::Exited { id, how: None });
+    }
+
+    fn found(tag: &str) -> crate::release::Found {
+        crate::release::Found { tag: tag.into(), notes: vec!["Added".into(), "- a thing".into()], newer: true, blocked: None }
+    }
+
+    #[test]
+    fn a_new_release_is_installed_only_from_nerd_s_own_window_on_this_mac() {
+        use crate::release::Said;
+        with_release_home("release-window", || {
+            let mut app = with_one_space();
+            app.overlay = app.run_action(Action::CheckRelease, &MenuCtx::Global);
+            assert!(matches!(app.release_job, Some((_, ReleaseAsk::Menu))) && app.toast.as_deref() == Some("asking GitHub for the newest release…"));
+            release_ends(&mut app, Said::Found(found("v9.0.0")));
+            assert!(app.release_job.is_none());
+            let Overlay::Confirm(c, Pending::ReleaseInstall(tag)) = &app.overlay else { panic!("the window shows the release") };
+            assert_eq!(tag, "v9.0.0");
+            let body = c.body_lines(200).join("\n");
+            assert!(body.contains("nerd 9.0.0 is out") && body.contains("checksum") && body.contains("- a thing"), "{body}");
+
+            let go = crate::paths::state_root().join("release-install");
+            app.client_inside = true;
+            app.perform(Pending::ReleaseInstall("v9.0.0".into()));
+            assert_eq!(app.notice.take().as_deref(), Some(super::mail::INSIDE_REFUSED));
+            (app.client_inside, app.caps.bye) = (false, true);
+            app.perform(Pending::ReleaseInstall("v9.0.0".into()));
+            assert!(app.notice.take().is_some_and(|n| n.contains("run nerd --check-update in a terminal there")));
+            assert!(!go.exists() && app.release_job.is_none(), "neither a window in a pane nor one from another Mac installs");
+
+            app.caps.bye = false;
+            app.perform(Pending::ReleaseInstall("v9.0.0".into()));
+            assert_eq!(std::fs::read_to_string(&go).unwrap(), "v9.0.0", "the click names what the run may install");
+            assert!(matches!(app.release_job, Some((_, ReleaseAsk::Install))));
+            release_ends(&mut app, Said::Installed("nerd 9.0.0 (abc)".into()));
+            assert_eq!(app.toast.as_deref(), Some("nerd 9.0.0 (abc) installed in ~/.local/bin"));
+
+            app.overlay = app.check_release();
+            release_ends(&mut app, Said::Failed("could not reach GitHub: (6) no host".into()));
+            assert_eq!(app.notice.take().as_deref(), Some("could not reach GitHub: (6) no host"), "asked from the menu, a failure is said");
+
+            app.overlay = app.check_release();
+            release_ends(&mut app, Said::Found(crate::release::Found { blocked: Some("nerd was installed with Homebrew: run brew upgrade nerd".into()), ..found("v9.0.0") }));
+            let Overlay::Confirm(c, Pending::ReleaseInstall(_)) = &app.overlay else { panic!("told, with skip as its only choice") };
+            assert!(c.body_lines(200).join(" ").contains("run brew upgrade nerd"));
+            app.overlay = Overlay::None;
+            app.overlay = app.check_release();
+            release_ends(&mut app, Said::Found(crate::release::Found { newer: false, ..found("v0.1.0") }));
+            let Overlay::Confirm(c, Pending::Dismiss) = &app.overlay else { panic!("only told") };
+            assert!(c.body_lines(200).join(" ").starts_with("Nothing newer: the newest release is nerd 0.1.0"));
+        });
+    }
+
+    #[test]
+    fn the_daily_check_runs_once_a_day_when_allowed_and_is_quiet_about_a_skipped_release() {
+        use crate::release::Said;
+        with_release_home("release-daily", || {
+            let mut app = with_one_space();
+            app.tick_release();
+            assert!(app.release_job.is_none(), "not asked yet: no check");
+            crate::release::set_daily(true).unwrap();
+            app.tick_release();
+            assert!(app.release_job.is_none(), "at most every ten minutes");
+            app.release_at = Instant::now() - RELEASE_EVERY;
+            app.tick_release();
+            assert!(matches!(app.release_job, Some((_, ReleaseAsk::Daily))));
+            release_ends(&mut app, Said::Failed("could not reach GitHub".into()));
+            assert!(app.notice.is_none() && app.toast.is_none(), "a daily failure is only logged");
+            app.release_at = Instant::now() - RELEASE_EVERY;
+            app.tick_release();
+            assert!(app.release_job.is_none(), "once a day, failed or not");
+
+            app.perform_other(Pending::ReleaseInstall("v9.0.0".into()));
+            assert_eq!(crate::release::skipped().as_deref(), Some("v9.0.0"));
+            app.toast = None;
+            app.release_job = Some((7, ReleaseAsk::Daily));
+            release_ends(&mut app, Said::Found(found("v9.0.0")));
+            assert!(app.toast.is_none(), "a skipped release is not said again");
+            app.release_job = Some((8, ReleaseAsk::Daily));
+            release_ends(&mut app, Said::Found(found("v9.1.0")));
+            assert_eq!(app.toast.as_deref(), Some("nerd 9.1.0 is out"));
+            let marked = |app: &App| matches!(app.global_menu((0, 0)), Overlay::Menu(m, _) if m.items.iter().any(|i| i.mark && i.label == "Check for a new release…"));
+            assert!(marked(&app), "the card leaves; the menu keeps the news");
+            app.overlay = app.notice_window();
+            assert!(matches!(&app.overlay, Overlay::Confirm(_, Pending::ReleaseInstall(t)) if t == "v9.1.0"), "the card opens the window");
+            app.perform_other(Pending::ReleaseInstall("v9.1.0".into()));
+            assert!(!marked(&app), "skipped, the mark goes");
+        });
+    }
+
+    #[test]
+    fn the_first_window_asks_once_and_only_nerd_s_own_window_answers() {
+        with_release_home("release-ask", || {
+            let mut app = with_one_space();
+            app.client_inside = true;
+            app.offer_release_check();
+            assert!(!app.overlay.is_open(), "never asked in a window inside a pane");
+            app.client_inside = false;
+            app.cfg_broken = true;
+            app.offer_release_check();
+            assert!(!app.overlay.is_open(), "nor with a config.json that does not parse");
+            app.cfg_broken = false;
+
+            app.overlay = app.tmux_offer();
+            app.offer_release_check();
+            app.tick_release();
+            assert!(matches!(app.overlay, Overlay::Confirm(_, Pending::LeaveTmux | Pending::CopyResumeCommand)), "the window's first dialog stays");
+            app.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+            app.tick_release();
+            let Overlay::Confirm(c, Pending::ReleaseDaily) = &app.overlay else { panic!("asked once that dialog is closed") };
+            assert_eq!(c.title, "Check for new releases");
+            app.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+            assert_eq!(crate::release::daily(), None, "Esc asks again with the next window");
+            app.offer_release_check();
+            click_yes(&mut app);
+            assert_eq!(crate::release::daily(), Some(true));
+            assert!(!app.overlay.is_open());
+            app.offer_release_check();
+            assert!(!app.overlay.is_open(), "answered once on this Mac");
+
+            let choose = |app: &mut App| {
+                let mut s = crate::settings::Settings::new(&app.cfg);
+                s.choose("Check for new releases");
+                let mut cfg = app.cfg.clone();
+                let out = s.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &mut cfg);
+                app.settings_outcome(s, out);
+            };
+            choose(&mut app);
+            assert_eq!(crate::release::daily(), Some(false), "Settings turns it off");
+            app.client_inside = true;
+            choose(&mut app);
+            assert_eq!(crate::release::daily(), Some(false), "unchanged from a window inside a pane");
+            assert_eq!(app.notice.as_deref(), Some(super::mail::INSIDE_REFUSED));
+        });
     }
 
     #[test]
@@ -3185,7 +3350,7 @@ mod tests {
             "Show file tree [⌥+T]", "Collapse sidebar [⌥+S]", "—",
             "Settings… [⌥+,]", "Keys and mouse… [⌥+K]", "Plugins…", "Reload plugins and agents", "—",
             "Messages…", "Routes map…", "Rename this server…", "Connect to another computer…", "Session history…", "—",
-            "About nerd…", "Update… [⌥+U]", "Export logs…", "—",
+            "About nerd…", "Update… [⌥+U]", "Check for a new release…", "Export logs…", "—",
             "Detach… [⌥+Q]", "Disconnect everyone…", "Stop this server…",
         ];
         assert_eq!(rows(app.global_menu((1, 1))), plain);
