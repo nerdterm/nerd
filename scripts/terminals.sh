@@ -54,9 +54,9 @@ resolve() {
             # The window AppleScript opened, only if it is new and holds the test tab alone, matched by bounds and name.
             as=$(osascript -e "tell application \"$app\" to get {count of tabs, bounds, name} of window id $asid" 2>/dev/null || true)
             box=$(echo "$as" | awk -F ', ' 'NF >= 5 { print $2 "," $3 "," $4 - $2 "," $5 - $3 }')
-            name=${as#*, *, *, *, *, }
+            asname=${as#*, *, *, *, *, }
             if [ "${as%%,*}" = 1 ] && ! grep -qx "$asid" "$run/as-before"; then
-                wid=$(wins | awk -F "$tab" -v b="$box" -v n="$name" '$4 == b && $5 == n { c++; id = $1 } END { if (c == 1) print id }')
+                wid=$(wins | awk -F "$tab" -v b="$box" -v n="$asname" '$4 == b && $5 == n { c++; id = $1 } END { if (c == 1) print id }')
             fi ;;
     esac
     [ -n "$wid" ]
@@ -75,14 +75,6 @@ step() {
     "$post" "$sub" "$wid" "$@" 2>"$run/err" || { lost "$(cat "$run/err")"; return 1; }
 }
 
-# Input trace lines from byte $1 to byte $2 of the log, shortened: "trace key char KeyModifiers(ALT)" reads "char ALT".
-since() {
-    # macOS head refuses a count of 0: nothing arrived, nothing to read.
-    [ "$2" -gt "$1" ] || return 0
-    tail -c +$(($1 + 1)) "$log" | head -c $(($2 - $1)) | sed -n 's/.*trace \(key \)\{0,1\}//p' | grep -v '^frames' | sed 's/KeyModifiers(\([^)]*\))/\1/' | paste -sd' ' -
-}
-
-arrived() { tail -c +$(($1 + 1)) "$log" | grep -c 'trace \(key\|paste\|mouse\)' || true; }
 
 # Posts each input (post's arguments without the window), then says ok, what arrived instead of $want, or nothing.
 try() {
@@ -198,22 +190,7 @@ for t in "$@"; do
                 cells="$cells${tab}$(try "mouse Down(Left) 0x0 mouse Up(Left) 0x0" click)"
                 case $layout in
                     com.apple.keylayout.US | com.apple.keylayout.ABC)
-                        printf '%s\n' "$SHORTCUTS" | while read -r name code; do
-                            case $name in shift+*) mods=option,shift ;; *) mods=option ;; esac
-                            at=$(wc -c <"$log")
-                            got="focus lost"
-                            if step key "$code" "$mods"; then
-                                i=0
-                                while [ "$(arrived "$at")" -lt 1 ] && [ $i -lt 20 ]; do sleep 0.1; i=$((i + 1)); done
-                                got=$(since "$at" "$(wc -c <"$log")")
-                            fi
-                            # Escape closes what the shortcut opened, and ends a dead key; the next step starts once it has arrived.
-                            at=$(wc -c <"$log")
-                            step key 53 || true
-                            i=0
-                            while [ "$(arrived "$at")" -lt 1 ] && [ $i -lt 10 ]; do sleep 0.1; i=$((i + 1)); done
-                            printf '%s\t%s\n' "$name" "${got:-nothing}"
-                        done >"$run/$t-shortcuts"
+                        post_shortcuts >"$run/$t-shortcuts"
                         cells="$cells${tab}$(shortcuts_cell "$t" <"$run/$t-shortcuts")" ;;
                     *) cells="$cells${tab}not checked: the layout is ${layout#com.apple.keylayout.}, not U.S. or ABC" ;;
                 esac
