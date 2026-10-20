@@ -208,6 +208,11 @@ fn serve(started: &mut bool) -> std::io::Result<()> {
     // Which client owns the screen, so a stale Detach from a replaced client is ignored.
     let mut current: u64 = 0;
 
+    match crate::config::migrate_prefix() {
+        Ok(true) => info("prefix: a stored off became Control + B, the new default; Settings turns it off"),
+        Ok(false) => {}
+        Err(e) => warn(&format!("prefix: the one-time switch to Control + B failed: {e}")),
+    }
     let (cfg, broken) = crate::config::load_checked();
     if broken {
         warn("config.json failed to parse, using defaults");

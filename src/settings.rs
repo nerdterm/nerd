@@ -666,21 +666,21 @@ mod tests {
     }
 
     #[test]
-    fn the_prefix_is_off_until_chosen_and_cycles() {
+    fn the_prefix_is_control_b_until_changed_and_cycles() {
         let mut cfg = Config::default();
-        assert_eq!(cfg.prefix, Prefix::Off);
+        assert_eq!(cfg.prefix, Prefix::CtrlB);
         let mut s = at(Item::Prefix, &cfg);
         s.key(key(KeyCode::Enter), &mut cfg);
-        assert_eq!(s.value(Item::Prefix), "⌃+B");
+        assert_eq!(s.value(Item::Prefix), "⌃+A");
         s.key(key(KeyCode::Enter), &mut cfg);
-        assert_eq!(cfg.prefix, Prefix::CtrlA);
+        assert_eq!(cfg.prefix, Prefix::Off);
         s.key(key(KeyCode::Enter), &mut cfg);
-        assert_eq!(cfg.prefix, Prefix::Off, "the cycle closed");
+        assert_eq!(cfg.prefix, Prefix::CtrlB, "the cycle closed");
 
         cfg.prefix = Prefix::CtrlB;
         assert!(serde_json::to_string(&cfg).unwrap().contains(r#""prefix":"ctrl_b""#));
         let old: Config = serde_json::from_str("{}").unwrap();
-        assert_eq!(old.prefix, Prefix::Off, "an old config gets the default");
+        assert_eq!(old.prefix, Prefix::CtrlB, "an old config gets the default");
     }
 
     #[test]
@@ -823,7 +823,7 @@ mod tests {
             ("Sidebar width", "34"), ("File tree width", "34"), ("Preview width", "60"),
             ("File preview", "on"), ("Wrap long lines", "off"), ("Images", "auto"), ("Show paths", "from home"),
             ("Play a sound", "on"), ("Ring the terminal bell", "on"),
-            ("Inside tmux", "ask"), ("tmux-style prefix", "off"), ("History lines per pane", "10000"), ("Restore screens after a restart", "on"),
+            ("Inside tmux", "ask"), ("tmux-style prefix", "⌃+B"), ("History lines per pane", "10000"), ("Restore screens after a restart", "on"),
             ("Messaging", "on"), ("Programs in panes may stop or update nerd", "no"), ("Set up a topology…", ""), ("Accounts…", ""),
             ("Agent hooks", if s.hook_installed { "installed" } else { "not installed" }), ("Edit config.json…", ""),
         ];
@@ -854,7 +854,7 @@ mod tests {
         assert_eq!(walk(Item::PaneGap, &mut cfg), ["1", "2", "3", "3"]);
         assert_eq!(walk(Item::Images, &mut cfg), ["auto", "blocks", "off", "auto"]);
         assert_eq!(walk(Item::Tmux, &mut cfg), ["ask", "new window", "stay", "ask"]);
-        assert_eq!(walk(Item::Prefix, &mut cfg), ["off", "⌃+B", "⌃+A", "off"]);
+        assert_eq!(walk(Item::Prefix, &mut cfg), ["⌃+B", "⌃+A", "off", "⌃+B"]);
         assert_eq!(walk(Item::Paths, &mut cfg), ["from home", "in full", "from home", "in full"]);
     }
 

@@ -39,10 +39,12 @@ impl App {
         }
         // Taken before the areas, so the search, the tree and the sidebar never eat either half.
         let armed = std::mem::take(&mut self.prefix);
+        self.dirty |= armed;
         if let Some(p) = self.cfg.prefix.letter()
             && !self.overlay.is_open()
         {
-            let again = k.code == KeyCode::Char(p) && k.modifiers == KeyModifiers::CONTROL;
+            // read off the key, so Control + B arms it on a Russian layout too
+            let again = matches!(k.code, KeyCode::Char(c) if crate::keys::latin(c) == p) && k.modifiers == KeyModifiers::CONTROL;
             if armed && again {
                 // pressed twice, the chord belongs to the pane
                 if let Some(pane) = self.tab_mut().and_then(Tab::focused_mut) {
@@ -57,6 +59,7 @@ impl App {
             }
             if again {
                 self.prefix = true;
+                self.dirty = true;
                 return;
             }
         }
@@ -667,7 +670,7 @@ impl App {
 
         // a click between the halves of the chord cancels it, or the next letter fires as a command
         if matches!(ev.kind, MouseEventKind::Down(_)) {
-            self.prefix = false;
+            self.dirty |= std::mem::take(&mut self.prefix);
         }
         if self.overlay.is_open() {
             self.overlay_mouse(ev, screen);

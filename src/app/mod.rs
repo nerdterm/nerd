@@ -116,8 +116,8 @@ pub struct App {
     pub tree: Option<crate::tree::Tree>,
     /// Which area has the keys. The tree is visible even when it does not.
     pub focus: Focus,
-    /// The prefix chord was pressed and the next key is its second half.
-    prefix: bool,
+    /// The prefix chord was pressed and the next key is its second half; the top row says so.
+    pub prefix: bool,
     /// The sidebar row the keys are on, while the sidebar has them.
     pub sidebar_sel: Option<SidebarSel>,
     /// The tree and its preview take the whole screen; panes are not drawn.
@@ -2512,11 +2512,24 @@ mod tests {
         let ctrl = |c| crossterm::event::KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
         let bare = |c| crossterm::event::KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE);
 
+        assert_eq!(app.cfg.prefix, Prefix::CtrlB, "on by default");
+        app.cfg.prefix = Prefix::Off;
         app.key(ctrl('b'));
         assert_eq!(written(&mut pane), [0x02], "off: control+b is the shell's");
 
         app.cfg.prefix = Prefix::CtrlB;
         let sidebar = app.sidebar;
+        app.key(ctrl('и'));
+        assert!(app.prefix, "control and the B key arms it on a Russian layout");
+        app.key(ctrl('и'));
+        assert_eq!(written(&mut pane), [0x02], "and twice reaches the pane there too");
+        let tree = app.tree.is_some();
+        app.key(ctrl('и'));
+        app.key(bare('е'));
+        assert_eq!(app.tree.is_some(), !tree, "then the T key, printing е, is option+T");
+        app.key(ctrl('b'));
+        app.key(bare('T'));
+        assert_eq!(app.tree.is_some(), tree, "and its case does not matter");
         app.key(ctrl('b'));
         app.key(bare('s'));
         assert_eq!(app.sidebar, !sidebar, "on: then s is option+S");
