@@ -39,3 +39,4 @@ echo "attached $name to $tag and published it"
 # nerdterm.dev is built from the latest release: rebuild it now rather than at the next daily run.
 gh workflow run pages --repo nerdterm/nerd-plugins
 echo "started the nerdterm.dev build"
+sh scripts/publish-formula.sh "$tag"
