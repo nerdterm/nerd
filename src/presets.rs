@@ -643,11 +643,14 @@ pub fn run(steps: &[Step]) -> std::io::Result<()> {
         match s {
             Step::Write(p, text) => write(p, text)?,
             Step::Append(p, text) => {
-                let have = read(p)?.unwrap_or_default();
-                let sep = if have.is_empty() { "" } else { "\n" };
+                // a file of the user's, even an empty one, gets the newline unappend takes out with the block
+                let (have, sep) = read(p)?.map_or((String::new(), ""), |s| (s, "\n"));
                 write(p, &format!("{have}{sep}{text}"))?;
             }
-            Step::Unappend(p, text) => unappend(p, text)?,
+            Step::Unappend(p, text) => {
+                unappend(p, text)?;
+                prune(p)?;
+            }
             Step::Insert(p, line) => {
                 let have = read(p)?.unwrap_or_default();
                 let Some((at, _)) = wezterm_return(&have).filter(|(_, l)| l == line) else {
@@ -661,10 +664,13 @@ pub fn run(steps: &[Step]) -> std::io::Result<()> {
                     write(p, &format!("{}{}", &have[..at], &have[at + line.len()..]))?;
                 }
             }
-            Step::Remove(p) => match std::fs::remove_file(p) {
-                Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
-                _ => {}
-            },
+            Step::Remove(p) => {
+                match std::fs::remove_file(p) {
+                    Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+                    _ => {}
+                }
+                prune(p)?;
+            }
             Step::ItermPrefs(on) => set_prefs(*on)?,
             Step::Note(_) | Step::Line(..) => {}
         }
@@ -674,12 +680,54 @@ pub fn run(steps: &[Step]) -> std::io::Result<()> {
 
 fn write(p: &Path, text: &str) -> std::io::Result<()> {
     if let Some(dir) = p.parent() {
+        // nerd's own folder and those above it are never a preset's to take away
+        let new: Vec<PathBuf> = dir.ancestors().take_while(|d| !d.exists()).filter(|d| !nerd_dir().starts_with(d) && !d.starts_with(nerd_dir())).map(Path::to_path_buf).collect();
         std::fs::create_dir_all(dir)?;
+        if !new.is_empty() {
+            let mut made = folders()?;
+            made.extend(new);
+            save_folders(&made)?;
+        }
     }
     std::fs::write(p, text)
 }
 
-/// Takes the block out with the newline apply put before it; refuses a block changed by hand.
+/// The folders a preset made outside nerd's own, kept so undo takes away those and no others.
+fn folders_record() -> PathBuf {
+    own("preset-folders.json")
+}
+
+fn folders() -> std::io::Result<Vec<PathBuf>> {
+    read(&folders_record())?.map_or(Ok(Vec::new()), |s| serde_json::from_str(&s).map_err(std::io::Error::other))
+}
+
+fn save_folders(made: &[PathBuf]) -> std::io::Result<()> {
+    if made.is_empty() {
+        return match std::fs::remove_file(folders_record()) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        };
+    }
+    std::fs::create_dir_all(nerd_dir())?;
+    std::fs::write(folders_record(), serde_json::to_string(made).map_err(std::io::Error::other)?)
+}
+
+/// The folders above `p` that a preset made, taken away while they are empty.
+fn prune(p: &Path) -> std::io::Result<()> {
+    let mut made = folders()?;
+    for d in p.ancestors().skip(1) {
+        if !made.iter().any(|m| m == d) {
+            break;
+        }
+        match std::fs::remove_dir(d) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => break,
+            _ => made.retain(|m| m != d),
+        }
+    }
+    save_folders(&made)
+}
+
+/// Takes the block out, and the newline apply put before it in a file of the user's; refuses a block changed by hand.
 fn unappend(p: &Path, text: &str) -> std::io::Result<()> {
     let Some(have) = read(p)? else { return Ok(()) };
     let made = text.replacen(": `nerd --preset", ", in a file nerd made: `nerd --preset", 1);
@@ -692,7 +740,7 @@ fn unappend(p: &Path, text: &str) -> std::io::Result<()> {
         }
         (None, None) => return Ok(()),
     };
-    let from = if at > 0 && have.as_bytes()[at - 1] == b'\n' { at - 1 } else { at };
+    let from = if !made && at > 0 && have.as_bytes()[at - 1] == b'\n' { at - 1 } else { at };
     let rest = format!("{}{}", &have[..from], &have[at + len..]);
     if made && rest.is_empty() {
         return std::fs::remove_file(p);
@@ -805,16 +853,18 @@ mod tests {
     use crate::config::tests::with_temp_home;
     use crate::config::Config;
 
-    fn files(dir: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+    /// Every file with its bytes and every folder, as `None`.
+    fn files(dir: &Path) -> Vec<(PathBuf, Option<Vec<u8>>)> {
         let mut out = Vec::new();
         let mut stack = vec![dir.to_path_buf()];
         while let Some(d) = stack.pop() {
             for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
                 let p = e.path();
                 if p.is_dir() {
+                    out.push((p.clone(), None));
                     stack.push(p);
                 } else {
-                    out.push((p.clone(), std::fs::read(&p).unwrap()));
+                    out.push((p.clone(), Some(std::fs::read(&p).unwrap())));
                 }
             }
         }
@@ -839,7 +889,7 @@ mod tests {
                 std::fs::create_dir_all(config.parent().unwrap()).unwrap();
                 std::fs::write(&config, b).unwrap();
             }
-            let was = files(&home);
+            let mut was = files(&home);
             apply(t);
             assert!(applied(t), "{t:?} applied");
             apply(t);
@@ -859,7 +909,9 @@ mod tests {
             assert!(!applied(t), "{t:?} undone");
             // iTerm2's settings come back by value (iterm_gets_a_profile_and_its_margins_back), not by bytes
             let mut now = files(&home);
-            now.retain(|(p, _)| !p.ends_with("config.json") && *p != test_prefs());
+            // nerd's own folder is nerd --uninstall's to take away
+            now.retain(|(p, _)| !p.ends_with("config.json") && *p != test_prefs() && !nerd_dir().starts_with(p));
+            was.retain(|(p, _)| !nerd_dir().starts_with(p));
             assert_eq!(now, was, "{t:?} with {before:?}: undo is byte-identical");
         });
     }
@@ -928,6 +980,45 @@ mod tests {
             std::fs::write(&conf, &s).unwrap();
             undo(Terminal::Kitty);
             assert_eq!(std::fs::read_to_string(&conf).unwrap(), "# mine\nfont_size 13\ncursor_shape beam\n");
+        });
+    }
+
+    #[test]
+    fn a_line_put_above_the_block_keeps_its_newline_in_a_file_that_was_empty_or_missing() {
+        for empty in [true, false] {
+            with_temp_home(|| {
+                let conf = kitty_conf();
+                if empty {
+                    write(&conf, "").unwrap();
+                }
+                apply(Terminal::Kitty);
+                let s = std::fs::read_to_string(&conf).unwrap();
+                std::fs::write(&conf, format!("font_size 13\n{s}")).unwrap();
+                undo(Terminal::Kitty);
+                assert_eq!(std::fs::read_to_string(&conf).unwrap(), "font_size 13\n", "empty before: {empty}");
+            });
+        }
+    }
+
+    #[test]
+    fn undo_takes_away_only_the_folders_apply_made_and_only_while_empty() {
+        with_temp_home(|| {
+            let config = home().join(".config");
+            std::fs::create_dir_all(&config).unwrap();
+            apply(Terminal::Kitty);
+            undo(Terminal::Kitty);
+            assert!(config.is_dir() && !config.join("kitty").exists(), "the folder that was there stays, the one apply made goes");
+
+            apply(Terminal::Ghostty);
+            let mine = config.join("ghostty/mine.conf");
+            std::fs::write(&mine, "x").unwrap();
+            undo(Terminal::Ghostty);
+            assert!(mine.exists(), "a folder holding a file of the user's stays");
+            std::fs::remove_file(&mine).unwrap();
+            apply(Terminal::Ghostty);
+            undo(Terminal::Ghostty);
+            assert!(!config.join("ghostty").exists(), "still remembered, and taken away once empty");
+            assert!(!own("preset-folders.json").exists(), "the record goes with the last folder");
         });
     }
 
@@ -1093,10 +1184,12 @@ mod tests {
             undo(Terminal::Iterm2);
             assert_eq!((margin_now("TerminalMargin"), margin_now("TerminalVMargin")), (Some(5), Some(8)), "a margin set after apply is the user's");
 
+            pref_set(DEFAULT_KEY, Some(&"ABC".into())).unwrap();
             apply(Terminal::Iterm2);
             std::fs::remove_file(iterm_profile()).unwrap();
             assert!(undo_all().is_empty());
             assert_eq!((margin_now("TerminalMargin"), margin_now("TerminalVMargin")), (Some(5), Some(8)), "the profile gone, the margins still come back");
+            assert_eq!(pref_now(DEFAULT_KEY).as_deref(), Some("ABC"), "and the default profile");
             assert!(!margins_record().exists());
         });
     }
