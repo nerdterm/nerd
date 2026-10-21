@@ -115,7 +115,7 @@ nerd is checked in Ghostty, Kitty, WezTerm and iTerm2.
 ## Limitations
 
 - nerd is early software (0.x). Configuration and behaviour may change between releases.
-- The binary is not notarized by Apple. The installer removes the download quarantine; for an archive downloaded by hand, run `xattr -d com.apple.quarantine nerd`.
+- The binary is not notarized by Apple. The installer removes the download quarantine and Homebrew sets none; for an archive downloaded by hand, run `xattr -d com.apple.quarantine nerd`.
 - The installer adds `~/.local/bin` to `PATH` in `~/.zshrc` only. With another shell, add it yourself.
 - Inside tmux or screen, image previews fall back to coloured blocks: neither passes a graphics protocol on. In Ghostty, Kitty and WezTerm, nerd offers to open itself in a new window of the same terminal instead.
 - Exact agent states come from the hook, for the supported agents. For other agents the state is read from their output: it can lag, be wrong, or miss "waiting for you".
