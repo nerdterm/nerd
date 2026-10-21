@@ -2217,11 +2217,14 @@ fn a_plugin_reports_the_state_of_a_pane_running_its_own_agent() {
     assert!(wait_for(&mut client, "spaces", Duration::from_secs(5)), "no frame: {}", daemon_log(&env));
     type_line(&mut client, "fakeagent");
     let state = || read(&env.dir.join("agents/1")).trim().to_string();
-    assert!(wait_reading(&mut client, Duration::from_secs(15), || state() == "working"), "state {:?}; heard {:?}\n{}", state(), read(&data.join("events.log")), daemon_log(&env));
-    assert!(read(&data.join("events.log")).contains("\"event\":\"agent_state\",\"pane\":1,\"agent\":\"fakeagent\""));
+    let heard = || read(&data.join("events.log"));
+    assert!(wait_reading(&mut client, Duration::from_secs(15), || state() == "working"), "state {:?}; heard {:?}\n{}", state(), heard(), daemon_log(&env));
+    // events.log and stale.out are written by the plugin's own processes, which can run behind the server's log.
+    assert!(wait_reading(&mut client, Duration::from_secs(5), || heard().contains("\"event\":\"agent_state\",\"pane\":1,\"agent\":\"fakeagent\"")), "heard {:?}\n{}", heard(), daemon_log(&env));
     assert!(!daemon_log(&env).contains("report for pane 1 refused"), "{}", daemon_log(&env));
     assert!(wait_reading(&mut client, Duration::from_secs(5), || daemon_log(&env).contains("plugin fakeagent: report for pane 1 dropped: not from its current connection")), "{}", daemon_log(&env));
-    assert_eq!(read(&data.join("stale.out")), "refused: plugin \"fakeagent\" is already connected\n");
+    let stale = || read(&data.join("stale.out"));
+    assert!(wait_reading(&mut client, Duration::from_secs(5), || stale() == "refused: plugin \"fakeagent\" is already connected\n"), "stale {:?}\n{}", stale(), daemon_log(&env));
     assert_eq!(state(), "working", "a report from a connection that is not the current one was taken");
     let _ = std::fs::remove_dir_all(&env.dir);
 }
