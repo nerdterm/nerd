@@ -968,6 +968,13 @@ impl App {
         self.spaces.get(i).map(|sp| sp.tabs.iter().map(|t| t.panes.len()).sum())
     }
 
+    /// A space of one pane: the sidebar folds that pane into the space's row, which then names it.
+    fn lone_pane(&self, index: usize) -> Option<PaneId> {
+        // counted as the sidebar counts them: layout ids that have a pane
+        let mut ids = self.spaces.get(index)?.tabs.iter().flat_map(|t| t.layout.pane_ids().into_iter().filter(|id| t.panes.contains_key(id)));
+        ids.next().filter(|_| ids.next().is_none())
+    }
+
     pub fn space_menu(&self, index: usize, at: (u16, u16)) -> Option<Overlay> {
         use crate::git::RepoKind;
         use crate::menu::{Item, Menu};
@@ -992,15 +999,17 @@ impl App {
         if kind == RepoKind::Linked {
             close.push(Item::new("Delete worktree checkout…", Action::RemoveWorktree));
         }
+        let mut rename = vec![Item::new("Rename space…", Action::Rename)];
+        if self.lone_pane(index).is_some() {
+            rename.push(Item::new("Rename pane…", Action::RenamePane));
+        }
+        rename.push(Item::new("Move up", Action::MoveUp).enabled(self.space_neighbour(index, -1).is_some()));
+        rename.push(Item::new("Move down", Action::MoveDown).enabled(self.space_neighbour(index, 1).is_some()));
         let items = grouped(vec![
             vec![Item::new("New tab in this space", Action::NewTab)],
             git,
             vec![Item::new("Isolation for new panes…", Action::IsolationNew)],
-            vec![
-                Item::new("Rename space…", Action::Rename),
-                Item::new("Move up", Action::MoveUp).enabled(self.space_neighbour(index, -1).is_some()),
-                Item::new("Move down", Action::MoveDown).enabled(self.space_neighbour(index, 1).is_some()),
-            ],
+            rename,
             close,
         ]);
         Some(Overlay::Menu(Menu::new(items, at), MenuCtx::Space(index)))
@@ -1293,6 +1302,7 @@ impl App {
                     .unwrap_or_else(|| format!("{}", i + 1));
                 return Overlay::Prompt(Prompt::new("Rename tab", cur).does("rename"), Ask::RenameTab(*i));
             }
+            (Action::RenamePane, MenuCtx::Space(i)) if let Some(id) = self.lone_pane(*i) => return self.run_action(Action::RenamePane, &MenuCtx::Pane(id)),
             (Action::RenamePane, MenuCtx::Pane(id)) => {
                 let cur = self.pane(*id).and_then(|p| p.label.clone()).unwrap_or_default();
                 return Overlay::Prompt(Prompt::new("Rename pane", cur).does("rename").note("A named pane can receive messages from other agents."), Ask::RenamePane(*id));

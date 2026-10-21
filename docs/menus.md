@@ -76,6 +76,8 @@ Every window except a context menu is drawn through `chrome::dialog`, and `chrom
   exact delivery" when the pane's agent delivers through a hook that is not this build's. Then **Isolation…** as
   the pane's own tool. **Rename pane…** refuses a name another pane holds and asks keep or drop for a name with
   routes or waiting messages from before.
+- Space menu of a space with one pane: **Rename pane…** after **Rename space…**. The sidebar folds a lone pane into its
+  space's row, so that row names the pane too; with two panes or more each has its own row and menu.
 - In the Isolation window, once an agent with providers (pi) is chosen under Only these providers, a line under the
   chips says which (`pi: all`, `pi: deepseek, openai`) beside **[Choose providers…]**. It opens the view **Choose
   providers** inside the window: a row **all** with its host count, then a row per provider with its hosts. A click
