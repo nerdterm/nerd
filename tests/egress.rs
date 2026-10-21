@@ -94,7 +94,7 @@ const ALLOW: &[(&str, &str, &str, &str, &str, &str)] = &[
     ("src/session.rs", "exclude_from_time_machine", "spawn", "\"/usr/bin/tmutil\"", "local", "keeps saved pane text and messages out of Time Machine"),
     ("src/spawn.rs", "cmd", "command", "program", "local", "the one door every other spawn goes through"),
     ("src/trial.rs", "trial", "spawn", "exe --plugin-exec", "local", "a plugin's trial run, with no network"),
-    ("src/release.rs", "install_sh", "spawn", "\"/bin/sh\"", "local", "the embedded install.sh on the downloaded archive: checksum, unpack, sign, rename into ~/.local/bin; with an archive it reaches no network"),
+    ("src/release.rs", "install_cmd", "spawn", "\"/bin/sh\"", "local", "the embedded install.sh on the downloaded archive: release-key signature with /usr/bin/openssl, checksum, unpack, sign, rename into ~/.local/bin; with an archive it reaches no network"),
 ];
 
 /// Rows the register states with no door the scan sees: a setting (the sandbox off), or a unix socket (not scanned).

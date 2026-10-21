@@ -8,10 +8,24 @@ tag=${1:?usage: scripts/publish-formula.sh [--dry-run] vX.Y.Z}
 case $tag in *[!v0-9.]* | '') tag_ok= ;; *) tag_ok=1 ;; esac
 [ -n "$tag_ok" ] && echo "$tag" | grep -Eqx 'v[0-9]+\.[0-9]+\.[0-9]+' || { echo "publish-formula: not a release tag: $tag" >&2; exit 1; }
 name="nerd-$tag-macos-arm64.tar.gz"
+t=$(mktemp -d)
+trap 'rm -rf "$t"' EXIT
 # The published checksum, never a rebuilt one: a second archive of the same tag has another hash.
-sha=$(gh release download "$tag" --repo nerdterm/nerd -p "$name.sha256" -O - | cut -d' ' -f1)
-case $sha in *[!0-9a-f]* | '') sha_ok= ;; *) sha_ok=1 ;; esac
-[ -n "$sha_ok" ] && [ ${#sha} -eq 64 ] || { echo "publish-formula: $tag has no checksum: $sha" >&2; exit 1; }
+gh release download "$tag" --repo nerdterm/nerd -p "$name.sha256" -O "$t/$name.sha256" || { echo "publish-formula: $tag has no checksum" >&2; exit 1; }
+gh release download "$tag" --repo nerdterm/nerd -p "$name.sha256.sig" -O "$t/$name.sha256.sig" || { echo "publish-formula: $tag has no signature" >&2; exit 1; }
+# The keys of this checkout's install.sh, never fetched: GitHub is what the signature guards against.
+installer=${NERD_INSTALL_SH:-$(git rev-parse --show-toplevel)/install.sh}
+awk '/^# release keys begin/ { f = 1; next } /^# release keys end/ { f = 0 } f' "$installer" | sed -e "1s/^keys='//" -e "\$s/'\$//" \
+    | awk -v d="$t" '/BEGIN PUBLIC KEY/ { n++ } { print > (d "/key" n ".pem") }'
+signed=
+for k in "$t"/key*.pem; do
+    if /usr/bin/openssl dgst -sha256 -verify "$k" -signature "$t/$name.sha256.sig" "$t/$name.sha256" >/dev/null 2>&1; then signed=1; fi
+done
+[ -n "$signed" ] || { echo "publish-formula: the signature of $tag does not check against install.sh's release keys" >&2; exit 1; }
+line=$(cat "$t/$name.sha256")
+printf '%s' "$line" | grep -Eqx '[0-9a-f]{64}  [^/]+' && [ "$(printf '%s' "$line" | wc -l | tr -d ' ')" = 0 ] && [ "${line#*  }" = "$name" ] \
+    || { echo "publish-formula: $tag's checksum is not one line for $name" >&2; exit 1; }
+sha=${line%%  *}
 formula=$(cat <<EOF
 class Nerd < Formula
   desc "Terminal multiplexer for AI agents"

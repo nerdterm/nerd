@@ -110,8 +110,7 @@ fn check() -> Result<Found, String> {
     }
 }
 
-/// The release `tag` into ~/.local/bin, through the embedded install.sh, which refuses an archive whose checksum differs.
-/// ceiling: the checksum comes from the same release, so it proves the download intact, not who made it; signed releases are the way past.
+/// The release `tag` into ~/.local/bin, through the embedded install.sh, which refuses an archive unless one of nerd's release keys signed its checksum.
 fn install(tag: &str) -> Result<String, String> {
     if let Some(b) = blocked_here() {
         return Err(b);
@@ -119,7 +118,7 @@ fn install(tag: &str) -> Result<String, String> {
     let home = crate::paths::home().ok_or("no home folder")?;
     let name = format!("nerd-{tag}-macos-arm64.tar.gz");
     let done = in_fresh_dir(|dir| {
-        for n in [name.clone(), format!("{name}.sha256")] {
+        for n in release_files(&name) {
             curl(&asset_url(tag, &n), &dir.join(&n), 300)?;
         }
         install_sh(&dir.join(&name), &home)
@@ -131,19 +130,18 @@ fn install(tag: &str) -> Result<String, String> {
     done
 }
 
+/// The archive, its checksum, and the checksum's signature: install.sh needs all three.
+fn release_files(archive: &str) -> [String; 3] {
+    [archive.to_string(), format!("{archive}.sha256"), format!("{archive}.sha256.sig")]
+}
+
 /// With the archive given, install.sh reaches no network: it checks, unpacks, signs and renames into place.
 fn install_sh(archive: &Path, home: &Path) -> Result<String, String> {
     use std::io::Write as _;
-    let bindir = home.join(".local/bin");
-    let mut cmd = crate::spawn::cmd("/bin/sh");
-    cmd.arg("-s").arg("--").arg(archive);
-    // The bindir on PATH, so install.sh leaves ~/.zshrc alone; last, so no tool of the user's stands in for the system's.
-    cmd.env_remove("NERD_INSTALL_UNVERIFIED").env_remove("NERD_RELEASE_API").env("HOME", home).env("NERD_BINDIR", &bindir);
-    cmd.env("PATH", format!("/usr/bin:/bin:/usr/sbin:/sbin:{}", bindir.display()));
-    cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut cmd = install_cmd(archive, home);
     let mut child = cmd.spawn().map_err(|e| format!("sh: {e}"))?;
     if let Some(mut i) = child.stdin.take() {
-        let _ = i.write_all(INSTALL_SH.as_bytes());
+        let _ = i.write_all(install_script().as_bytes());
     }
     let out = child.wait_with_output().map_err(|e| format!("sh: {e}"))?;
     let last = |b: &[u8]| {
@@ -159,6 +157,28 @@ fn install_sh(archive: &Path, home: &Path) -> Result<String, String> {
     }
     let said = String::from_utf8_lossy(&out.stdout).lines().find_map(|l| l.strip_prefix("nerd: installed ").map(str::to_string));
     Ok(crate::render::unspoofed(&said.unwrap_or_default()))
+}
+
+fn install_cmd(archive: &Path, home: &Path) -> std::process::Command {
+    let bindir = home.join(".local/bin");
+    let mut cmd = crate::spawn::cmd("/bin/sh");
+    cmd.arg("-s").arg("--").arg(archive);
+    // The bindir on PATH, so install.sh leaves ~/.zshrc alone; last, so no tool of the user's stands in for the system's.
+    cmd.env_remove("NERD_INSTALL_UNVERIFIED").env_remove("NERD_RELEASE_API").env("HOME", home).env("NERD_BINDIR", &bindir);
+    cmd.env("PATH", format!("/usr/bin:/bin:/usr/sbin:/sbin:{}", bindir.display()));
+    cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd
+}
+
+/// The embedded install.sh; debug builds only: `NERD_TEST_RELEASE_KEYS` stands in for its release keys, as `NERD_TEST_CURL` does for curl.
+fn install_script() -> std::borrow::Cow<'static, str> {
+    #[cfg(debug_assertions)]
+    if let Ok(keys) = std::env::var("NERD_TEST_RELEASE_KEYS") {
+        let (head, rest) = INSTALL_SH.split_once("# release keys begin\n").expect("install.sh has a key block");
+        let (_, tail) = rest.split_once("# release keys end\n").expect("install.sh has a key block");
+        return format!("{head}# release keys begin\nkeys='{}'\n# release keys end\n{tail}", keys.trim_end()).into();
+    }
+    INSTALL_SH.into()
 }
 
 /// A folder of its own per run, gone after it: two servers may check at once.
@@ -267,7 +287,7 @@ fn parse(json: &[u8]) -> Result<(String, String), String> {
         return Err(format!("the newest release's tag {tag:?} is not a version"));
     }
     let archive = format!("nerd-{tag}-macos-arm64.tar.gz");
-    if let Some(n) = [archive.clone(), format!("{archive}.sha256")].into_iter().find(|n| !r.assets.iter().any(|a| a.name == *n)) {
+    if let Some(n) = release_files(&archive).into_iter().find(|n| !r.assets.iter().any(|a| a.name == *n)) {
         return Err(format!("release {tag} has no {n} yet"));
     }
     Ok((tag, r.body.unwrap_or_default()))
@@ -405,6 +425,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_install_takes_no_way_around_the_signature_from_the_environment() {
+        let cmd = install_cmd(Path::new("/tmp/a.tar.gz"), Path::new("/tmp/home"));
+        let env: std::collections::HashMap<_, _> = cmd.get_envs().collect();
+        for k in ["NERD_INSTALL_UNVERIFIED", "NERD_RELEASE_API"] {
+            assert_eq!(env.get(std::ffi::OsStr::new(k)), Some(&None), "{k} is removed");
+        }
+        assert!(INSTALL_SH.contains("# release keys begin\n") && INSTALL_SH.contains("# release keys end\n"), "the key block the tests replace");
+    }
+
+    #[test]
     fn curl_reads_no_curlrc_speaks_only_https_and_takes_no_proxy() {
         let a = curl_args(API, Path::new("/x/out"), 30);
         assert_eq!(a[0], "-q", "-q only works first");
@@ -459,14 +489,15 @@ mod tests {
     }
 
     #[test]
-    fn the_answer_needs_the_archive_and_its_checksum() {
+    fn the_answer_needs_the_archive_its_checksum_and_its_signature() {
         let json = |assets: &[&str]| {
             let a: Vec<_> = assets.iter().map(|n| serde_json::json!({ "name": n, "browser_download_url": format!("https://evil.example/{n}") })).collect();
             serde_json::json!({ "tag_name": "v0.13.0", "body": "## x", "assets": a }).to_string()
         };
-        let both = ["nerd-v0.13.0-macos-arm64.tar.gz", "nerd-v0.13.0-macos-arm64.tar.gz.sha256"];
+        let both = ["nerd-v0.13.0-macos-arm64.tar.gz", "nerd-v0.13.0-macos-arm64.tar.gz.sha256", "nerd-v0.13.0-macos-arm64.tar.gz.sha256.sig"];
         assert_eq!(parse(json(&both).as_bytes()), Ok(("v0.13.0".into(), "## x".into())));
         assert!(parse(json(&both[..1]).as_bytes()).is_err(), "no checksum, nothing to offer");
+        assert_eq!(parse(json(&both[..2]).as_bytes()), Err("release v0.13.0 has no nerd-v0.13.0-macos-arm64.tar.gz.sha256.sig yet".into()), "no signature, nothing to offer");
         assert!(parse(b"not json").is_err());
         let odd = serde_json::json!({ "tag_name": "v0.13.0/../x", "assets": [] }).to_string();
         assert!(parse(odd.as_bytes()).is_err(), "a tag that is not a version");

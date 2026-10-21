@@ -30,8 +30,9 @@ bin="$work/target/release/nerd"
 codesign --force --sign - "$bin"
 name="nerd-$tag-macos-arm64.tar.gz"
 tar -czf "$work/$name" -C "$work/target/release" nerd
-(cd "$work" && shasum -a 256 "$name" > "$name.sha256")
-gh release upload "$tag" "$work/$name" "$work/$name.sha256" --clobber
+# Signed with the release key, then installed by this tag's own install.sh into a scratch folder: a release its users would refuse never leaves.
+sh scripts/sign-release.sh "$work/$name" "$work/src/install.sh"
+gh release upload "$tag" "$work/$name" "$work/$name.sha256" "$work/$name.sha256.sig" --clobber
 # The bot leaves the release as a draft; this asset is what publishes it.
 gh release edit "$tag" --draft=false
 git worktree remove --force "$work/src"
