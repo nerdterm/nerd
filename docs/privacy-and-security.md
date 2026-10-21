@@ -5,7 +5,7 @@
 - **What is stored.** Everything is under `~/Library/Application Support/nerd/`, private to your user:
   - the layout, working directories, commands, and each agent's session id with the agent it belongs to;
   - the resume command of each agent you confirmed when its hook was installed;
-  - whether nerd may check for a new release once a day, and when it last did (`update-check`, `update-checked`);
+  - whether nerd may check for a new release once a day, and when it last did (`update-check`, `update-checked`), the release you skipped (`release-skipped`), each server's last answer and the release its window's install click left (`release.json`, `release-install`), and while a check or an install runs, its download folder (`release-<pid>`, removed afterwards);
   - pane text, written when the server stops and deleted when it starts again, kept out of Time Machine and Spotlight. It holds whatever your panes printed. Set `restore_screens` to `false` to turn it off.
 
   Outside that folder, a terminal preset writes only on your word (**Settings… → Terminal preset…**, `nerd --preset`): it adds one marked block or line to that terminal's config, writes iTerm2's profile named nerd, and sets iTerm2's margins and default profile. It shows every change before making it, and undo takes them back.

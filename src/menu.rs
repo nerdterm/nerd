@@ -676,8 +676,8 @@ impl Confirm {
             // A first button named `[k] …` answers to its own letter too.
             Char(c) if self.buttons[0].label.trim_start().strip_prefix('[').and_then(|l| l.strip_prefix(c.to_ascii_lowercase())).is_some_and(|l| l.starts_with(']')) => ConfirmOutcome::Yes,
             Char('n') | Char('N') => ConfirmOutcome::No,
-            // The key its label shows in brackets; without a third button there is nothing to answer.
-            Char(c) if self.buttons.len() > 2 && Some(c.to_ascii_lowercase()) == self.other_key => ConfirmOutcome::Other,
+            // The key its label shows in brackets; without that button there is nothing to answer.
+            Char(c) if self.buttons.iter().any(|b| b.outcome == ConfirmOutcome::Other) && Some(c.to_ascii_lowercase()) == self.other_key => ConfirmOutcome::Other,
             Left | BackTab => {
                 self.selected = (self.selected + self.buttons.len() - 1) % self.buttons.len();
                 ConfirmOutcome::None

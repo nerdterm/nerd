@@ -60,6 +60,10 @@ fn terminal() -> std::io::Result<()> {
         println!("From a pane nerd only checks: install it with Check for a new release… in nerd's menu.");
         return Ok(());
     }
+    if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        println!("No terminal to answer in: nothing installed. Run nerd --check-update in a terminal, or use Check for a new release… in nerd's menu.");
+        return Ok(());
+    }
     if !crate::install::ask_terminal(&format!("Install nerd {}?", f.tag.trim_start_matches('v'))) {
         println!("Nothing installed.");
         return Ok(());
@@ -133,9 +137,9 @@ fn install_sh(archive: &Path, home: &Path) -> Result<String, String> {
     let bindir = home.join(".local/bin");
     let mut cmd = crate::spawn::cmd("/bin/sh");
     cmd.arg("-s").arg("--").arg(archive);
-    // The bindir on PATH, so install.sh leaves ~/.zshrc alone.
+    // The bindir on PATH, so install.sh leaves ~/.zshrc alone; last, so no tool of the user's stands in for the system's.
     cmd.env_remove("NERD_INSTALL_UNVERIFIED").env_remove("NERD_RELEASE_API").env("HOME", home).env("NERD_BINDIR", &bindir);
-    cmd.env("PATH", format!("{}:/usr/bin:/bin:/usr/sbin:/sbin", bindir.display()));
+    cmd.env("PATH", format!("/usr/bin:/bin:/usr/sbin:/sbin:{}", bindir.display()));
     cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd.spawn().map_err(|e| format!("sh: {e}"))?;
     if let Some(mut i) = child.stdin.take() {

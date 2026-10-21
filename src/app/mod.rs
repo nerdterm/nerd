@@ -1425,7 +1425,14 @@ mod tests {
             release_ends(&mut app, Said::Found(crate::release::Found { blocked: Some("nerd was installed with Homebrew: run brew upgrade nerd".into()), ..found("v9.0.0") }));
             let Overlay::Confirm(c, Pending::ReleaseInstall(_)) = &app.overlay else { panic!("told, with skip as its only choice") };
             assert!(c.body_lines(200).join(" ").contains("run brew upgrade nerd"));
-            app.overlay = Overlay::None;
+            press(&mut app, KeyCode::Char('y'));
+            assert!(app.release_job.is_none() && app.overlay.is_open(), "y installs nothing over Homebrew");
+            press(&mut app, KeyCode::Char('s'));
+            assert!(app.toast.take().is_some_and(|t| t.contains("skipped")), "s skips it");
+            app.overlay = app.check_release();
+            release_ends(&mut app, Said::Found(crate::release::Found { blocked: Some("nerd was installed with Homebrew: run brew upgrade nerd".into()), ..found("v9.0.1") }));
+            press(&mut app, KeyCode::Enter);
+            assert!(!app.overlay.is_open() && app.toast.is_none() && crate::release::skipped().as_deref() != Some("v9.0.1"), "Enter only closes it");
             app.overlay = app.check_release();
             release_ends(&mut app, Said::Found(crate::release::Found { newer: false, ..found("v0.1.0") }));
             let Overlay::Confirm(c, Pending::Dismiss) = &app.overlay else { panic!("only told") };

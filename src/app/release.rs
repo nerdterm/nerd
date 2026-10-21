@@ -125,7 +125,7 @@ impl App {
         let rows = f.notes.iter().map(|l| vec![l.clone()]).collect();
         let said = format!("{newest} is out; {running} runs here.");
         if let Some(b) = &f.blocked {
-            let c = Confirm::new(TITLE, format!("{said} {b}.")).rows(rows).info().other(" [s] skip this release ");
+            let c = Confirm::new(TITLE, format!("{said} {b}.")).rows(rows).info().other(" [s] skip this release ").click_yes().select(0);
             return Overlay::Confirm(c, Pending::ReleaseInstall(f.tag));
         }
         let body = format!("{said} Install downloads it from GitHub, checks it against the checksum published with it and puts it in ~/.local/bin; Update available then swaps the running servers for it.");
