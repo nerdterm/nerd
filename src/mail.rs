@@ -9,6 +9,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::layout::PaneId;
 
+/// The first steps, drawn at the top of the Messages window; docs/messages-between-agents.md repeats them word for word.
+pub const QUICK_START: [&str; 3] = [
+    "Name the pane: Rename pane… in its menu. Only a named pane can send or receive.",
+    "nerd agents lists whom it may write to; nerd send <name> \"text\" writes, and - reads the text from stdin.",
+    "nerd inbox shows what came; nerd send --reply <id> \"text\" answers.",
+];
 /// One pane buried.
 pub const QUEUED_PER_RECIPIENT: usize = 50;
 /// The owner's needs-you list growing without bound.
@@ -539,6 +545,14 @@ fn rewrite(path: &Path, live: &[Message]) -> std::io::Result<std::fs::File> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_docs_quick_start_is_the_windows_word_for_word() {
+        let docs: Vec<String> = include_str!("../docs/messages-between-agents.md").lines()
+            .skip_while(|l| *l != "**Quick start:**").skip(2).take_while(|l| !l.is_empty())
+            .map(|l| l.split_once(". ").map_or(l, |(_, t)| t).replace('`', "")).collect();
+        assert_eq!(docs, QUICK_START, "docs/messages-between-agents.md's quick start and QUICK_START");
+    }
 
     fn party(pane: PaneId, name: &str) -> Party {
         Party::Pane { pane: Some(pane), name: name.into(), agent: None, uid: 501 }

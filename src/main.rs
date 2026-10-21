@@ -228,12 +228,13 @@ pub fn version_line() -> String {
 }
 
 fn print_help() {
-    let installed = if config::autostart::is_installed() {
-        "   [installed]"
-    } else {
-        ""
-    };
-    println!(
+    let mark = |on: bool| if on { "   [installed]" } else { "" };
+    println!("{}", help(mark(config::autostart::is_installed()), mark(hook::is_installed())));
+}
+
+/// `autostart` and `hook`: the marks after `--install` and `--install-hook`.
+fn help(autostart: &str, hook: &str) -> String {
+    format!(
         "nerd: a multiplexer for agents\n\
          \n\
          Running with no arguments opens a new server with its own desktop.\n\
@@ -261,7 +262,7 @@ fn print_help() {
            --plugin-off NAME, --plugin-on NAME  turn a plugin off or on\n\
            --plugin-catalog  fetch the plugin catalog; a release it revokes is turned off\n\
            --plugin-trial DIR  run a plugin once in its sandbox with no network, send it its events, say what it did\n\
-           send NAME|all|you TEXT  send a message to a named pane (TEXT - reads stdin); --reply ID, --ask-route NAME, --wait SECS\n\
+           send NAME|all|you TEXT  message another agent's pane by its name (TEXT - reads stdin); --reply ID, --ask-route NAME, --wait SECS\n\
            agents        the named panes this pane may write to\n\
            inbox [--all] [--show ID]  messages to this pane\n\
            wait ID [--thread] [--count N] [--timeout S]  wait for replies (600 s)\n\
@@ -278,9 +279,9 @@ fn print_help() {
            -  split down  \\  split side  Z  full screen\n\
            S  sidebar     U  update      an arrow  move between panes and areas\n\
            Esc close a menu, dialog or search",
-        installed,
-        if hook::is_installed() { "   [installed]" } else { "" }
-    );
+        autostart,
+        hook
+    )
 }
 
 fn install_autostart() -> std::io::Result<()> {
@@ -302,7 +303,15 @@ pub fn body_area(size: ratatui::layout::Size) -> ratatui::layout::Rect {
 
 #[cfg(test)]
 mod tests {
-    use super::{from_window, resume_name};
+    use super::{from_window, help, resume_name};
+
+    #[test]
+    fn the_help_says_send_messages_another_agent() {
+        let text = help("", "");
+        let lines: Vec<&str> = text.lines().map(str::trim_start).collect();
+        assert!(lines.contains(&"send NAME|all|you TEXT  message another agent's pane by its name (TEXT - reads stdin); --reply ID, --ask-route NAME, --wait SECS"), "{text}");
+        assert!(lines.iter().any(|l| l.starts_with("agents ")) && lines.iter().any(|l| l.starts_with("inbox ")), "{text}");
+    }
 
     fn args(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
