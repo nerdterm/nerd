@@ -63,6 +63,7 @@ The right Option key keeps typing the layout's symbols, such as — and €. ner
 | `nerd --list` | Servers, running or stopped, with their names, sandbox and spaces |
 | `nerd --stop [NAME]` | Stop a server, or all of them. Also **Stop this server…** |
 | `nerd --update [NAME]` | Switch running servers to the installed build; panes keep running. Also **Update…** |
+| `nerd --check-update` | Ask GitHub for the newest release and show its changelog; from a terminal outside nerd's panes, install it after you answer `y`. Also **Check for a new release…** |
 | `nerd --disconnect [NAME]` | End every connection to a server, or to all; programs keep running. Also **Disconnect everyone…** |
 | `nerd --remote M [NAME]` | Open a server on machine `M` from `remotes` in config.json, over ssh. Also **Connect to another computer…** |
 | `nerd --install-hook` | Install the hook into every supported agent found. Also **Settings… → Agent hooks** |
@@ -85,5 +86,7 @@ The right Option key keeps typing the layout's symbols, such as — and €. ner
 `nerd send`, `nerd agents`, `nerd inbox` and `nerd wait` are for programs in panes: see [Messages](messages-between-agents.md).
 
 ## Updating
+
+**Check for a new release…** in the main menu asks GitHub for the newest release of nerd and shows it with its changelog: **install** downloads it, checks it against the checksum published with it and puts it in `~/.local/bin`, as install.sh does; **skip this release** keeps the daily check quiet about it; **later** leaves it. A nerd installed with Homebrew is told to run `brew upgrade nerd`, and one running from anywhere else names its path and installs nothing. Install works only from nerd's own window on the Mac the server runs on, not from a window opened inside a pane or from another Mac (though a program running as you could ask for the install itself: it would get only the newest release, checked against its checksum: nothing it could not already do as you). The first window on a Mac asks once whether nerd may check by itself once a day; **Settings… → Check for new releases** changes the answer, which is kept per Mac in `update-check` next to config.json. A daily check only shows a card, and marks **Check for a new release…** in the menu until you install or skip that release. Every check writes a line to the log, and what it sends is in [What leaves nerd](privacy-and-security.md#what-leaves-nerd).
 
 After you install a new build, a card says **Update available**, and the **≡** menu button and **Update…** in the menu are marked. **… more** on the card, or **Update…**, opens a window with the running build, the new one and what changed between them: **update now** hands the running server's panes to the new build, and their programs keep running; **skip this build** says nothing more about that build; **later** leaves it for now.

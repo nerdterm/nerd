@@ -807,7 +807,7 @@ fn refuse_yes(yes: bool, in_pane: bool) -> Result<(), String> {
 /// A pane's program may be an agent: from there nothing is placed, the Plugins window asks.
 /// It keeps an honest agent from installing on its own; it is no wall against code of the same user, which can write
 /// the plugins folder anyway. The pane's marker is inherited, so a process that left the pane's tree still carries it.
-fn in_pane() -> bool {
+pub(crate) fn in_pane() -> bool {
     (std::env::var_os("NERD_PANE").is_some() || crate::detect::procs().is_some_and(|p| crate::detect::under_broker(&p, std::process::id() as i32))) && !crate::msock::pane_rights()
 }
 
@@ -922,7 +922,7 @@ fn remove_asking(name: &str, data: Option<bool>) -> Result<(), String> {
     Ok(())
 }
 
-fn ask_terminal(q: &str) -> bool {
+pub(crate) fn ask_terminal(q: &str) -> bool {
     use std::io::{IsTerminal as _, Write as _};
     if !std::io::stdin().is_terminal() {
         println!("{q} No terminal to answer in: nothing changed (--yes answers yes).");

@@ -644,6 +644,10 @@ impl Confirm {
     /// Yes only by a click; the dialog opens on the button that does not act.
     pub fn click_yes(mut self) -> Self {
         self.click_yes = true;
+        // Enter does not press it, so its label must not say so.
+        if let Some(b) = self.buttons.first_mut() {
+            b.label = b.label.replacen(" [Enter] ", " ", 1);
+        }
         self.since = std::time::Instant::now();
         self.select(1)
     }
@@ -672,8 +676,8 @@ impl Confirm {
             // A first button named `[k] …` answers to its own letter too.
             Char(c) if self.buttons[0].label.trim_start().strip_prefix('[').and_then(|l| l.strip_prefix(c.to_ascii_lowercase())).is_some_and(|l| l.starts_with(']')) => ConfirmOutcome::Yes,
             Char('n') | Char('N') => ConfirmOutcome::No,
-            // The key its label shows in brackets; without a third button there is nothing to answer.
-            Char(c) if self.buttons.len() > 2 && Some(c.to_ascii_lowercase()) == self.other_key => ConfirmOutcome::Other,
+            // The key its label shows in brackets; without that button there is nothing to answer.
+            Char(c) if self.buttons.iter().any(|b| b.outcome == ConfirmOutcome::Other) && Some(c.to_ascii_lowercase()) == self.other_key => ConfirmOutcome::Other,
             Left | BackTab => {
                 self.selected = (self.selected + self.buttons.len() - 1) % self.buttons.len();
                 ConfirmOutcome::None
@@ -1061,6 +1065,7 @@ mod tests {
         c.key(k(crossterm::event::KeyCode::Left));
         assert_eq!(c.key(k(crossterm::event::KeyCode::Enter)), ConfirmOutcome::None, "not even with yes chosen");
         assert_eq!(Confirm::new("Close", "x").key(k(crossterm::event::KeyCode::Char('y'))), ConfirmOutcome::Yes, "other questions keep their keys");
+        assert!(!c.buttons[0].label.contains("[Enter]"), "a click-only yes does not name Enter: {}", c.buttons[0].label);
 
         // A click already on its way when it opened does not land on yes; a later one does.
         let screen = Rect::new(0, 0, 100, 30);

@@ -18,7 +18,7 @@ Pull requests are accepted **only for issues labelled `accepted`**. Comment on t
 Out of scope, and closed:
 
 - support for Linux, Windows or other platforms: planned by the maintainer, pull requests for them are not accepted;
-- network code in nerd itself beyond the plugin and pane proxy, telemetry and update checks: nerd reaches the network only by starting `git` or `ssh` when the user asks, and through plugins the user approved and panes set to Only these providers ([docs/privacy-and-security.md](docs/privacy-and-security.md), "What leaves nerd");
+- network code in nerd itself beyond the plugin and pane proxy, and telemetry: nerd reaches the network only by starting `git` or `ssh` when the user asks, `curl` for a release check the user asked for or allowed, and through plugins the user approved and panes set to Only these providers ([docs/privacy-and-security.md](docs/privacy-and-security.md), "What leaves nerd");
 - new dependencies under a copyleft licence (GPL, LGPL, AGPL, MPL);
 - large refactors and reformatting unrelated to the issue.
 

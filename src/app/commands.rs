@@ -190,6 +190,7 @@ impl App {
             Pending::RemoveWorktree(_) => "Delete worktree checkout",
             Pending::DeletePath(_) => "Delete",
             Pending::Update => "Update nerd",
+            Pending::ReleaseInstall(_) | Pending::ReleaseDaily => "Check for a new release",
             // Never routed here: these dialogs write their own title and body.
             Pending::Detach => "Detach",
             Pending::DisconnectAll => "Disconnect everyone",
@@ -266,6 +267,7 @@ impl App {
             // Detach never reaches here: its dialog is built on its own.
             Pending::Detach | Pending::DisconnectAll | Pending::Update | Pending::LeaveTmux | Pending::CopyResumeCommand => 0,
             Pending::OpenRemote(_) | Pending::CopyCommand(_) | Pending::Dismiss | Pending::ShowInFinder(_) | Pending::InstallHook(_) | Pending::RemoveHook | Pending::StopServer | Pending::PluginReady(..) | Pending::RemovePlugin(_) | Pending::Rename(..) | Pending::Topology(..) | Pending::Preset(..) => 0,
+            Pending::ReleaseInstall(_) | Pending::ReleaseDaily => 0,
             Pending::CloseGroup(key) => self
                 .spaces
                 .iter()
@@ -440,6 +442,10 @@ impl App {
             }
             O::Topology => self.topology_overlay(None),
             O::Accounts => Overlay::Accounts(crate::isolation_ui::Accounts::default()),
+            O::ReleaseCheck(daily) => {
+                self.set_release_check(daily);
+                Overlay::Settings(s)
+            }
             O::None => Overlay::Settings(s),
         }
     }
@@ -463,6 +469,10 @@ impl App {
             return match more {
                 More::Update => self.update_overlay(),
                 More::Updated => self.updated_overlay(),
+                More::Release => match self.release_found.clone() {
+                    Some(f) => self.release_window(f),
+                    None => Overlay::None,
+                },
             };
         }
         let (title, text) = match (self.notice.take(), self.toast.take()) {
@@ -512,6 +522,12 @@ impl App {
         if let Pending::RemovePlugin(n) = &what {
             self.remove_plugin(n, true);
         }
+        if let Pending::ReleaseInstall(tag) = &what {
+            self.skip_release(tag);
+        }
+        if matches!(what, Pending::ReleaseDaily) && self.set_release_check(false) {
+            self.toast = Some("nerd checks for a release only when you choose Check for a new release…".into());
+        }
         if matches!(what, Pending::Update) {
             // Only this build: the next one is said again.
             let _ = std::fs::write(crate::paths::state_root().join("update-skipped"), &self.update_info);
@@ -545,6 +561,12 @@ impl App {
                 }
             }
             Pending::Update => self.upgrade = true,
+            Pending::ReleaseInstall(tag) => self.install_release(tag),
+            Pending::ReleaseDaily => {
+                if self.set_release_check(true) {
+                    self.toast = Some("nerd asks GitHub for a new release once a day".into());
+                }
+            }
             Pending::StopServer => self.stop_server = true,
             Pending::RemovePlugin(n) => self.remove_plugin(&n, false),
             // What is placed is what was asked about: the same commit, checked again now.
@@ -1067,6 +1089,7 @@ impl App {
             vec![
                 Item::new("About nerd…", Action::About),
                 Item::new("Update…", Action::Update).key(global_label(KeyActionName::Act(KeyAction::Update))).mark(self.update_available && !self.update_skipped),
+                Item::new("Check for a new release…", Action::CheckRelease).mark(self.release_found.is_some()),
                 Item::new("Export logs…", Action::Report),
             ],
             plugin_group(crate::agents::Place::Global, self.builtins),
@@ -1427,6 +1450,7 @@ impl App {
             // The same dialog as on attach: it explains itself and offers the command as a fallback.
             (Action::TmuxWindow, _) => return self.tmux_offer(),
             (Action::Update, _) => return self.update_overlay(),
+            (Action::CheckRelease, _) => return self.check_release(),
             (Action::Search, ctx) => {
                 let id = match ctx {
                     MenuCtx::Pane(id) => Some(*id),
@@ -1847,6 +1871,7 @@ pub enum Action {
     Detach,
     ToggleTree,
     Update,
+    CheckRelease,
     Search,
     Navigator,
     ToggleSidebar,
@@ -2093,6 +2118,10 @@ pub enum Pending {
     Topology(Vec<crate::policy::Route>, Option<Box<crate::messages::Messages>>),
     /// A terminal preset's steps as the window showed them; `true` when they undo it.
     Preset(crate::presets::Terminal, Vec<crate::presets::Step>, bool),
+    /// The release the window showed, by its tag; the third button skips it.
+    ReleaseInstall(String),
+    /// Check daily for a new release; the third button says no, Esc asks again with the next window.
+    ReleaseDaily,
 }
 
 impl Overlay {

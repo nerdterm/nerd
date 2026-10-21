@@ -22,6 +22,8 @@ target/release/nerd --sandbox-selftest
 cargo_home=${CARGO_HOME:-$HOME/.cargo}
 rustup_home=${RUSTUP_HOME:-$HOME/.rustup}
 HOME="$fresh" CARGO_HOME="$cargo_home" RUSTUP_HOME="$rustup_home" cargo test --release
+# The release check's stand-in for curl exists in debug builds only.
+HOME="$fresh" CARGO_HOME="$cargo_home" RUSTUP_HOME="$rustup_home" cargo test --test release
 cargo clippy --release --all-targets -- -D warnings
 # cargo-deny may be absent on the release runner; the pr workflow covers it.
 if command -v cargo-deny >/dev/null 2>&1; then

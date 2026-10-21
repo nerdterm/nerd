@@ -46,6 +46,7 @@ mod preview;
 mod previews;
 mod proto;
 mod pty;
+mod release;
 mod render;
 mod report;
 mod run;
@@ -136,6 +137,7 @@ fn run() -> std::io::Result<()> {
         }
         Some("--stop") => return client::stop(args.get(1).cloned()),
         Some("--update") => return client::update(args.get(1).cloned()),
+        Some("--check-update") => return release::main(&args[1..]),
         Some("--disconnect") => return client::disconnect(args.get(1).cloned()),
         Some("--rename") if args.len() > 3 => {
             return Err(std::io::Error::other("usage: nerd --rename <server> [name]; a name is one word"));
@@ -241,6 +243,7 @@ fn print_help() {
            --list            servers: running or stopped, sandbox, spaces\n\
            --remote M [NAME] a server on machine M from remotes in the settings file, over ssh\n\
            --update [NAME]   swap running servers for the installed build; panes survive\n\
+           --check-update    ask GitHub for a newer release; from a terminal, install it after asking\n\
            --stop [NAME]     stop one server, or all of them\n\
            --disconnect [NAME]  end every connection to a server, or to all; programs keep running\n\
            --daemon          start the server (usually automatic)\n\

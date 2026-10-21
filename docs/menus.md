@@ -82,6 +82,10 @@ Every window except a context menu is drawn through `chrome::dialog`, and `chrom
   (it also writes nerd's file) and **[Esc] close**. The files are on the server's Mac, so a window from another Mac is
   told to run `nerd --preset` there.
 - Every change these windows make is refused from a window attached from inside a pane; reading them is not.
+- Main menu, after **Update…**: **Check for a new release…** opens "Check for a new release" with the newest release and its
+  changelog, then **install** (a click only), **[Esc] later** and **[s] skip this release**; install is refused from a window inside
+  a pane or from another Mac. Settings → Updates: **Check for new releases**, off or daily, stored per Mac beside config.json
+  and changed only from nerd's own window on that Mac.
 
 ## Words
 

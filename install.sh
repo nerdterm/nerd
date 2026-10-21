@@ -51,9 +51,13 @@ tar -xzf "$archive" -C "$work"
 [ -f "$work/nerd" ] || die "the archive holds no nerd binary"
 xattr -d com.apple.quarantine "$work/nerd" 2>/dev/null || true
 mkdir -p "$bindir"
-# install, not cp: macOS caches a signature by inode; overwriting in place gets the binary killed at launch.
-install -m 755 "$work/nerd" "$bindir/nerd"
-codesign --force --sign - "$bindir/nerd" 2>/dev/null
+# Signed beside the old one, then renamed over it: never a moment with no nerd, or an unsigned one.
+# A new file, not cp: macOS caches a signature by inode; overwriting in place gets the binary killed at launch.
+new=$(mktemp -d "$bindir/.nerd-install.XXXXXX")
+trap 'rm -rf "$work" "$new"' EXIT
+install -m 755 "$work/nerd" "$new/nerd"
+codesign --force --sign - "$new/nerd" 2>/dev/null
+mv -f "$new/nerd" "$bindir/nerd"
 
 line='export PATH="$HOME/.local/bin:$PATH"'
 case ":$PATH:" in

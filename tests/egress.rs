@@ -12,6 +12,9 @@ const ALLOW: &[(&str, &str, &str, &str, &str, &str)] = &[
     // git-fetch: the only git allowed the network, and `fn git` lets it clone and nothing else.
     ("src/install.rs", "git", "spawn", "git_exe () ?", "git-fetch", "plugin and catalog fetches, clone only"),
     ("src/app/commands.rs", "plugin_fetch", "broker-exec", "b --window", "git-fetch", "nerd <args> --window fetches a plugin outside the sandbox"),
+    // release-check: curl to GitHub's latest release, on your word or daily once you allowed it.
+    ("src/release.rs", "curl", "spawn", "curl_exe ()", "release-check", "/usr/bin/curl, https only, no .curlrc and no proxy; its release branch names only that curl"),
+    ("src/app/release.rs", "release_exec", "broker-exec", "b --check-update", "release-check", "nerd --check-update --window checks, or installs on the window's click, outside the sandbox"),
     // ssh: Connect to another computer.
     ("src/client.rs", "list_remote", "spawn", "ssh", "ssh", "lists the servers on the host you named"),
     ("src/client.rs", "spawn_relay", "spawn", "ssh", "ssh", "carries the session to the host you named"),
@@ -91,6 +94,7 @@ const ALLOW: &[(&str, &str, &str, &str, &str, &str)] = &[
     ("src/session.rs", "exclude_from_time_machine", "spawn", "\"/usr/bin/tmutil\"", "local", "keeps saved pane text and messages out of Time Machine"),
     ("src/spawn.rs", "cmd", "command", "program", "local", "the one door every other spawn goes through"),
     ("src/trial.rs", "trial", "spawn", "exe --plugin-exec", "local", "a plugin's trial run, with no network"),
+    ("src/release.rs", "install_sh", "spawn", "\"/bin/sh\"", "local", "the embedded install.sh on the downloaded archive: checksum, unpack, sign, rename into ~/.local/bin; with an archive it reaches no network"),
 ];
 
 /// Rows the register states with no door the scan sees: a setting (the sandbox off), or a unix socket (not scanned).

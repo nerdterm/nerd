@@ -432,6 +432,7 @@ fn serve(started: &mut bool) -> std::io::Result<()> {
                     lose_on_error(resize(&mut tui, &mut app, cols, rows), &mut app, &sink, id);
                     app.screen = Rect::new(0, 0, cols, rows);
                     app.offer_outside_tmux(id);
+                    app.offer_release_check();
                     warn_sandbox(&mut app);
                     // This build's key map is already on disk; the client is the one that can
                     // have the terminal reread it.
@@ -587,6 +588,7 @@ fn serve(started: &mut bool) -> std::io::Result<()> {
             redraw |= app.tick_remote();
             app.tick_cfg();
             app.plugins.tick();
+            app.tick_release();
             redraw |= app.tick_mail();
         }
 
