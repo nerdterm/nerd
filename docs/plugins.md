@@ -1,4 +1,5 @@
 # Plugins
+<!-- summary: Installing plugins, what a plugin can do and read, and writing and publishing one. -->
 
 A plugin is a folder with a `plugin.json` manifest. The manifest alone can describe an agent (how nerd finds it,
 hooks into it and resumes it; see the README). A plugin that needs to do more also names an executable: nerd

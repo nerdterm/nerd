@@ -1,4 +1,5 @@
 # Usage
+<!-- summary: The mouse, the keys, every command, and updating in place. -->
 
 ## Mouse
 

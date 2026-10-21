@@ -1,4 +1,5 @@
 # Configuration
+<!-- summary: Every key in config.json, which nerd re-reads while it runs. -->
 
 Settings live in `~/Library/Application Support/nerd/config.json`. **Settings…** edits the common ones, and **Edit config.json…** there opens the file. nerd re-reads the file while it runs, so an edit lands within a second.
 

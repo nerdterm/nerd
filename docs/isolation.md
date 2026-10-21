@@ -1,4 +1,5 @@
 # Isolation
+<!-- summary: What a pane may read, write and reach, per pane, tab or space. -->
 
 A pane starts with your access: its program, an agent included, can read and write your files and reach the network. **Isolation…** in a pane's menu narrows that. **Isolation for new panes…** in a tab's or a space's menu sets it for the panes opened there, and a split keeps the isolation of the pane it came from. A change applies when the program starts: **[r] save and restart the program** restarts it.
 
