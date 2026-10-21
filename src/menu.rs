@@ -1011,32 +1011,35 @@ fn elide(s: &str, max: usize) -> String {
     format!("…{}", s.chars().skip(n - max + 1).collect::<String>())
 }
 
+/// Lines of at most `width` cells: a wide character takes two, and the screen cuts what is wider.
 pub fn wrap(text: &str, width: usize) -> Vec<String> {
+    use crate::slots::cells;
     if width == 0 {
         return vec![String::new()];
     }
     let mut lines = Vec::new();
     let mut line = String::new();
     for word in text.split_whitespace() {
-        let word_len = word.chars().count();
+        let word_len = cells(word);
         if word_len > width {
             if !line.is_empty() {
                 lines.push(std::mem::take(&mut line));
             }
-            let mut chars = word.chars();
-            loop {
-                let chunk: String = chars.by_ref().take(width).collect();
-                if chunk.is_empty() {
-                    break;
+            let mut chunk = String::new();
+            for c in word.chars() {
+                // a chunk always takes one character, so a character wider than the line cannot loop
+                if !chunk.is_empty() && cells(&chunk) + cells(c.encode_utf8(&mut [0; 4])) > width {
+                    lines.push(std::mem::take(&mut chunk));
                 }
-                lines.push(chunk);
+                chunk.push(c);
             }
+            lines.push(chunk);
             continue;
         }
         let candidate = if line.is_empty() {
             word_len
         } else {
-            line.chars().count() + 1 + word_len
+            cells(&line) + 1 + word_len
         };
         if candidate > width && !line.is_empty() {
             lines.push(std::mem::take(&mut line));
@@ -1055,6 +1058,16 @@ pub fn wrap(text: &str, width: usize) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wrap_measures_cells_and_keeps_every_character() {
+        let text = format!("{} secret {}", "中".repeat(33), "字".repeat(50));
+        let lines = wrap(&text, 66);
+        assert!(lines.iter().all(|l| crate::slots::cells(l) <= 66), "{lines:?}");
+        assert_eq!(lines.concat().replace(' ', ""), text.replace(' ', ""));
+        assert_eq!(wrap("中", 1), ["中"], "a character wider than the line still comes out once");
+        assert_eq!(wrap("aaaa bb", 3), ["aaa", "a", "bb"]);
+    }
 
     #[test]
     fn a_click_only_question_takes_no_key_for_yes() {

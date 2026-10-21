@@ -21,6 +21,8 @@ pub const PER_PAIR_PER_MINUTE: usize = 6;
 pub const DUPLICATE_WINDOW_SECS: u64 = 60;
 /// A chain A → B → C → … that never ends.
 pub const HOPS: usize = 8;
+/// Every limit that holds a message rather than refusing it; each has a sentence in `Hold::sentence`.
+pub const HELD_LIMITS: [&str; 5] = ["hops", "per_pair_per_minute", "thread", "queued_per_recipient", "broadcast"];
 /// One conversation that never ends.
 pub const THREAD: usize = 40;
 /// One send waking every pane.
@@ -144,6 +146,12 @@ impl Party {
 }
 
 impl Hold {
+    pub fn limit(name: &str) -> Hold {
+        // Tests only: a running server shows the words for a name without a sentence rather than stop.
+        assert!(!cfg!(test) || HELD_LIMITS.contains(&name), "{name} is not in HELD_LIMITS, so it has no sentence");
+        Hold::Limit(name.into())
+    }
+
     pub fn words(&self) -> String {
         match self {
             Hold::Route => "an ask route".into(),
@@ -154,6 +162,42 @@ impl Hold {
             Hold::Unnamed => "the pane is no longer named".into(),
             Hold::Off => "messaging is off".into(),
             Hold::RouteRequest => "asks for a route".into(),
+        }
+    }
+
+    /// Why `m` waits, in a sentence for the owner; `words` stays for logs and agents.
+    pub fn sentence(&self, m: &Message) -> String {
+        let (a, b) = (m.from.name(), m.to.name());
+        match self {
+            Hold::Route => format!("a route asks you before {a} writes to {b}, unless {b} started the thread"),
+            Hold::Mode => format!("messaging is in strict mode and no route lets {a} write to {b}, so it waits for you"),
+            Hold::CrossUid => format!("{a} and {b} run under different macOS accounts; a message between accounts waits for you"),
+            Hold::Limit(n) => match n.as_str() {
+                "hops" => {
+                    let mut names: Vec<&str> = Vec::new();
+                    for h in &m.hops {
+                        if !names.contains(&h.as_str()) {
+                            names.push(h);
+                        }
+                    }
+                    names.sort_by_key(|n| *n != "you");
+                    let they = if names.first() == Some(&"you") { "the exchange" } else { "they" };
+                    let names = match names.split_last() {
+                        Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", rest.join(", ")),
+                        _ => names.concat(),
+                    };
+                    format!("{names} have written to each other {} times in a row; nerd holds every further reply so {they} cannot loop forever", m.hops.len().saturating_sub(2))
+                }
+                "per_pair_per_minute" => format!("{a} has written to {b} {PER_PAIR_PER_MINUTE} times within a minute; nerd holds more so two agents cannot flood each other"),
+                "thread" => format!("this conversation has reached {THREAD} messages; nerd holds more so it cannot go on forever"),
+                "queued_per_recipient" => format!("{QUEUED_PER_RECIPIENT} messages already wait to be delivered to {b}; nerd holds more so one pane is not buried"),
+                "broadcast" => format!("a broadcast is sent to the first {BROADCAST} panes; nerd holds the rest so one message cannot wake every pane"),
+                _ => self.words(),
+            },
+            Hold::NoAgent => format!("no pane holds the name {b} now, so the message has nowhere to go"),
+            Hold::Unnamed => format!("the pane {b} lost its name; the message waits until that pane is named again"),
+            Hold::Off => "messaging was off when it was due; turn it on, then deliver it".into(),
+            Hold::RouteRequest => format!("{a} asks for a route to {b}: allow lets it write, ask holds its messages for you unless {b} started the thread, no refuses them"),
         }
     }
 }
@@ -757,5 +801,29 @@ mod tests {
         let (_, msgs) = Store::open(&path, wall).unwrap();
         assert_eq!(msgs[0].text, "");
         assert!(!std::fs::read_to_string(&path).unwrap().contains("old secret"), "gone from the file too");
+    }
+
+    #[test]
+    fn every_hold_and_limit_has_a_plain_sentence() {
+        let mut m = msg("coder", "reader", "hi", 0);
+        m.hops = ["coder", "reader"].repeat(5).into_iter().map(String::from).collect();
+        let holds = [Hold::Route, Hold::Mode, Hold::CrossUid, Hold::NoAgent, Hold::Unnamed, Hold::Off, Hold::RouteRequest].into_iter().chain(HELD_LIMITS.iter().map(|n| Hold::limit(n)));
+        for h in holds {
+            let s = h.sentence(&m);
+            assert!(s != h.words() && !s.contains('_') && !s.contains("limit "), "{h:?}: {s}");
+        }
+        assert_eq!(Hold::limit("hops").sentence(&m), format!("coder and reader have written to each other {HOPS} times in a row; nerd holds every further reply so they cannot loop forever"));
+        assert_eq!(Hold::Off.sentence(&m), "messaging was off when it was due; turn it on, then deliver it");
+        assert_eq!(Hold::limit("queued_per_recipient").sentence(&m), format!("{QUEUED_PER_RECIPIENT} messages already wait to be delivered to reader; nerd holds more so one pane is not buried"));
+        assert_eq!(Hold::Route.sentence(&m), "a route asks you before coder writes to reader, unless reader started the thread");
+        m.hops = ["reader", "you"].repeat(5).into_iter().map(String::from).collect();
+        assert_eq!(Hold::limit("hops").sentence(&m), format!("you and reader have written to each other {HOPS} times in a row; nerd holds every further reply so the exchange cannot loop forever"));
+        assert_eq!(Hold::Limit("new_one".into()).sentence(&m), "limit new_one", "a record from an older nerd falls back to the words");
+    }
+
+    #[test]
+    #[should_panic(expected = "HELD_LIMITS")]
+    fn a_limit_outside_held_limits_cannot_hold_a_message() {
+        Hold::limit("new_one");
     }
 }

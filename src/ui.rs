@@ -169,6 +169,14 @@ pub fn frame(f: &mut Frame, app: &mut App) -> Effects {
         t.badges = app.plugins.slots.tree.clone();
     }
     let geometry = app.pane_geometry(areas(app, f.area()).panes);
+    if matches!(&app.overlay, crate::app::Overlay::Messages(w) if w.message.is_some()) {
+        let v = app.mail_view();
+        if let crate::app::Overlay::Messages(w) = &mut app.overlay
+            && !w.settle(&v)
+        {
+            app.overlay = crate::app::Overlay::None;
+        }
+    }
     let mut view = std::mem::take(&mut app.view);
     let fx = draw(f, app, &mut view, &geometry);
     app.view = view;
