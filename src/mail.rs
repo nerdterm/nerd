@@ -169,7 +169,7 @@ impl Hold {
     pub fn sentence(&self, m: &Message) -> String {
         let (a, b) = (m.from.name(), m.to.name());
         match self {
-            Hold::Route => format!("a route asks you before {a}'s messages to {b} go through"),
+            Hold::Route => format!("a route asks you before {a} writes to {b}, unless {b} started the thread"),
             Hold::Mode => format!("messaging is in strict mode and no route lets {a} write to {b}, so it waits for you"),
             Hold::CrossUid => format!("{a} and {b} run under different macOS accounts; a message between accounts waits for you"),
             Hold::Limit(n) => match n.as_str() {
@@ -186,18 +186,18 @@ impl Hold {
                         Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", rest.join(", ")),
                         _ => names.concat(),
                     };
-                    format!("{names} have written to each other {HOPS} times in a row; nerd holds every further reply so {they} cannot loop forever")
+                    format!("{names} have written to each other {} times in a row; nerd holds every further reply so {they} cannot loop forever", m.hops.len().saturating_sub(2))
                 }
                 "per_pair_per_minute" => format!("{a} has written to {b} {PER_PAIR_PER_MINUTE} times within a minute; nerd holds more so two agents cannot flood each other"),
                 "thread" => format!("this conversation has reached {THREAD} messages; nerd holds more so it cannot go on forever"),
                 "queued_per_recipient" => format!("{QUEUED_PER_RECIPIENT} messages already wait to be delivered to {b}; nerd holds more so one pane is not buried"),
-                "broadcast" => format!("a broadcast reaches the first {BROADCAST} panes; nerd holds the rest so one message cannot wake every pane"),
+                "broadcast" => format!("a broadcast is sent to the first {BROADCAST} panes; nerd holds the rest so one message cannot wake every pane"),
                 _ => self.words(),
             },
             Hold::NoAgent => format!("no pane holds the name {b} now, so the message has nowhere to go"),
             Hold::Unnamed => format!("the pane {b} lost its name; the message waits until that pane is named again"),
             Hold::Off => "messaging was off when it was due; turn it on, then deliver it".into(),
-            Hold::RouteRequest => format!("{a} asks for a route to {b}: allow lets it write, ask holds each message for you, no refuses them"),
+            Hold::RouteRequest => format!("{a} asks for a route to {b}: allow lets it write, ask holds its messages for you unless {b} started the thread, no refuses them"),
         }
     }
 }
@@ -815,7 +815,7 @@ mod tests {
         assert_eq!(Hold::limit("hops").sentence(&m), format!("coder and reader have written to each other {HOPS} times in a row; nerd holds every further reply so they cannot loop forever"));
         assert_eq!(Hold::Off.sentence(&m), "messaging was off when it was due; turn it on, then deliver it");
         assert_eq!(Hold::limit("queued_per_recipient").sentence(&m), format!("{QUEUED_PER_RECIPIENT} messages already wait to be delivered to reader; nerd holds more so one pane is not buried"));
-        assert_eq!(Hold::Route.sentence(&m), "a route asks you before coder's messages to reader go through");
+        assert_eq!(Hold::Route.sentence(&m), "a route asks you before coder writes to reader, unless reader started the thread");
         m.hops = ["reader", "you"].repeat(5).into_iter().map(String::from).collect();
         assert_eq!(Hold::limit("hops").sentence(&m), format!("you and reader have written to each other {HOPS} times in a row; nerd holds every further reply so the exchange cannot loop forever"));
         assert_eq!(Hold::Limit("new_one".into()).sentence(&m), "limit new_one", "a record from an older nerd falls back to the words");

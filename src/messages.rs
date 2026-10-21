@@ -488,7 +488,7 @@ impl Messages {
         }
         lines.push(row);
         lines.push(vec![("─".repeat(w), g.fg(theme.border), None)]);
-        let text: Vec<String> = m.text.lines().flat_map(|l| crate::menu::wrap(l, w)).collect();
+        let text = text_lines(&m.text, w);
         let mut seen = room.saturating_sub(lines.len());
         let more = text.len() > seen;
         if more {
@@ -1136,6 +1136,18 @@ fn draw_card(grid: &mut Grid, x: usize, y: usize, cw: usize, c: &Card, on: bool,
     grid.put(x + 2, y + 3, &l3, g.fg(theme.muted), hit);
 }
 
+/// The message's text wrapped to `w`, each line keeping its indent of spaces.
+// ceiling: runs of spaces inside a line collapse to one; a character-exact wrap if code alignment matters
+fn text_lines(text: &str, w: usize) -> Vec<String> {
+    text.lines()
+        .flat_map(|l| {
+            // ASCII spaces only: one byte and one cell each, so the slice is on a char boundary
+            let n = l.bytes().take_while(|&b| b == b' ').count().min(w / 2);
+            crate::menu::wrap(&l[n..], w - n).into_iter().map(move |r| format!("{}{r}", " ".repeat(n)))
+        })
+        .collect()
+}
+
 /// A waiting message's buttons: its key, its word and what it does.
 fn buttons(m: &Message) -> Vec<(&'static str, &'static str, Click)> {
     let id = m.id.clone();
@@ -1180,6 +1192,13 @@ mod tests {
     use crate::app::{MailColumn, RouteView, Traffic};
     use crate::mail::{Step, Via};
     use crate::policy::{Files, Isolation, Network, Route};
+
+    #[test]
+    fn text_lines_keep_their_indent() {
+        assert_eq!(text_lines("fn a() {\n    b(c, d)\n}", 10), ["fn a() {", "    b(c,", "    d)", "}"]);
+        assert_eq!(text_lines(&format!("{}x", "\u{a0}".repeat(17)), 66), ["x"], "other whitespace is not an indent");
+        assert_eq!(text_lines(&format!("{}x", " ".repeat(40)), 10), ["     x"], "an indent takes at most half the width");
+    }
 
     fn card(name: &str, pane: Option<PaneId>, tab: &str, agent: Option<&str>, isolation: Isolation) -> Card {
         Card { name: name.into(), pane, tab: tab.into(), agent: agent.map(Into::into), uid: crate::policy::owner_uid(), isolation }

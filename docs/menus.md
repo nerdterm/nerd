@@ -63,9 +63,9 @@ Every window except a context menu is drawn through `chrome::dialog`, and `chrom
   row. It shows sender → recipient, how long it waited, the reason in a sentence, a line of buttons that does not
   scroll (**[d] deliver**, **[h] deliver, allow 1 hour**, **[x] drop**, **[r] reply…**; for a route request
   **[a] allow**, **[k] ask**, **[n] no**; for a message to the owner **[r] reply…**, **[x] drop**), then the text,
-  which the wheel and the arrow keys scroll. Once it is answered the next waiting message of the same pair follows;
-  with none left, and on **[Esc] back**, it returns to the window, or closes when it was opened from the sidebar
-  (**[Esc] close**).
+  which the wheel and the arrow keys scroll. Once it is delivered, dropped, decided or, for a message to the owner,
+  answered, the next waiting message of the same pair follows; with none left, and on **[Esc] back**, it returns to
+  the window, or closes when it was opened from the sidebar (**[Esc] close**).
 - Main menu, server group, after Messages…: **Routes map…** opens the routes map: every named pane as a card, per
   space, with its routes, filling the screen. It only shows: a click on a card lights its routes; the wheel (with
   shift, sideways), the arrow keys and the left, right, up and down buttons pan, and a line says which columns and
