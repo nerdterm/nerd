@@ -61,6 +61,7 @@ Use `install`, not `cp`: macOS caches code signatures by inode and kills a binar
 </details>
 
 ## Quick start
+<!-- summary: Start nerd in a project, split panes, run an agent, and see which agents nerd reads exactly. -->
 
 ```sh
 cd ~/code/my-project
@@ -103,6 +104,7 @@ Each agent is described by a manifest, `plugins/<name>/plugin.json` in the sourc
 - To build from source: Rust 1.88 or newer.
 
 ## Terminals
+<!-- summary: The terminals nerd is checked in, the preset for Option keys and its look, and what nerd asks the terminal. -->
 
 nerd is checked in Ghostty, Kitty, WezTerm and iTerm2.
 
@@ -134,11 +136,13 @@ nerd is checked in Ghostty, Kitty, WezTerm and iTerm2.
 - [Menus, settings and windows](docs/menus.md): the rules every menu and window follows.
 
 ## Contributing
+<!-- summary: How to report a bug, which pull requests are accepted, and where to report a security issue. -->
 
 Bug reports are welcome. Pull requests are accepted only for issues the maintainer has marked as accepted. Read [CONTRIBUTING.md](CONTRIBUTING.md) first.
 
 Report security issues privately; see [SECURITY.md](SECURITY.md).
 
 ## License
+<!-- summary: nerd is open source under the MIT licence. -->
 
 [MIT](LICENSE).

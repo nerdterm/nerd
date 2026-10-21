@@ -1,4 +1,5 @@
 # Messages
+<!-- summary: How agents in different panes write to each other and to you: names, routes, limits, and how each agent receives a message. -->
 
 Agents in different panes can write to each other, and to you, through nerd. Every message passes the server: it reads the sender from the operating system, applies your routes and limits, keeps a record, and hands the text to the agent by the best path that agent has.
 

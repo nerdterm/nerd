@@ -1,4 +1,5 @@
 # Troubleshooting
+<!-- summary: Common problems and their fixes, from Option keys that type characters to an agent that shows no state. -->
 
 | Problem | Solution |
 |---|---|
