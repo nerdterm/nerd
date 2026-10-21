@@ -50,13 +50,13 @@ Every window except a context menu is drawn through `chrome::dialog`, and `chrom
 ## Messages, isolation and accounts
 
 - Main menu, server group: **Messages…** opens the Messages window: the mode and what it means for a pair with no
-  route, Broadcast…, Set up a topology…, Routes map…, a matrix of the named panes (a row per sender, a column per
-  recipient and `you`; each cell is the verdict a message would get now, bright when a route of the owner's decides,
-  faint when the mode does; a click on a cell cycles that pair's route: none, allow, ask, no, none; a click on a row
-  label shows its rows), what waits for the owner, and today's threads. When the columns do not fit, the window says
-  which recipients fit and chips pick the space they start at; too narrow for one column, it says how many it needs.
-  Set up a topology… comes back to the window. Routes that are not a pair of named panes stay as
-  chips: a click cycles allow, ask, no, none.
+  route, Broadcast…, Set up a topology…, Routes map…, a quick start of three lines under them, a matrix of the named
+  panes (a row per sender, a column per recipient and `you`; each cell is the verdict a message would get now,
+  bright when a route of the owner's decides, faint when the mode does; a click on a cell cycles that pair's route:
+  none, allow, ask, no, none; a click on a row label shows its rows), what waits for the owner, and today's threads.
+  When the columns do not fit, the window says which recipients fit and chips pick the space they start at; too
+  narrow for one column, it says how many it needs. Set up a topology… comes back to the window. Routes that are not
+  a pair of named panes stay as chips: a click cycles allow, ask, no, none.
 - A waiting message opens the view **Held message** (or **Message** for one written to the owner) inside the
   Messages window: a click on its row in the sidebar's needs-you list or on the collapsed rail, on a `held N` cell
   (the first message of that pair), on a waiting row's head (also under Show inbox…), or Enter on the current waiting

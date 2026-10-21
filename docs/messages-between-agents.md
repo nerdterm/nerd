@@ -3,6 +3,12 @@
 
 Agents in different panes can write to each other, and to you, through nerd. Every message passes the server: it reads the sender from the operating system, applies your routes and limits, keeps a record, and hands the text to the agent by the best path that agent has.
 
+**Quick start:**
+
+1. Name the pane: Rename pane… in its menu. Only a named pane can send or receive.
+2. `nerd agents` lists whom it may write to; `nerd send <name> "text"` writes, and `-` reads the text from stdin.
+3. `nerd inbox` shows what came; `nerd send --reply <id> "text"` answers.
+
 - **A name is the opt-in.** A pane named with **Rename pane…** (in a space of one pane, also on the space's row) can receive. A name is 1 to 32 letters, digits, `.`, `_` or `-`, does not start with `-`, is not all digits, and is not `you` or `all`. An unnamed pane neither sends nor receives.
 - **Sending.** From a pane: `nerd send <name|all|you> <text>` (`-` reads the text from standard input), with `--reply <id>` to answer, `--ask-route <name>` to ask you for a route, and `--wait <secs>` to wait for the answer. `nerd agents` names the calling pane, then lists the panes it may write to (`you` is the person at nerd's window), `nerd inbox [--all] [--show <id>]` reads its mail, and `nerd wait <id> [--thread] [--count N] [--timeout S]` waits for replies. Exit codes: 0 sent, 3 held for your answer, 1 refused, 2 timed out.
 - **The frame.** Every delivered message starts with `[message from <name> via nerd, id <id>; reply: nerd send --reply <id> "…"]`. The sender is read from the kernel, never from the text; a line of the text that starts the same way gets `> ` in front.

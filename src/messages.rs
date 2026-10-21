@@ -578,6 +578,13 @@ impl Messages {
         if v.broken {
             out.push(vec![("policy.json does not parse: messaging off until a change here".into(), g.fg(theme.bad), None)]);
         }
+        out.push(Vec::new());
+        out.push(vec![("quick start".into(), g.fg(theme.muted), None)]);
+        for (i, step) in crate::mail::QUICK_START.iter().enumerate() {
+            for (j, l) in crate::menu::wrap(step, w.saturating_sub(3)).into_iter().enumerate() {
+                out.push(vec![(format!("{} {l}", if j == 0 { format!("{}.", i + 1) } else { "  ".into() }), g.fg(theme.text), None)]);
+            }
+        }
 
         out.push(Vec::new());
         out.extend(self.matrix(v, verdict, w, theme));
@@ -665,8 +672,9 @@ impl Messages {
                 groups.push((space, from..panes.len()));
             }
         }
+        // the quick start above already says to name a pane
         if panes.is_empty() {
-            return vec![vec![("no pane is named yet: name panes with Rename pane…".into(), g.fg(theme.faint), None)]];
+            return Vec::new();
         }
         let label = |i: usize| format!("{} {}", i + 1, panes[i].name);
         let lw = (0..panes.len()).map(|i| cells(&label(i))).max().unwrap_or(0);
@@ -1413,6 +1421,15 @@ mod tests {
         let esc = crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Esc);
         assert_eq!(m.key(esc, &v), Out::None, "Esc clears the choice");
         assert_eq!(m.key(esc, &v), Out::Close, "a second Esc closes");
+    }
+
+    #[test]
+    fn the_quick_start_follows_the_controls_and_their_explanation() {
+        let said = texts(&Messages::new().lines(&view(), &verdict, 140, &Theme::dark()).0);
+        let at = said.iter().position(|l| l == "quick start").expect("a quick start");
+        assert!(said[..at].iter().any(|l| l.contains("Broadcast…")) && said[..at].iter().any(|l| l.starts_with("no route:")), "under the buttons and the mode's line: {said:?}");
+        let steps: Vec<String> = crate::mail::QUICK_START.iter().enumerate().map(|(i, s)| format!("{}. {s}", i + 1)).collect();
+        assert_eq!(said[at + 1..at + 4], steps[..]);
     }
 
     #[test]
