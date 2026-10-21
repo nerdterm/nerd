@@ -195,6 +195,8 @@ pub struct Messages {
     scroll: Cell<usize>,
     /// The first line of the shown message's text.
     read: Cell<usize>,
+    /// The message the last frame drew, None for the list: keys act on what was drawn only.
+    drawn: std::cell::RefCell<Option<String>>,
     /// `at` was scrolled into view once.
     shown: Cell<bool>,
 }
@@ -451,6 +453,7 @@ impl Messages {
         if let Some(m) = self.shown(v) {
             return self.draw_message(buf, screen, theme, m);
         }
+        self.drawn.replace(None);
         let r = crate::chrome::fit(screen, u16::MAX, u16::MAX);
         let w = r.width.saturating_sub(2 * crate::chrome::DIALOG_FRAME.horizontal) as usize;
         let (lines, at) = self.lines(v, verdict, w, theme);
@@ -464,6 +467,7 @@ impl Messages {
 
     /// One waiting message: who to whom, why, its buttons on a line that stays, then its text, which scrolls.
     fn draw_message(&self, buf: &mut Buffer, screen: Rect, theme: &Theme, m: &Message) -> Drawn<Click> {
+        self.drawn.replace(Some(m.id.clone()));
         let g = Style::default().bg(theme.ground);
         let r = crate::chrome::fit(screen, u16::MAX, u16::MAX);
         let w = r.width.saturating_sub(2 * crate::chrome::DIALOG_FRAME.horizontal) as usize;
@@ -957,6 +961,10 @@ impl Messages {
         }
         if !self.settle(v) {
             return Out::Close;
+        }
+        // the view moved on since the last frame: the owner has not seen what an action would hit
+        if self.message != *self.drawn.borrow() && matches!(k.code, Char('a' | 'k' | 'n' | 'd' | 'h' | 'x' | 'r')) {
+            return Out::None;
         }
         let view = self.message.is_some();
         if view {
@@ -1645,9 +1653,11 @@ mod tests {
         assert_eq!(key(&mut m, 'd'), Out::Act(MailAction::Deliver("m1".into())), "the first row");
         assert_eq!(key(&mut m, 'a'), Out::None, "a held message is not a request");
         let mut m = Messages::at("m2".into());
+        drawn(&m, &v, 140, 60);
         assert_eq!(key(&mut m, 'a'), Out::Act(MailAction::AnswerRequest { id: "m2".into(), action: Action::Allow }));
         assert_eq!(key(&mut m, 'd'), Out::None);
         let mut m = Messages::at("m3".into());
+        drawn(&m, &v, 140, 60);
         assert_eq!(key(&mut m, 'r'), Out::Reply("m3".into()));
         assert_eq!(key(&mut m, 'm'), Out::None, "the held view has only its message's keys");
         assert_eq!(key(&mut Messages::new(), 'm'), Out::Act(MailAction::SetMode(Mode::Strict)));
@@ -1737,8 +1747,18 @@ mod tests {
         assert!(m.settle(&v));
         v.waiting.retain(|x| x.id != "m1");
         assert!(m.settle(&v) && m.message.as_deref() == Some("m4"), "the next of coder → reader");
+        v.waiting.push(msg("m5", "coder", Some("reader"), State::Held(Hold::Route), 10));
         v.waiting.retain(|x| x.id != "m4");
+        for _ in 0..2 {
+            assert_eq!(key(&mut m, &v, crossterm::event::KeyCode::Char('d')), Out::None, "m5 was never drawn: d does nothing");
+        }
+        drawn(&m, &v, 140, 60);
+        assert_eq!(key(&mut m, &v, crossterm::event::KeyCode::Char('d')), Out::Act(MailAction::Deliver("m5".into())), "drawn, it acts");
+        v.waiting.retain(|x| x.id != "m5");
         assert!(m.settle(&v) && m.message.is_none(), "none left: the window");
+        assert_eq!(key(&mut m, &v, crossterm::event::KeyCode::Char('a')), Out::None, "the list was not drawn yet");
+        drawn(&m, &v, 140, 60);
+        assert_eq!(key(&mut m, &v, crossterm::event::KeyCode::Char('a')), Out::Act(MailAction::AnswerRequest { id: "m2".into(), action: Action::Allow }), "drawn, its keys act");
         let mut alone = shown_on("m2", &v);
         v.waiting.retain(|x| x.id != "m2");
         assert!(!alone.settle(&v), "opened from the sidebar: nothing left closes the window");

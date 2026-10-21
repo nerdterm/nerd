@@ -2399,6 +2399,7 @@ mod tests {
             screen(&mut app);
             press(&mut app, KeyCode::Enter);
             assert_eq!(showing(&app), Some(third.id.clone()), "Show inbox…: its rows open it too");
+            screen(&mut app);
             letter(&mut app, "x");
             screen(&mut app);
             assert_eq!(showing(&app), Some(fourth.id.clone()));
