@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.14.0](https://github.com/nerdterm/nerd/compare/v0.13.0...v0.14.0) (2026-10-21)
+
+
+### Added
+
+* a held message opens on itself with its reason and its buttons ([#93](https://github.com/nerdterm/nerd/issues/93)) ([a5159e2](https://github.com/nerdterm/nerd/commit/a5159e2347567f30b684f9063bbeb095239301ff))
+* a quick start for messages in the Messages window, the docs and the help ([#104](https://github.com/nerdterm/nerd/issues/104)) ([789dffd](https://github.com/nerdterm/nerd/commit/789dffdac393be3b43095eb2c276a2d998c3f313))
+* brew install nerdterm/tap/nerd ([#89](https://github.com/nerdterm/nerd/issues/89)) ([1f76248](https://github.com/nerdterm/nerd/commit/1f762484b4bc0466e34414d1bd7bc6fc9e15f196))
+* check for a new release from the menu, and install it on a click ([#92](https://github.com/nerdterm/nerd/issues/92)) ([77c3c86](https://github.com/nerdterm/nerd/commit/77c3c86d7c20a3888a7e39ac196e0f9965a0562e))
+
+
+### Fixed
+
+* a lone pane is named from its space's row, and nerd agents names the caller ([#96](https://github.com/nerdterm/nerd/issues/96)) ([c76e9ee](https://github.com/nerdterm/nerd/commit/c76e9ee4ceeee0d107c6ce8bc877a3b00531322a))
+* terminal preset follow-ups from the [#79](https://github.com/nerdterm/nerd/issues/79) review ([#87](https://github.com/nerdterm/nerd/issues/87)) ([e087a40](https://github.com/nerdterm/nerd/commit/e087a401934a533ed1762b7f19757383f14d8edf))
+
 ## [0.13.0](https://github.com/nerdterm/nerd/compare/v0.12.4...v0.13.0) (2026-10-20)
 
 
