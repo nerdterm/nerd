@@ -14,6 +14,8 @@
 [![Telemetry: none](https://img.shields.io/badge/telemetry-none-2ea043)](docs/privacy-and-security.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-9fd08a)](LICENSE)
 
+[Website](https://nerdterm.dev)
+
 <img src="brand/nerd-demo.gif" alt="nerd running Claude Code: the sidebar shows it working, it asks for permission and the needs you list rises, a preview plugin shows a SQLite file beside the file tree, and the pane is isolated to its folder" width="880">
 
 </div>
