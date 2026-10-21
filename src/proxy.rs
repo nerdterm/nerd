@@ -169,7 +169,11 @@ pub fn in_group(peer: SocketAddr, local: SocketAddr) -> bool {
 
 /// Whether a process below this pane's wrapper holds `peer` → `local`: the pane's programs, whatever group they are in.
 pub fn in_pane(peer: SocketAddr, local: SocketAddr) -> bool {
-    holds(peer, local, crate::transport::descendants(nix::unistd::getpid().as_raw(), 4096))
+    in_tree(nix::unistd::getpid().as_raw(), peer, local)
+}
+
+fn in_tree(root: i32, peer: SocketAddr, local: SocketAddr) -> bool {
+    holds(peer, local, crate::transport::descendants(root, 4096))
 }
 
 fn holds(peer: SocketAddr, local: SocketAddr, candidates: Vec<i32>) -> bool {
@@ -923,13 +927,12 @@ mod tests {
     fn a_pane_proxy_admits_its_descendants_only() {
         let l = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = l.local_addr().unwrap().port().to_string();
-        let _mine = TcpStream::connect(l.local_addr().unwrap()).unwrap();
-        let (c, _) = l.accept().unwrap();
-        assert!(!in_pane(c.peer_addr().unwrap(), c.local_addr().unwrap()), "the proxy itself is no program of its pane");
         use std::os::unix::process::CommandExt as _;
         // In a group of its own, as a pane's shell puts its jobs: still below the wrapper.
         let mut nc = std::process::Command::new("/usr/bin/nc").args(["127.0.0.1", &port]).stdin(std::process::Stdio::piped()).process_group(0).spawn().unwrap();
         let (c, _) = l.accept().unwrap();
+        // nc stands for the proxy: a socket of this test process could be inherited by any other test's child.
+        assert!(!in_tree(nc.id() as i32, c.peer_addr().unwrap(), c.local_addr().unwrap()), "the proxy itself is no program of its pane");
         assert!(in_pane(c.peer_addr().unwrap(), c.local_addr().unwrap()), "a process below it");
         let _ = nc.kill();
         let _ = nc.wait();
