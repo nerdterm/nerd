@@ -717,7 +717,7 @@ impl App {
             out.push(json!({ "name": n.name, "agent": n.agent, "state": state, "place": place, "unread": self.mail.unread(n.pane), "session_name": null, "pane": n.pane, "may": may }));
         }
         out.push(json!({ "name": "you", "agent": null, "state": "-", "place": "-", "unread": 0, "session_name": null, "pane": null, "may": "write" }));
-        json!({ "agents": out })
+        json!({ "agents": out, "me": sender.name })
     }
 
     /// Messages to the pane, oldest first, at most 50; those not read yet become Read.
@@ -1635,6 +1635,41 @@ mod tests {
             app.mail.end_waits();
             assert_eq!(rx.try_iter().collect::<Vec<_>>(), vec![format!("{{\"expired\":{{\"id\":\"{lost}\"}}}}\n")]);
             assert_eq!(ask(&mut app, 2, Request::Wait { id: q.clone(), thread: false, count: 1, timeout: 1 }), vec![json!({"error": format!("no message {q} for this pane")})]);
+        });
+    }
+
+    #[test]
+    fn a_lone_pane_is_named_from_its_space_row_by_mouse_and_then_sends() {
+        use crate::app::{Ask, MenuCtx, Overlay};
+        use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind::Down};
+        use ratatui::layout::Rect;
+        with_policy("mail-lone", || {
+            let mut app = app();
+            app.screen = Rect::new(0, 0, 120, 40);
+            app.spaces[1].tabs[0].panes.get_mut(&3).unwrap().label = None;
+            assert_eq!(ask(&mut app, 3, Request::Agents {}), vec![json!({"error": UNNAMED})]);
+            // a space of one pane draws no pane row: its own row is the only way in
+            app.view.hits.sidebar_spaces = vec![(Rect::new(0, 5, 20, 1), 1)];
+            let click = |app: &mut App, b, x, y| {
+                let screen = app.screen;
+                app.mouse(MouseEvent { kind: Down(b), column: x, row: y, modifiers: crossterm::event::KeyModifiers::NONE }, screen)
+            };
+            click(&mut app, MouseButton::Right, 2, 5);
+            let Overlay::Menu(m, MenuCtx::Space(1)) = &app.overlay else { panic!("the space's menu") };
+            let i = m.items.iter().position(|it| it.label == "Rename pane…").expect("the space's menu names its one pane");
+            let r = m.rect(app.screen);
+            click(&mut app, MouseButton::Left, r.x + 2, r.y + 1 + i as u16);
+            assert!(matches!(&app.overlay, Overlay::Prompt(_, Ask::RenamePane(3))));
+            "scout".chars().for_each(|c| app.key(KeyEvent::from(KeyCode::Char(c))));
+            app.key(KeyEvent::from(KeyCode::Enter));
+            assert_eq!(app.pane(3).and_then(|p| p.label.as_deref()), Some("scout"));
+            assert_eq!(ask(&mut app, 3, Request::Agents {})[0]["me"], json!("scout"), "the caller's own name, apart from you");
+            assert!(matches!(send(&mut app, 3, "planner", "hi"), SendReply::Sent { .. }));
+            app.spaces[1].tabs[0].layout.split(crate::layout::Dir::Horizontal, 4);
+            let four = crate::app::snapshots::agent_pane(&app, 4, crate::term::AgentState::Idle, 0);
+            app.spaces[1].tabs[0].panes.insert(4, four);
+            let Some(Overlay::Menu(m, _)) = app.space_menu(1, (1, 1)) else { panic!("a menu") };
+            assert!(m.items.iter().all(|it| it.label != "Rename pane…"), "two panes: each has its own row");
         });
     }
 

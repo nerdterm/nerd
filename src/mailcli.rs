@@ -244,7 +244,9 @@ fn agents_table(v: &Value) -> String {
         }
         s
     };
-    let mut out = vec![line(&head.map(String::from), false)];
+    // an agent reading `you` took it for itself: its own name comes first
+    let mut out: Vec<String> = v["me"].as_str().map(|me| format!("this pane: {me} (\"you\" is the person at nerd's window)")).into_iter().collect();
+    out.push(line(&head.map(String::from), false));
     out.extend(rows.iter().map(|(r, ask)| line(r, *ask)));
     out.join("\n")
 }
@@ -420,7 +422,9 @@ mod tests {
         let r = |name: &str, agent: Value, may: &str, pane: Value| {
             json!({"name": name, "agent": agent, "state": "idle", "place": "research/1", "unread": 2, "session_name": null, "pane": pane, "may": may})
         };
-        let t = agents_table(&json!({"agents": [r("planner", json!("claude"), "write", json!(3)), r("reader", json!("pi"), "ask", json!(7)), r("you", Value::Null, "write", Value::Null)]}));
+        let t = agents_table(&json!({"agents": [r("planner", json!("claude"), "write", json!(3)), r("reader", json!("pi"), "ask", json!(7)), r("you", Value::Null, "write", Value::Null)], "me": "scout"}));
+        let (me, t) = t.split_once('\n').unwrap();
+        assert_eq!(me, "this pane: scout (\"you\" is the person at nerd's window)");
         let lines: Vec<&str> = t.lines().collect();
         assert_eq!(lines[0], "NAME     AGENT   STATE  SPACE/TAB   UNREAD  SESSION NAME  PANE");
         assert_eq!(lines[1], "planner  claude  idle   research/1  2       -             3");
