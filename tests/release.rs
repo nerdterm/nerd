@@ -34,8 +34,14 @@ impl Env {
         .unwrap();
         std::fs::set_permissions(&curl, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
         let body = "## [0.99.0](https://github.com/nerdterm/nerd/compare/v0.13.0...v0.99.0)\n\n### Added\n\n* a thing ([#1](https://x/1))\n";
-        let latest = serde_json::json!({ "tag_name": TAG, "body": body, "assets": [{ "name": ARCHIVE }, { "name": format!("{ARCHIVE}.sha256") }] });
+        let latest = serde_json::json!({ "tag_name": TAG, "body": body, "assets": [{ "name": ARCHIVE }, { "name": format!("{ARCHIVE}.sha256") }, { "name": format!("{ARCHIVE}.sha256.sig") }] });
         std::fs::write(served.join("latest"), latest.to_string()).unwrap();
+        // Test signing keys: "main" stands in for nerd's release keys, "other" is anyone else's.
+        for k in ["main", "other"] {
+            let key = root.join(format!("{k}.key"));
+            assert!(Command::new("/usr/bin/openssl").args(["ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out"]).arg(&key).status().unwrap().success());
+            assert!(Command::new("/usr/bin/openssl").args(["ec", "-pubout", "-in"]).arg(&key).arg("-out").arg(root.join(format!("{k}.pub"))).stderr(Stdio::null()).status().unwrap().success());
+        }
         let e = Env { home: home.canonicalize().unwrap(), served };
         e.archive("#!/bin/sh\necho 'nerd 0.99.0 (test)'\n");
         e
@@ -54,6 +60,14 @@ impl Env {
         assert!(Command::new("tar").args(["-czf"]).arg(self.served.join(ARCHIVE)).arg("-C").arg(&dir).arg("nerd").status().unwrap().success());
         let sum = Command::new("shasum").args(["-a", "256"]).arg(ARCHIVE).current_dir(&self.served).output().unwrap();
         std::fs::write(self.served.join(format!("{ARCHIVE}.sha256")), sum.stdout).unwrap();
+        self.sign("main");
+    }
+
+    /// The served checksum signed with the test key `key`.
+    fn sign(&self, key: &str) {
+        let sum = self.served.join(format!("{ARCHIVE}.sha256"));
+        let key = self.served.parent().unwrap().join(format!("{key}.key"));
+        assert!(Command::new("/usr/bin/openssl").args(["dgst", "-sha256", "-sign"]).arg(key).arg("-out").arg(self.served.join(format!("{ARCHIVE}.sha256.sig"))).arg(sum).status().unwrap().success());
     }
 
     fn run(&self, exe: &Path, args: &[&str], vars: &[(&str, &str)]) -> String {
@@ -62,6 +76,7 @@ impl Env {
             .env("HOME", &self.home)
             .env("NERD_TEST_CURL", self.served.parent().unwrap().join("curl"))
             .env("SERVED", &self.served)
+            .env("NERD_TEST_RELEASE_KEYS", std::fs::read_to_string(self.served.parent().unwrap().join("main.pub")).unwrap())
             .env_remove("NERD_STATE_DIR")
             .env_remove("NERD_SOCKET")
             .env_remove("NERD_INSTANCE")
@@ -146,7 +161,7 @@ fn no_network_and_a_refusal_by_github_are_said_apart() {
 }
 
 #[test]
-fn a_release_is_installed_only_for_the_window_s_click_and_only_when_its_checksum_matches() {
+fn a_release_is_installed_only_for_the_window_s_click_and_only_when_nerd_s_key_signed_it() {
     let e = Env::new("install");
     let nerd = e.installed();
     let before = std::fs::read(&nerd).unwrap();
@@ -157,7 +172,15 @@ fn a_release_is_installed_only_for_the_window_s_click_and_only_when_its_checksum
     assert_eq!(std::fs::read(&nerd).unwrap(), before, "nothing installed");
 
     std::fs::write(&go, TAG).unwrap();
+    e.sign("other");
+    e.run(&nerd, &["--check-update", "--install", "--window"], &[("NERD_INSTALL_UNVERIFIED", "1")]);
+    assert_eq!(e.said()["Failed"], "the signature does not check against nerd's release keys, nothing installed");
+    assert_eq!(std::fs::read(&nerd).unwrap(), before, "nothing installed");
+    assert!(e.log().contains("release v0.99.0 not installed: the signature does not check"), "{}", e.log());
+
+    std::fs::write(&go, TAG).unwrap();
     std::fs::write(e.served.join(format!("{ARCHIVE}.sha256")), format!("{}  {ARCHIVE}\n", "0".repeat(64))).unwrap();
+    e.sign("main");
     e.run(&nerd, &["--check-update", "--install", "--window"], &[]);
     assert_eq!(e.said()["Failed"], "checksum mismatch, nothing installed");
     assert_eq!(std::fs::read(&nerd).unwrap(), before, "nothing installed");
@@ -178,6 +201,35 @@ fn a_release_is_installed_only_for_the_window_s_click_and_only_when_its_checksum
     assert_eq!(left, ["nerd"], "renamed into place, nothing left beside it");
     assert!(!e.home.join(".zshrc").exists(), "the shell's file is left alone");
     assert!(e.log().contains("release v0.99.0 installed in ~/.local/bin: nerd 0.99.0 (test)"), "{}", e.log());
+}
+
+#[test]
+fn an_unsigned_release_or_one_not_newer_is_never_installed() {
+    let e = Env::new("unsigned");
+    let nerd = e.installed();
+    let before = std::fs::read(&nerd).unwrap();
+    let go = e.state().join("release-install");
+    let latest = |tag: &str, sig: bool| {
+        let archive = format!("nerd-{tag}-macos-arm64.tar.gz");
+        let mut assets = vec![serde_json::json!({ "name": archive }), serde_json::json!({ "name": format!("{archive}.sha256") })];
+        if sig {
+            assets.push(serde_json::json!({ "name": format!("{archive}.sha256.sig") }));
+        }
+        std::fs::write(e.served.join("latest"), serde_json::json!({ "tag_name": tag, "assets": assets }).to_string()).unwrap();
+    };
+
+    latest(TAG, false);
+    std::fs::write(&go, TAG).unwrap();
+    e.run(&nerd, &["--check-update", "--install", "--window"], &[]);
+    assert_eq!(e.said()["Failed"], format!("release {TAG} has no {ARCHIVE}.sha256.sig yet"));
+
+    let running = format!("v{}", env!("CARGO_PKG_VERSION"));
+    latest(&running, true);
+    std::fs::write(&go, &running).unwrap();
+    e.run(&nerd, &["--check-update", "--install", "--window"], &[]);
+    assert_eq!(e.said()["Found"]["newer"], false, "the running version again is only shown");
+    assert_eq!(std::fs::read(&nerd).unwrap(), before, "nothing installed");
+    assert!(!e.asked().iter().any(|u| u.ends_with(".tar.gz")), "nothing downloaded");
 }
 
 #[test]
