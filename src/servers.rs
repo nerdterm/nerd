@@ -319,6 +319,17 @@ fn daemons() -> Vec<(i32, PathBuf, Vec<String>)> {
         .collect()
 }
 
+/// SIGTERM to stray `pid`, only while it is still a `nerd --daemon` of this user started from `exe`: checked at the
+/// click, since a pid listed a while ago may be another program by now.
+pub fn stop_stray(pid: i32, exe: &Path) -> Result<String, String> {
+    if !daemons().iter().any(|(p, e, _)| *p == pid && e == exe) {
+        return Err(format!("pid {pid} is no longer a nerd server of yours; nothing was stopped"));
+    }
+    nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), nix::sys::signal::Signal::SIGTERM).map_err(|e| format!("pid {pid} was not stopped: {e}"))?;
+    crate::log::info(&format!("stray server pid {pid} ({}) sent SIGTERM", exe.display()));
+    Ok(format!("pid {pid}: asked to stop"))
+}
+
 fn strays(daemons: &[(i32, PathBuf, Vec<String>)], known: &[i32]) -> Vec<Stray> {
     daemons
         .iter()
@@ -476,6 +487,12 @@ mod tests {
             unsafe { std::env::remove_var("NERD_SOCKET") };
             assert_eq!(known, [std::process::id() as i32], "the server at NERD_SOCKET, by the pid that listens there");
         });
+    }
+
+    #[test]
+    fn a_stray_gets_sigterm_only_while_it_is_still_a_nerd_server() {
+        let (me, exe) = (std::process::id() as i32, std::env::current_exe().unwrap());
+        assert!(stop_stray(me, &exe).unwrap_err().contains("no longer a nerd server"), "this test is no nerd --daemon");
     }
 
     fn one_shell() -> crate::session::WorkspaceSnapshot {

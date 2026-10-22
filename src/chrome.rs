@@ -69,7 +69,7 @@ pub fn dialog(buf: &mut Buffer, r: Rect, title: Option<&str>, border: Color, the
 }
 
 /// Narrowest a window is drawn: a title and a key strip read badly in less.
-const MIN_W: u16 = 40;
+pub const MIN_W: u16 = 40;
 
 /// The most a window may take: the screen less 1/16 at each side and 1/10 above and below.
 pub fn limits(screen: Rect) -> (u16, u16) {

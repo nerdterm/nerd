@@ -55,6 +55,7 @@ mod search;
 mod select;
 mod session;
 mod servers;
+mod server_list;
 mod settings;
 mod signals;
 mod sidebar;

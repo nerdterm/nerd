@@ -108,6 +108,10 @@ pub struct App {
     plugins_commits: HashMap<String, String>,
     /// The Plugins window opens again with this plugin chosen once its remove question is answered.
     pub plugins_back: Option<String>,
+    /// The Servers window under a dialog or prompt it opened, shown again once that is answered.
+    servers_back: Option<crate::server_list::ServerList>,
+    /// Lists, stops, updates and removes other servers for the Servers window, off the loop.
+    servers: crate::worker::Worker<crate::server_list::Job, crate::server_list::Found>,
     /// The git fetch the Plugins window started, while it runs and after it failed.
     pub plugin_job: Option<crate::plugin_list::Job>,
     /// Plugins a pane staged that the Plugins window has asked about.
@@ -330,6 +334,8 @@ impl App {
             plugins_commits: crate::install::commits(),
             plugins_asked: HashSet::new(),
             plugins_back: None,
+            servers_back: None,
+            servers: crate::worker::Worker::spawn("servers", bell.clone(), crate::server_list::work, crate::server_list::failed),
             plugin_job: None,
             plugins_off: crate::install::read_off().unwrap_or_default().into_keys().collect(),
             cfg_broken: false,
@@ -1114,70 +1120,184 @@ mod tests {
         });
     }
 
+    /// The Servers window open with this row chosen, and this key pressed on it.
+    fn servers_key(app: &mut App, id: &str, key: char) {
+        let Overlay::Servers(w) = &mut app.overlay else { panic!("the Servers window expected") };
+        w.choose(id);
+        app.key(crossterm::event::KeyEvent::from(KeyCode::Char(key)));
+    }
+
+    fn servers_enter(app: &mut App, id: &str) {
+        let Overlay::Servers(w) = &mut app.overlay else { panic!("the Servers window expected") };
+        w.choose(id);
+        app.key(crossterm::event::KeyEvent::from(KeyCode::Enter));
+    }
+
+    fn server_rows(app: &App) -> Vec<String> {
+        match &app.overlay {
+            Overlay::Servers(w) => crate::server_list::tests::ids(w),
+            _ => panic!("the Servers window expected"),
+        }
+    }
+
     #[test]
-    fn connect_asks_the_client_and_drops_an_answer_nobody_waits_for() {
+    fn servers_lists_a_machine_through_the_client_and_drops_an_answer_nobody_waits_for() {
         use crate::proto::RemoteInstance;
         crate::session::tests::with_temp_state_dir("connect", || {
             let remotes = serde_json::json!([{"name": "studio", "host": "me@studio"}, {"name": "bad", "host": "-oProxyCommand=x"}]);
             let mut app = App::new(Config { remotes, ..Config::default() });
-            let body = |o: Overlay| match o {
-                Overlay::Confirm(c, _) => c.body,
-                _ => panic!("a dialog expected"),
-            };
-            assert!(body(app.connect_overlay()).contains("older than the server"), "an old client cannot list");
+            app.screen = Rect::new(0, 0, 120, 40);
             app.client = 1;
             app.caps = crate::proto::ClientCaps { bye: true, ..Default::default() };
-            assert!(body(app.connect_overlay()).contains("from a nerd window on this Mac"), "a remote client lists the other Mac's machines");
+            app.overlay = app.run_action(Action::Servers, &MenuCtx::Global);
+            assert!(!server_rows(&app).iter().any(|r| r.starts_with("m:")), "a session from another Mac lists no machines");
 
-            app.client = 1;
             app.caps = crate::proto::ClientCaps { connects: true, ..Default::default() };
-            let Overlay::Picker(_, machines) = app.connect_overlay() else { panic!("the machines expected") };
-            assert!(matches!(app.picked(1, machines.clone()), Overlay::None));
-            assert!(app.notice.take().unwrap().contains("cannot be used"), "a bad entry never reaches the client");
-            assert!(app.to_client.is_empty());
+            app.overlay = app.run_action(Action::Servers, &MenuCtx::Global);
+            servers_enter(&mut app, "m:bad");
+            assert!(app.to_client.is_empty(), "a bad entry never reaches the client");
 
             let one = |id: &str| RemoteInstance { id: id.into(), label: id.into(), running: true, spaces: 1, ..Default::default() };
             app.remote_listed("studio".into(), Ok(vec![one("1")]), true, false);
-            assert!(!app.overlay.is_open(), "nobody asked yet");
+            assert!(!server_rows(&app).contains(&"r:studio:1".to_string()), "nobody asked yet");
 
-            app.picked(0, machines.clone());
+            servers_enter(&mut app, "m:studio");
             assert_eq!(std::mem::take(&mut app.to_client), crate::proto::list_remote_marker("studio"));
             app.remote_listed("mini".into(), Ok(vec![one("1")]), true, false);
-            assert!(!app.overlay.is_open(), "an answer about another machine is dropped");
+            assert!(!server_rows(&app).contains(&"r:studio:1".to_string()), "an answer about another machine is dropped");
             app.remote_listed("studio".into(), Ok(vec![one("1"), one("../x")]), true, false);
-            let Overlay::Picker(_, instances) = std::mem::replace(&mut app.overlay, Overlay::None) else { panic!("the servers expected") };
-            let Pick::RemoteInstance { ref list, .. } = instances else { panic!() };
-            assert_eq!(list.len(), 1, "an id that is a path is dropped here too");
-            assert!(matches!(app.picked(0, instances), Overlay::None));
+            let rows = server_rows(&app);
+            assert!(rows.contains(&"r:studio:1".to_string()) && !rows.iter().any(|r| r.contains("../x")), "an id that is a path is dropped: {rows:?}");
+            servers_enter(&mut app, "r:studio:1");
             assert_eq!(std::mem::take(&mut app.to_client), crate::proto::open_remote_marker("studio", Some("1")));
+            assert!(!app.overlay.is_open(), "the window is done once the server opens");
 
-            // No answer in time: said once, and the late answer opens nothing.
-            app.picked(0, machines.clone());
+            // No answer in time: said once, in the row too, and the late answer changes nothing.
+            let reopen = |app: &mut App| {
+                app.overlay = app.run_action(Action::Servers, &MenuCtx::Global);
+                servers_enter(app, "m:studio");
+                app.to_client.clear();
+            };
+            reopen(&mut app);
             app.remote_ask = Some(("studio".into(), Instant::now()));
             assert!(app.tick_remote());
             assert_eq!(app.notice.take().as_deref(), Some("no answer from studio in 20 s"));
             app.remote_listed("studio".into(), Ok(vec![one("1")]), true, false);
-            assert!(!app.overlay.is_open());
+            assert!(!server_rows(&app).contains(&"r:studio:1".to_string()));
 
-            // A client with no terminal to open gets the command to copy instead.
-            app.picked(0, machines.clone());
+            // A client with no terminal to open gets the command to copy, and the window comes back after.
+            reopen(&mut app);
             app.remote_listed("studio".into(), Err("ssh to studio failed: Permission denied (publickey).".into()), false, true);
-            let Overlay::Confirm(c, Pending::CopyCommand(cmd)) = std::mem::replace(&mut app.overlay, Overlay::None) else { panic!("copy expected") };
+            let Overlay::Confirm(c, Pending::CopyCommand(cmd)) = &app.overlay else { panic!("copy expected") };
             assert!(c.body.contains("Permission denied"));
             assert_eq!(cmd, "nerd --remote studio");
+            app.key(crossterm::event::KeyEvent::from(KeyCode::Esc));
+            assert!(matches!(app.overlay, Overlay::Servers(_)), "back to the window");
 
-            // An answer that is not ssh failing is said as it is, with no terminal to offer.
-            app.picked(0, machines.clone());
+            // An answer that is not ssh failing is said in the machine's section, with no terminal to offer.
+            reopen(&mut app);
             app.remote_listed("studio".into(), Err("studio has no nerd".into()), true, false);
-            assert!(!app.overlay.is_open());
-            assert_eq!(app.notice.take().as_deref(), Some("studio has no nerd"));
+            assert!(matches!(app.overlay, Overlay::Servers(_)) && app.notice.is_none());
 
-            // Another client took the screen while the picker was open: nothing is asked of it.
+            // Another client took the screen while the window was open: nothing is asked of it.
+            reopen(&mut app);
+            servers_enter(&mut app, "m:studio");
             app.client = 2;
             app.caps = Default::default();
-            app.to_client.clear();
-            assert!(matches!(app.picked(0, machines), Overlay::Confirm(_, Pending::Dismiss)));
+            servers_enter(&mut app, "m:studio");
             assert!(app.to_client.is_empty());
+        });
+    }
+
+    #[test]
+    fn servers_fills_in_from_its_worker_and_asks_before_it_removes() {
+        crate::session::tests::with_temp_state_dir("servers-window", || {
+            crate::session::tests::INSTANCE.set(Some("1".into()));
+            for id in ["1", "2"] {
+                let dir = crate::session::instances_dir().join(id);
+                std::fs::create_dir_all(&dir).unwrap();
+                std::fs::write(dir.join("session.json"), serde_json::json!({"version": 2, "spaces": [{"name": null, "cwd": "/tmp", "tabs": [], "active_tab": 0}]}).to_string()).unwrap();
+            }
+            let mut app = with_one_space();
+            app.caps.connects = true;
+            app.overlay = app.run_action(Action::Servers, &MenuCtx::Global);
+            assert!(server_rows(&app).contains(&"note".to_string()), "asking… until the servers answer");
+            until(&mut app, "listing", |app| server_rows(app).contains(&"s:2".to_string()));
+            assert_eq!(server_rows(&app)[1..3], ["s:1", "s:2"], "the current server first");
+
+            servers_key(&mut app, "s:2", 'r');
+            assert!(matches!(&app.overlay, Overlay::Prompt(_, Ask::RenameServer(id)) if id == "2"), "Rename… asks for the name");
+            for c in "lab".chars() {
+                app.key(crossterm::event::KeyEvent::from(KeyCode::Char(c)));
+            }
+            app.key(crossterm::event::KeyEvent::from(KeyCode::Enter));
+            assert!(matches!(app.overlay, Overlay::Servers(_)), "back to the window once named");
+            assert_eq!(crate::session::instance_label("2"), "lab");
+
+            servers_key(&mut app, "s:2", 'd');
+            let Overlay::Confirm(c, Pending::ServerRemove(ids)) = &app.overlay else { panic!("Remove… asks first") };
+            assert!(c.body.contains(crate::servers::GOES) && c.body.contains(crate::servers::STAYS), "{}", c.body);
+            assert_eq!(ids, &["2".to_string()]);
+            app.key(crossterm::event::KeyEvent::from(KeyCode::Esc));
+            assert!(matches!(app.overlay, Overlay::Servers(_)) && crate::session::instances_dir().join("2").is_dir(), "cancelled: back, nothing gone");
+
+            servers_key(&mut app, "s:2", 'd');
+            app.key(crossterm::event::KeyEvent::from(KeyCode::Enter));
+            assert!(matches!(app.overlay, Overlay::Servers(_)), "back to the window while it goes");
+            until(&mut app, "removal", |app| app.toast.as_deref().is_some_and(|t| t.starts_with("lab (2) removed")));
+            until(&mut app, "the list again", |app| !server_rows(app).contains(&"s:2".to_string()));
+            assert!(!crate::session::instances_dir().join("2").exists());
+            crate::session::tests::INSTANCE.set(None);
+        });
+    }
+
+    #[test]
+    fn servers_refuses_every_change_from_a_session_inside_a_pane() {
+        use crate::server_list::{tests::server, Out};
+        crate::session::tests::with_temp_state_dir("servers-inside", || {
+            crate::session::tests::INSTANCE.set(Some("1".into()));
+            let mut app = with_one_space();
+            app.caps = crate::proto::ClientCaps { connects: true, switches: true, ..Default::default() };
+            app.client_inside = true;
+            let w = || crate::server_list::tests::fixture(true);
+            let stray = crate::servers::Stray { pid: 1, started: None, exe: "/x/nerd".into(), note: String::new() };
+            for out in [
+                Out::Stop(server("3", "3", true, Some(false))),
+                Out::Update(server("3", "3", true, Some(false))),
+                Out::Rename(server("3", "3", true, Some(false))),
+                Out::Remove(server("4", "4", false, Some(false))),
+                Out::RemoveAll(vec![server("4", "4", false, Some(false))]),
+                Out::StopStray(stray),
+                Out::New,
+            ] {
+                let o = app.servers_outcome(w(), out);
+                assert!(matches!(o, Overlay::Servers(_)), "the window stays");
+                assert_eq!(app.notice.take().as_deref(), Some(super::mail::INSIDE_REFUSED));
+            }
+            assert!(app.to_client.is_empty() && crate::session::instances().is_empty(), "nothing asked, nothing made");
+            app.perform(Pending::ServerRemove(vec!["4".into()]));
+            assert_eq!(app.notice.take().as_deref(), Some(super::mail::INSIDE_REFUSED), "a dialog answered after a takeover");
+            crate::session::tests::INSTANCE.set(None);
+        });
+    }
+
+    #[test]
+    fn new_server_reserves_a_marked_folder_and_moves_this_session_to_it() {
+        use crate::server_list::Out;
+        crate::session::tests::with_temp_state_dir("servers-new", || {
+            crate::session::tests::INSTANCE.set(Some("1".into()));
+            std::fs::create_dir_all(crate::session::instances_dir().join("1")).unwrap();
+            let mut app = with_one_space();
+            app.caps = crate::proto::ClientCaps { connects: true, ..Default::default() };
+            let Overlay::Confirm(_, Pending::CopyCommand(cmd)) = app.servers_outcome(crate::server_list::tests::fixture(true), Out::New) else { panic!("a client that cannot switch gets the command") };
+            assert_eq!(cmd, "nerd --new");
+            assert_eq!(crate::session::instances(), ["1"], "and no folder");
+            app.caps.switches = true;
+            assert!(!app.servers_outcome(crate::server_list::tests::fixture(true), Out::New).is_open());
+            assert_eq!(crate::session::instances(), ["1", "2"]);
+            assert!(crate::servers::untouched("2"), "kept only once something is done in it");
+            assert_eq!(std::mem::take(&mut app.to_client), crate::proto::switch_marker("2", false));
+            crate::session::tests::INSTANCE.set(None);
         });
     }
 
@@ -2750,15 +2870,10 @@ mod tests {
         let mut app = with_one_space();
         app.screen = Rect::new(0, 0, 160, 30);
         app.caps.connects = true;
-        let Overlay::Confirm(c, _) = app.connect_overlay() else { panic!("no machines: an info window") };
-        assert_eq!(c.title, "Connect to another computer");
         app.cfg.remotes = serde_json::json!([{"name": "studio", "host": "me@studio.local"}]);
-        let Overlay::Picker(p, _) = app.connect_overlay() else { panic!("a picker") };
-        assert_eq!(p.title, "Connect to another computer");
-        app.remote_ask = Some(("studio".into(), Instant::now() + std::time::Duration::from_secs(9)));
-        app.remote_listed("studio".into(), Ok(vec![crate::proto::RemoteInstance { id: "1".into(), label: "main".into(), running: true, spaces: 1, ..Default::default() }]), true, false);
-        let Overlay::Picker(p, _) = &app.overlay else { panic!("the servers on it") };
-        assert_eq!(p.title, "Servers on studio");
+        app.overlay = app.run_action(Action::Servers, &MenuCtx::Global);
+        let (text, _) = frame(&mut app);
+        assert!(text.contains("─ Servers ─"), "{text}");
         app.remote_ask = Some(("studio".into(), Instant::now() + std::time::Duration::from_secs(9)));
         app.remote_listed("studio".into(), Err("no route".into()), true, true);
         let Overlay::Confirm(c, _) = &app.overlay else { panic!("an error window") };
@@ -3501,7 +3616,7 @@ mod tests {
             "New space…", "New tab [⌥+C]", "Navigator… [⌥+N]", "—",
             "Show file tree [⌥+T]", "Collapse sidebar [⌥+S]", "—",
             "Settings… [⌥+,]", "Keys and mouse… [⌥+K]", "Plugins…", "Reload plugins and agents", "—",
-            "Messages…", "Routes map…", "Rename this server…", "Connect to another computer…", "Session history…", "—",
+            "Messages…", "Routes map…", "Rename this server…", "Servers…", "Session history…", "—",
             "About nerd…", "Update… [⌥+U]", "Check for a new release…", "Export logs…", "—",
             "Detach… [⌥+Q]", "Disconnect everyone…", "Stop this server…",
         ];

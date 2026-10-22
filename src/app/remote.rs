@@ -1,38 +1,169 @@
 use super::*;
 
 impl App {
-    /// Menu > Connect to another computer…: the machines in config.json, or why there is nothing to pick.
-    pub(super) fn connect_overlay(&mut self) -> Overlay {
-        use crate::menu::{Confirm, Picker, PickerItem};
-        let info = |body: &str| Overlay::Confirm(Confirm::new("Connect to another computer", body).info(), Pending::Dismiss);
-        if !self.caps.connects {
-            return info(if self.caps.bye {
-                "This window shows nerd on another Mac, which lists machines of its own. Connect from a nerd window on this Mac."
-            } else {
-                "This window's nerd is older than the server. Close it and open nerd again to connect."
-            });
-        }
-        let remotes = self.cfg.remote_entries();
-        if remotes.is_empty() {
-            return info(NO_REMOTES);
-        }
-        let items = remotes
-            .iter()
-            .enumerate()
-            .map(|(id, r)| PickerItem {
-                label: printable(&r.name),
-                detail: match r.check() {
-                    Ok(()) => r.host.clone(),
-                    Err(e) => format!("not usable: {e}"),
-                },
-                id,
-            })
-            .collect();
-        Overlay::Picker(Picker::new("Connect to another computer", items), Pick::Remote(remotes))
+    /// Menu > Servers…: the window opens at once and fills in when the servers have answered.
+    pub(super) fn servers_overlay(&mut self) -> Overlay {
+        self.dirty = true;
+        let own = crate::session::instance_name();
+        self.servers.ask(crate::server_list::Job::List(own.clone()));
+        Overlay::Servers(crate::server_list::ServerList::new(own, self.cfg.remote_entries(), self.caps.connects, self.caps.bye))
     }
 
-    /// The client's answer to `list-remote`. A late one, or one for another machine, opens nothing.
+    /// The open Servers window, or the one waiting under a dialog it opened.
+    pub(super) fn servers_window(&mut self) -> Option<&mut crate::server_list::ServerList> {
+        match &mut self.overlay {
+            Overlay::Servers(w) => Some(w),
+            _ => self.servers_back.as_mut(),
+        }
+    }
+
+    /// The worker's answers: the window's rows, or what a job said, after which the window asks again.
+    pub(super) fn take_servers(&mut self) -> bool {
+        use crate::server_list::Found;
+        let found: Vec<Found> = self.servers.take().collect();
+        let changed = !found.is_empty();
+        for f in found {
+            match f {
+                Found::Listed(list, strays) => {
+                    if let Some(w) = self.servers_window() {
+                        w.set(list, strays);
+                    }
+                }
+                Found::Done(said) => {
+                    for line in said {
+                        match line {
+                            Ok(l) => self.toast = Some(printable(&l)),
+                            Err(e) => self.notice = Some(printable(&e)),
+                        }
+                    }
+                    if self.servers_window().is_some() {
+                        self.servers.ask(crate::server_list::Job::List(crate::session::instance_name()));
+                    }
+                }
+            }
+        }
+        self.dirty |= changed;
+        changed
+    }
+
+    /// `next` in the window's place, the window kept for when it is answered; nothing to show leaves the window.
+    fn away(&mut self, w: crate::server_list::ServerList, next: Overlay) -> Overlay {
+        if next.is_open() {
+            self.servers_back = Some(w);
+            next
+        } else {
+            Overlay::Servers(w)
+        }
+    }
+
+    pub(super) fn servers_outcome(&mut self, w: crate::server_list::ServerList, out: crate::server_list::Out) -> Overlay {
+        use crate::menu::{Confirm, Prompt};
+        use crate::server_list::Out;
+        let own = crate::session::instance_name();
+        let changes = !matches!(out, Out::None | Out::Close | Out::List(_) | Out::Open(..) | Out::OpenRemote(..) | Out::EditConfig);
+        if changes && self.client_inside {
+            self.notice = Some(super::mail::INSIDE_REFUSED.into());
+            return Overlay::Servers(w);
+        }
+        let name = |s: &crate::servers::Server| printable(&s.label);
+        match out {
+            Out::None => Overlay::Servers(w),
+            Out::Close => Overlay::None,
+            // A takeover may have put another client on screen since the window opened.
+            Out::List(_) if !self.caps.connects => Overlay::Servers(w),
+            Out::List(r) => {
+                crate::log::info(&format!("connect: asked client {} to list {}", self.client, r.name));
+                self.to_client.extend(crate::proto::list_remote_marker(&r.name));
+                self.remote_ask = Some((r.name.clone(), Instant::now() + REMOTE_WAIT));
+                self.toast = Some(format!("asking {} for its servers…", r.name));
+                Overlay::Servers(w)
+            }
+            // Once the marker is out the window is done; a question or a refusal comes back to it.
+            Out::Open(s, new_window) => {
+                let sent = self.to_client.len();
+                let next = self.open_server(&s.id, s.shown, new_window);
+                if self.to_client.len() > sent { Overlay::None } else { self.away(w, next) }
+            }
+            Out::OpenRemote(m, i, _) if !i.running => {
+                self.notice = Some(format!("server {0} on {m} is stopped; start it there with nerd --resume {0}", printable(&i.id)));
+                Overlay::Servers(w)
+            }
+            Out::OpenRemote(m, i, window) => self.open_remote(&m, Some(&i.id), window),
+            Out::EditConfig => {
+                self.edit_config();
+                Overlay::Servers(w)
+            }
+            Out::New => self.new_server(w),
+            Out::Rename(s) => {
+                let prefill = if s.label == s.id { String::new() } else { s.label.clone() };
+                let title = if s.id == own { "Rename this server" } else { "Rename server" };
+                self.away(w, Overlay::Prompt(Prompt::new(title, prefill).does("rename"), Ask::RenameServer(s.id)))
+            }
+            Out::Update(s) if s.id == own => {
+                let next = self.update_overlay();
+                self.away(w, next)
+            }
+            Out::Stop(s) if s.id == own => {
+                let next = self.stop_overlay();
+                self.away(w, next)
+            }
+            Out::Update(s) => {
+                let ask = Confirm::new("Update server", format!("Server {} swaps itself for the installed build in place; its panes and agents keep running.", name(&s))).does("update");
+                self.away(w, Overlay::Confirm(ask, Pending::ServerUpdate(s.id)))
+            }
+            Out::Stop(s) => {
+                let body = format!("Server {0} stops: its panes close, and what runs in them is killed. Start it again with nerd --resume {0}; its spaces and the panes' screens are kept.", name(&s));
+                let ask = Confirm::new("Stop server", body).does("stop the server").danger(true).about(self.on_machine(String::new()));
+                self.away(w, Overlay::Confirm(ask, Pending::ServerStop(s.id)))
+            }
+            Out::StopStray(st) => {
+                let body = format!("The nerd server with pid {} ({}) gets SIGTERM: its panes close, and what runs in them is killed.", st.pid, printable(&st.note));
+                let ask = Confirm::new("Stop server", body).does("stop the server").danger(true).about(self.on_machine(String::new()));
+                self.away(w, Overlay::Confirm(ask, Pending::StrayStop(st.pid, st.exe)))
+            }
+            // A folder whose server never started holds nothing: it goes without a question.
+            Out::Remove(s) if s.reserved_only => {
+                self.servers.ask(crate::server_list::Job::Remove(vec![s.id], own));
+                Overlay::Servers(w)
+            }
+            Out::Remove(s) => self.remove_overlay(w, vec![s]),
+            Out::RemoveAll(list) if list.is_empty() => {
+                self.notice = Some("no stopped servers".into());
+                Overlay::Servers(w)
+            }
+            Out::RemoveAll(list) => self.remove_overlay(w, list),
+        }
+    }
+
+    /// Remove… and Remove all stopped… say what goes and what stays before anything does.
+    fn remove_overlay(&mut self, w: crate::server_list::ServerList, list: Vec<crate::servers::Server>) -> Overlay {
+        let (title, what) = match list.as_slice() {
+            [s] => ("Remove server", format!("Server {}", printable(&s.label))),
+            _ => ("Remove all stopped", format!("These {} stopped servers", list.len())),
+        };
+        let body = format!("{what} and {} go for good; {}.", crate::servers::GOES, crate::servers::STAYS);
+        let about = list.iter().map(|s| if s.label == s.id { printable(&s.id) } else { format!("{} ({})", printable(&s.label), s.id) }).collect::<Vec<_>>().join(", ");
+        let ask = crate::menu::Confirm::new(title, body).does("remove").danger(true).about(self.on_machine(about));
+        self.away(w, Overlay::Confirm(ask, Pending::ServerRemove(list.into_iter().map(|s| s.id).collect())))
+    }
+
+    /// New server…: a new folder, marked as untouched, opened in this session's place as any other server is.
+    fn new_server(&mut self, w: crate::server_list::ServerList) -> Overlay {
+        if !self.caps.connects || !self.caps.switches {
+            let body = "This session cannot move to another server: its nerd is older than the server, or it was started for a test server. Run `nerd --new` in a terminal; the button copies it.";
+            let ask = crate::menu::Confirm::new("New server", body).labels(" [Enter] copy the command ", " [Esc] close ");
+            return self.away(w, Overlay::Confirm(ask, Pending::CopyCommand("nerd --new".into())));
+        }
+        let id = crate::session::new_instance_name();
+        let _ = crate::servers::mark_untouched(&id);
+        crate::log::info(&format!("servers: new server {id} reserved for client {}", self.client));
+        self.send_open_server(&id, false, false);
+        Overlay::None
+    }
+
+    /// The client's answer to `list-remote`, for the Servers window. A late one, or one for another machine, changes nothing.
     pub fn remote_listed(&mut self, name: String, result: Result<Vec<crate::proto::RemoteInstance>, String>, window: bool, ssh_failed: bool) {
+        use crate::server_list::Machine;
         if self.remote_ask.as_ref().is_none_or(|(n, _)| *n != name) {
             crate::log::warn(&format!("connect: dropped an answer about {} nobody waits for", printable(&name)));
             return;
@@ -45,9 +176,11 @@ impl App {
             Err(e) => {
                 let e = printable(&e);
                 crate::log::error(&format!("connect: {name} did not list: {e}"));
+                if let Some(w) = self.servers_window() {
+                    w.listed(&name, Machine::Failed(e.clone()));
+                }
                 // Only ssh itself failing can be a prompt BatchMode refused; the rest are answers.
                 if !ssh_failed {
-                    self.notice = Some(e);
                     return;
                 }
                 let (body, button, what) = if window {
@@ -63,32 +196,22 @@ impl App {
                         Pending::CopyCommand(format!("nerd --remote {name}")),
                     )
                 };
+                if let Overlay::Servers(w) = std::mem::replace(&mut self.overlay, Overlay::None) {
+                    self.servers_back = Some(w);
+                }
                 self.overlay = Overlay::Confirm(crate::menu::Confirm::new(format!("Can't reach {name}"), body).labels(button, " [Esc] close "), what);
                 return;
             }
         };
         let list: Vec<_> = list.into_iter().filter(|i| crate::session::valid_id(&i.id) && crate::session::valid_label(&i.label)).collect();
         crate::log::info(&format!("connect: {name} lists {} servers", list.len()));
-        if list.is_empty() {
-            self.notice = Some(format!("{name} has no servers; start one there with nerd"));
-            return;
+        if let Some(w) = self.servers_window() {
+            w.listed(&name, Machine::Listed(list, window));
         }
-        let items = list
-            .iter()
-            .enumerate()
-            .map(|(id, i)| crate::menu::PickerItem {
-                label: if i.label == i.id { i.id.clone() } else { format!("{} ({})", i.label, i.id) },
-                detail: if i.running { format!("running, {}", plural_spaces(i.spaces)) } else { "stopped".into() },
-                id,
-            })
-            .collect();
-        self.overlay = Overlay::Picker(crate::menu::Picker::new(format!("Servers on {name}"), items), Pick::RemoteInstance { name, list, window });
     }
 
     /// Opens server `id` of this Mac for this session: in its place, or in a terminal window of its own.
     /// `shown`: what the listing said; anything but "no session shows it" asks before taking it over.
-    // Servers… calls it; until then only the tests do.
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn open_server(&mut self, id: &str, shown: Option<bool>, new_window: bool) -> Overlay {
         use crate::menu::Confirm;
         let label = printable(&crate::session::instance_label(id));
@@ -142,13 +265,17 @@ impl App {
         Overlay::None
     }
 
-    /// No answer to Connect to another computer… by now: the client is busy or gone.
+    /// No answer from the client about a machine by now: it is busy or gone.
     pub fn tick_remote(&mut self) -> bool {
-        let Some((name, until)) = &self.remote_ask else { return false };
-        if Instant::now() < *until {
+        let Some((name, until)) = self.remote_ask.clone() else { return false };
+        if Instant::now() < until {
             return false;
         }
-        self.notice = Some(format!("no answer from {name} in {} s", REMOTE_WAIT.as_secs()));
+        let said = format!("no answer from {name} in {} s", REMOTE_WAIT.as_secs());
+        if let Some(w) = self.servers_window() {
+            w.listed(&name, crate::server_list::Machine::Failed(said.clone()));
+        }
+        self.notice = Some(said);
         self.remote_ask = None;
         true
     }
@@ -303,13 +430,8 @@ pub(super) fn open_argv(app: &std::path::Path, exe: &std::path::Path, instance: 
 /// How long a window has to appear before nerd says it did not.
 const OPEN_WAIT: Duration = Duration::from_secs(5);
 
-/// How long Connect to another computer… waits for the client's ssh to list a machine.
+/// How long Servers… waits for the client's ssh to list a machine.
 pub(super) const REMOTE_WAIT: Duration = Duration::from_secs(20);
-
-const NO_REMOTES: &str = "No machines yet. Add them to config.json (nerd --config prints its path) as \
-    \"remotes\": [{\"name\": \"studio\", \"host\": \"me@studio.local\"}], with ssh keys set up for the host. \
-    Update running nerd servers first: an older one drops the key when it saves settings. \
-    In a remote session, links, pbcopy and opening files act on that Mac.";
 
 /// Text from a file or another machine, safe to draw: control characters would move the cursor.
 pub(super) fn printable(s: &str) -> String {

@@ -115,19 +115,6 @@ impl App {
                     self.open_space(path);
                 }
             }
-            // A takeover may have put another client on screen since the picker opened.
-            Pick::Remote(_) | Pick::RemoteInstance { .. } if !self.caps.connects => return self.connect_overlay(),
-            Pick::Remote(list) => {
-                let Some(r) = list.get(id) else { return Overlay::None };
-                if let Err(e) = r.check() {
-                    self.notice = Some(format!("{} cannot be used: {e}", printable(&r.name)));
-                    return Overlay::None;
-                }
-                crate::log::info(&format!("connect: asked client {} to list {}", self.client, r.name));
-                self.to_client.extend(crate::proto::list_remote_marker(&r.name));
-                self.remote_ask = Some((r.name.clone(), Instant::now() + REMOTE_WAIT));
-                self.toast = Some(format!("asking {} for its servers…", r.name));
-            }
             Pick::Run(pane, ids) => {
                 if let Some(sub) = ids.get(id) {
                     self.open_run(pane, sub.clone());
@@ -167,14 +154,6 @@ impl App {
                 };
                 return self.topology_next(preset, picked, back);
             }
-            Pick::RemoteInstance { name, list, window } => {
-                let Some(i) = list.get(id) else { return Overlay::None };
-                if !i.running {
-                    self.notice = Some(format!("server {0} on {name} is stopped; start it there with nerd --resume {0}", i.id));
-                    return Overlay::None;
-                }
-                return self.open_remote(&name, Some(&i.id), window);
-            }
         }
         Overlay::None
     }
@@ -195,8 +174,11 @@ impl App {
             Pending::Detach => "Detach",
             Pending::DisconnectAll => "Disconnect everyone",
             Pending::LeaveTmux | Pending::CopyResumeCommand => "nerd is inside tmux",
-            Pending::OpenRemote(_) | Pending::CopyCommand(_) | Pending::Dismiss => "Connect to another computer",
+            Pending::OpenRemote(_) | Pending::CopyCommand(_) | Pending::Dismiss => "Servers",
             Pending::OpenServer(..) => "Open a server",
+            Pending::ServerStop(_) | Pending::StrayStop(..) => "Stop server",
+            Pending::ServerUpdate(_) => "Update server",
+            Pending::ServerRemove(_) => "Remove server",
             Pending::ShowInFinder(_) => "Logs exported",
             Pending::InstallHook(_) => "Install the hook",
             Pending::RemoveHook => "Remove agent hooks",
@@ -250,7 +232,7 @@ impl App {
     }
 
     /// A danger dialog's About line names the Mac it acts on while a client from another one holds the screen.
-    fn on_machine(&self, about: String) -> String {
+    pub(super) fn on_machine(&self, about: String) -> String {
         match &self.caps.machine {
             None => about,
             Some(m) if about.is_empty() => format!("On {m}."),
@@ -268,6 +250,7 @@ impl App {
             // Detach never reaches here: its dialog is built on its own.
             Pending::Detach | Pending::DisconnectAll | Pending::Update | Pending::LeaveTmux | Pending::CopyResumeCommand => 0,
             Pending::OpenRemote(_) | Pending::OpenServer(..) | Pending::CopyCommand(_) | Pending::Dismiss | Pending::ShowInFinder(_) | Pending::InstallHook(_) | Pending::RemoveHook | Pending::StopServer | Pending::PluginReady(..) | Pending::RemovePlugin(_) | Pending::Rename(..) | Pending::Topology(..) | Pending::Preset(..) => 0,
+            Pending::ServerStop(_) | Pending::ServerUpdate(_) | Pending::ServerRemove(_) | Pending::StrayStop(..) => 0,
             Pending::ReleaseInstall(_) | Pending::ReleaseDaily => 0,
             Pending::CloseGroup(key) => self
                 .spaces
@@ -413,6 +396,19 @@ impl App {
         Overlay::Confirm(confirm, Pending::RemoveHook)
     }
 
+    /// Edit config.json…: opened on this Mac; a session from another one is told where it is.
+    pub(super) fn edit_config(&mut self) {
+        if self.caps.bye {
+            let host = nix::unistd::gethostname().ok().map(|h| h.to_string_lossy().into_owned()).unwrap_or_default();
+            self.notice = Some(format!("config.json is on {}: {}", host.strip_suffix(".local").unwrap_or(&host), crate::paths::shown(&crate::paths::config_path())));
+            return;
+        }
+        match crate::links::open_text(&crate::paths::config_path()) {
+            Ok(()) => self.toast = Some("opened".to_string()),
+            Err(e) => self.notice = Some(e),
+        }
+    }
+
     /// What the Settings screen asked for; the screen stays open unless the outcome leaves it.
     pub(super) fn settings_outcome(&mut self, s: crate::settings::Settings, outcome: crate::settings::SettingsOutcome) -> Overlay {
         use crate::settings::SettingsOutcome as O;
@@ -421,16 +417,8 @@ impl App {
             O::InstallHook => self.install_hook_overlay(),
             O::Preset => self.preset_picker(),
             O::RemoveHook => self.remove_hook_overlay(),
-            O::EditConfig if self.caps.bye => {
-                let host = nix::unistd::gethostname().ok().map(|h| h.to_string_lossy().into_owned()).unwrap_or_default();
-                self.notice = Some(format!("config.json is on {}: {}", host.strip_suffix(".local").unwrap_or(&host), crate::paths::shown(&crate::paths::config_path())));
-                Overlay::None
-            }
             O::EditConfig => {
-                match crate::links::open_text(&crate::paths::config_path()) {
-                    Ok(()) => self.toast = Some("opened".to_string()),
-                    Err(e) => self.notice = Some(e),
-                }
+                self.edit_config();
                 Overlay::None
             }
             O::Changed => {
@@ -543,7 +531,22 @@ impl App {
     pub(super) fn perform(&mut self, what: Pending) {
         self.dirty = true;
         match what {
-            Pending::Preset(..) if self.client_inside => self.notice = Some(super::mail::INSIDE_REFUSED.into()),
+            Pending::Preset(..) | Pending::ServerStop(_) | Pending::ServerUpdate(_) | Pending::ServerRemove(_) | Pending::StrayStop(..) if self.client_inside => {
+                self.notice = Some(super::mail::INSIDE_REFUSED.into())
+            }
+            Pending::ServerStop(id) => {
+                self.toast = Some(format!("stopping server {}…", printable(&crate::session::instance_label(&id))));
+                self.servers.ask(crate::server_list::Job::Stop(id));
+            }
+            Pending::ServerUpdate(id) => self.servers.ask(crate::server_list::Job::Update(id)),
+            Pending::ServerRemove(ids) => self.servers.ask(crate::server_list::Job::Remove(ids, crate::session::instance_name())),
+            Pending::StrayStop(pid, exe) => {
+                match crate::servers::stop_stray(pid, &exe) {
+                    Ok(l) => self.toast = Some(l),
+                    Err(e) => self.notice = Some(e),
+                }
+                self.servers.ask(crate::server_list::Job::List(crate::session::instance_name()));
+            }
             Pending::Preset(t, steps, undo) => {
                 let done = if undo { "undone" } else { "applied" };
                 let line = crate::presets::needs_line(&steps);
@@ -1074,7 +1077,7 @@ impl App {
             Item::new("Messages…", Action::Messages),
             Item::new("Routes map…", Action::RoutesMap),
             Item::new("Rename this server…", Action::RenameInstance),
-            Item::new("Connect to another computer…", Action::Connect),
+            Item::new("Servers…", Action::Servers),
             Item::new("Session history…", Action::Sessions),
         ];
         if self.caps.mux {
@@ -1436,7 +1439,7 @@ impl App {
                 return Overlay::Panel(crate::panel::Open::new(src, id, title));
             }
             (Action::DisconnectAll, _) => return self.disconnect_overlay(),
-            (Action::Connect, _) => return self.connect_overlay(),
+            (Action::Servers, _) => return self.servers_overlay(),
             (Action::Report, _) => {
                 let items = REPORT_PERIODS
                     .iter()
@@ -1560,6 +1563,18 @@ impl App {
                 }
             }
             Ask::RenameInstance(id) => self.rename_instance(id, &value),
+            Ask::RenameServer(id) => {
+                let own = crate::session::instance_name();
+                if *id == own {
+                    self.rename_instance(id, &value);
+                } else {
+                    match crate::servers::rename(id, &value) {
+                        Ok(l) => self.toast = Some(printable(&l)),
+                        Err(e) => self.notice = Some(format!("not renamed: {e}")),
+                    }
+                }
+                self.servers.ask(crate::server_list::Job::List(own));
+            }
             Ask::RenameTab(i) => {
                 if let Some(t) = self.space_mut().and_then(|sp| sp.tabs.get_mut(*i)) {
                     t.name = (!value.is_empty()).then_some(value);
@@ -1748,6 +1763,10 @@ impl App {
                 self.run_ask(value, ask);
                 self.plugins_overlay()
             }
+            Ask::RenameServer(_) => {
+                self.run_ask(value, ask);
+                self.servers_back.take().map_or(Overlay::None, Overlay::Servers)
+            }
             Ask::RenamePane(id) => return self.rename_pane(*id, &text),
             Ask::SendTo(name) => {
                 if !text.is_empty() {
@@ -1781,6 +1800,7 @@ impl App {
     pub(super) fn prompt_cancelled(&mut self, ask: Ask) -> Overlay {
         match ask {
             Ask::PluginAddress => self.plugins_overlay(),
+            Ask::RenameServer(_) => self.servers_back.take().map_or(Overlay::None, Overlay::Servers),
             Ask::Broadcast(w) | Ask::Reply(_, w) => Overlay::Messages(*w),
             Ask::Admit(w) => Overlay::Accounts(w),
             _ => Overlay::None,
@@ -1924,7 +1944,7 @@ pub enum Action {
     RenameInstance,
     MoveUp,
     MoveDown,
-    Connect,
+    Servers,
     Report,
     DisconnectAll,
     About,
@@ -2029,6 +2049,8 @@ pub enum Ask {
     PluginAddress,
     /// This server's instance, by id: a name label beside it, the directory stays.
     RenameInstance(String),
+    /// A server of this Mac from the Servers window, which comes back after.
+    RenameServer(String),
     /// A message from you to this name.
     SendTo(String),
     /// From the Messages window, which comes back after.
@@ -2056,6 +2078,7 @@ pub enum Overlay {
     Sessions(crate::clients::Sessions),
     Panel(crate::panel::Open),
     Plugins(crate::plugin_list::PluginList),
+    Servers(crate::server_list::ServerList),
     Messages(crate::messages::Messages),
     Isolation(crate::isolation_ui::IsolationWin),
     Accounts(crate::isolation_ui::Accounts),
@@ -2066,10 +2089,6 @@ pub enum Overlay {
 pub enum Pick {
     /// Open a worktree: index in the list -> path.
     OpenWorktree(Vec<PathBuf>),
-    /// A machine from config.json, by index.
-    Remote(Vec<crate::config::RemoteEntry>),
-    /// An instance on that machine; `window`: the client can open a terminal for it.
-    RemoteInstance { name: String, list: Vec<crate::proto::RemoteInstance>, window: bool },
     /// A subagent of this pane's agent, by id.
     Run(PaneId, Vec<String>),
     /// A period from REPORT_PERIODS, by index.
@@ -2109,8 +2128,13 @@ pub enum Pending {
     /// Ask the client to open a terminal running `nerd --remote <name>`.
     OpenRemote(String),
     /// Take server `id` of this Mac from the session that shows it: in this session, or in a new window when true.
-    #[cfg_attr(not(test), expect(dead_code))]
     OpenServer(String, bool),
+    /// From the Servers window, by id: stop or update another server of this Mac, or take stopped ones' folders.
+    ServerStop(String),
+    ServerUpdate(String),
+    ServerRemove(Vec<String>),
+    /// SIGTERM to a stray server, by pid, while it is still a nerd started from this executable.
+    StrayStop(i32, PathBuf),
     /// A command for the human to run; the button copies it.
     CopyCommand(String),
     /// A dialog that only informs.
