@@ -16,26 +16,65 @@ use crate::session::socket_path;
 
 const SPAWN_WAIT: Duration = Duration::from_secs(5);
 
-/// Sets `NERD_INSTANCE` so every state path below, and the daemon we may spawn, resolve to it.
-fn select_instance(resume: Option<Option<String>>) -> std::io::Result<String> {
-    let name = match resume {
-        None => {
-            let id = crate::session::new_instance_name();
-            // Without the mark the server is only ever kept.
-            let _ = crate::servers::mark_untouched(&id);
-            id
-        }
+/// Which server a client opens.
+pub enum Open {
+    /// A bare `nerd`: the server a session last attached to, asking first when another session shows it.
+    Last,
+    New,
+    Resume(Option<String>),
+}
+
+/// How the Hello asks: refused while another session shows the server; `reopened` has the server say which it is.
+#[derive(Clone, Copy)]
+struct Ask {
+    if_free: bool,
+    reopened: bool,
+}
+
+const PLAIN: Ask = Ask { if_free: false, reopened: false };
+
+/// A new server, marked: without the mark it is only ever kept.
+fn fresh_instance() -> String {
+    let id = crate::session::new_instance_name();
+    let _ = crate::servers::mark_untouched(&id);
+    id
+}
+
+/// Sets `NERD_INSTANCE` so every state path below, and the daemon we may spawn, resolve to it; `None` is a cancel.
+fn select_instance(open: Open) -> std::io::Result<Option<(String, Ask)>> {
+    use crate::servers::Probe;
+    let (name, ask) = match open {
+        // An agent in a pane would land on the person's own desktop.
+        Open::Last if std::env::var_os("NERD_PANE").is_some() => (fresh_instance(), PLAIN),
+        Open::Last => match crate::session::last_instance() {
+            None => (fresh_instance(), PLAIN),
+            Some(last) => match crate::servers::probe(&last, crate::servers::PROBE_LIMIT) {
+                // One this client starts is of this build, so it reads `if_free` too.
+                Probe::NotRunning | Probe::Free => (last, Ask { if_free: true, reopened: true }),
+                // An older server would take `if_free` for a plain attach: asked here instead.
+                Probe::Shown | Probe::Unknown => match ask_taken(&last)? {
+                    Taken::Over => (last, Ask { if_free: false, reopened: true }),
+                    Taken::New => (fresh_instance(), PLAIN),
+                    Taken::Cancel => return Ok(None),
+                },
+            },
+        },
+        Open::New => (fresh_instance(), PLAIN),
         // By id or by name; an unknown one no longer makes an empty desktop.
-        Some(Some(n)) => crate::session::resolve(&n).ok_or_else(|| unknown_instance(&n))?,
-        Some(None) => crate::session::last_instance()
-            .ok_or_else(|| std::io::Error::other("no servers to resume; run nerd to start one"))?,
+        Open::Resume(Some(n)) => (crate::session::resolve(&n).ok_or_else(|| unknown_instance(&n))?, PLAIN),
+        Open::Resume(None) => (
+            crate::session::last_instance().ok_or_else(|| std::io::Error::other("no servers to resume; run nerd to start one"))?,
+            PLAIN,
+        ),
     };
     // Single-threaded at this point, so the Rust 2024 unsafety of set_var is theoretical.
     unsafe { std::env::set_var("NERD_INSTANCE", &name) };
-    Ok(name)
+    Ok(Some((name, ask)))
 }
 
-pub fn run(resume: Option<Option<String>>, from_window: bool) -> std::io::Result<()> {
+const CANCELLED: &str = "cancelled: the server is open in another session; nothing was started";
+
+pub fn run(open: Open, from_window: bool) -> std::io::Result<()> {
     // Each way out before the session still leaves its `left:` line.
     let early = |e: std::io::Error| {
         leave_with(Err(&e));
@@ -43,7 +82,7 @@ pub fn run(resume: Option<Option<String>>, from_window: bool) -> std::io::Result
     };
     // A typo in a name says more than a missing terminal; an old single-instance layout is moved first.
     crate::session::migrate_legacy();
-    if let Some(Some(n)) = &resume
+    if let Open::Resume(Some(n)) = &open
         && crate::session::resolve(n).is_none()
     {
         return Err(early(unknown_instance(n)));
@@ -56,13 +95,60 @@ pub fn run(resume: Option<Option<String>>, from_window: bool) -> std::io::Result
     }
     // A failed refresh leaves the old hook working; it is not a reason to refuse to start.
     let _ = crate::hook::refresh();
-    let name = select_instance(resume).map_err(early)?;
+    let Some((name, mut ask)) = select_instance(open).map_err(early)? else {
+        leave(crate::log::Level::Info, CANCELLED);
+        return Ok(());
+    };
     guard();
-    let mut stream = connect_or_spawn().map_err(early)?;
-    let cwd = std::env::current_dir().unwrap_or_default();
-    let (cols, rows) = crossterm::terminal::size().map_err(early)?;
+    loop {
+        let result = attach(&name, ask, from_window);
+        // A session took the server between the probe and this attach.
+        if let Ok(Seen { refused: Some(line), .. }) = &result
+            && line == crate::proto::TAKEN
+        {
+            match ask_taken(&name).map_err(early)? {
+                Taken::Over => {
+                    ask.if_free = false;
+                    continue;
+                }
+                Taken::New => return Err(early(new_in_place(from_window))),
+                Taken::Cancel => {
+                    leave(crate::log::Level::Info, CANCELLED);
+                    return Ok(());
+                }
+            }
+        }
+        leave_with(result.as_ref());
+        return match result? {
+            Seen { refused: Some(line), .. } => Err(std::io::Error::other(line)),
+            _ => Ok(()),
+        };
+    }
+}
 
-    let tui = Tui::up(crate::config::load_or_init().mouse).map_err(early)?;
+/// `nerd --new` in this process's place: `NERD_INSTANCE` cannot change now that threads run.
+fn new_in_place(from_window: bool) -> std::io::Error {
+    use std::os::unix::process::CommandExt as _;
+    let exe = match std::env::current_exe() {
+        Ok(e) => e,
+        Err(e) => return e,
+    };
+    leave(crate::log::Level::Info, "the server is open in another session; starting a new one");
+    let mut cmd = crate::spawn::cmd(exe);
+    cmd.arg("--new").env_remove("NERD_INSTANCE");
+    if from_window {
+        cmd.arg("--from-window");
+    }
+    cmd.exec()
+}
+
+/// One attach to server `name`: the Hello, then the session until it ends.
+fn attach(name: &str, ask: Ask, from_window: bool) -> std::io::Result<Seen> {
+    let mut stream = connect_or_spawn()?;
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let (cols, rows) = crossterm::terminal::size()?;
+
+    let tui = Tui::up(crate::config::load_or_init().mouse)?;
     let mut out = std::io::stdout();
     // tmux/screen swallow Kitty graphics anyway, and turn the query itself into a pane title.
     let mux = in_multiplexer();
@@ -71,7 +157,7 @@ pub fn run(resume: Option<Option<String>>, from_window: bool) -> std::io::Result
     // After the alternate screen: a terminal that prints the unknown query leaves it there, not in scrollback.
     let graphics = !mux && query_graphics();
     // After the query: tmux would otherwise leave the query's text as the window name.
-    let _ = out.write_all(format!("\x1b]2;nerd {}\x07", crate::render::unspoofed(&crate::session::instance_label(&name))).as_bytes());
+    let _ = out.write_all(format!("\x1b]2;nerd {}\x07", crate::render::unspoofed(&crate::session::instance_label(name))).as_bytes());
     let _ = out.flush();
 
     let dark = appearance_dark();
@@ -99,21 +185,16 @@ pub fn run(resume: Option<Option<String>>, from_window: bool) -> std::io::Result
         reattach: None,
         machine: None,
         cell_px: Some(cell),
-        if_free: false,
+        if_free: ask.if_free,
         switches: false,
+        reopened: ask.reopened,
     };
     crate::log::info(&format!("started in {}, mux={mux}", term_program()));
     let result = hello
         .write_to(&mut stream)
         .and_then(|()| session(BufReader::new(stream.try_clone()?), stream, Vec::new(), terminal, mux, dark, &appearance, ssh_path(), true, cell));
     drop(tui);
-    leave_with(result.as_ref());
-    match result? {
-        // Its own kind, so the caller can offer to take the server over or make a new one.
-        Seen { refused: Some(line), .. } if line == crate::proto::TAKEN => Err(std::io::Error::new(std::io::ErrorKind::ResourceBusy, line)),
-        Seen { refused: Some(line), .. } => Err(std::io::Error::other(line)),
-        _ => Ok(()),
-    }
+    result
 }
 
 fn term_program() -> String {
@@ -1040,6 +1121,7 @@ fn attach_remote(
         cell_px: Some(cell),
         if_free: false,
         switches: false,
+        reopened: false,
     };
     let Relay { child, mut stdin, mut stdout, stderr } = spawn_relay(ssh, &entry.host, &inst.id)?;
     let _ = hello.write_to(&mut stdin);
@@ -1065,31 +1147,43 @@ fn attach_remote(
     Ok((seen, exit, said))
 }
 
-/// Where the reconnect screen starts, from the top-left corner.
-const RECONNECT_TOP: u16 = 1;
-const RECONNECT_LEFT: u16 = 2;
+/// Where a screen before any session starts, from the top-left corner.
+const SCREEN_TOP: u16 = 1;
+const SCREEN_LEFT: u16 = 2;
 /// Worded and spaced like a dialog's buttons.
 const RECONNECT: &str = " [Enter] reconnect ";
 const CLOSE: &str = " [Esc] close ";
+const TAKE_OVER: &str = " [t] take it over ";
+const NEW_SERVER: &str = " [n] new server ";
+const CANCEL: &str = " [Esc] cancel ";
 
-/// The reconnect screen's lines, then its Reconnect and Close buttons; the lines are cut so the buttons fit in `rows`.
-fn reconnect_layout(name: &str, secs: u64, failed: Option<&str>, rows: u16) -> (Vec<String>, ratatui::layout::Rect, ratatui::layout::Rect) {
-    use ratatui::layout::Rect;
+fn reconnect_lines(name: &str, secs: u64, failed: Option<&str>) -> Vec<String> {
     let mut lines = vec![format!("nerd: the link to {name} dropped {secs} s ago. The panes keep running there.")];
     if let Some(e) = failed {
         lines.push(String::new());
         lines.extend(e.lines().map(printable));
     }
+    lines
+}
+
+/// A screen's lines, cut so the row of buttons under them fits in `rows`, and where each button is.
+fn screen_layout(mut lines: Vec<String>, buttons: &[&str], rows: u16) -> (Vec<String>, Vec<ratatui::layout::Rect>) {
     let room = usize::from(rows.saturating_sub(4)).max(2);
     if lines.len() > room {
         lines.truncate(room - 1);
         lines.push("\u{2026}".into());
     }
-    let row = RECONNECT_TOP + lines.len() as u16 + 1;
-    let width = |s: &str| s.chars().count() as u16;
-    let reconnect = Rect::new(RECONNECT_LEFT, row, width(RECONNECT), 1);
-    let close = Rect::new(reconnect.right() + 1, row, width(CLOSE), 1);
-    (lines, reconnect, close)
+    let row = SCREEN_TOP + lines.len() as u16 + 1;
+    let mut x = SCREEN_LEFT;
+    let rects = buttons
+        .iter()
+        .map(|b| {
+            let r = ratatui::layout::Rect::new(x, row, b.chars().count() as u16, 1);
+            x = r.right() + 1;
+            r
+        })
+        .collect();
+    (lines, rects)
 }
 
 /// ratatui's colour as crossterm writes it; the theme's colours are all RGB.
@@ -1102,61 +1196,90 @@ fn crossterm_color(c: ratatui::style::Color) -> crossterm::style::Color {
 
 /// Waits for Reconnect (click or Enter) or Close (click, Esc or Ctrl-C) on the alternate screen; true is Reconnect.
 fn reconnect_screen(name: &str, since: Instant, failed: Option<&str>, cfg: &crate::config::Config, appearance: &Appearance) -> std::io::Result<bool> {
+    use crossterm::event::KeyCode;
+    let lines = || reconnect_lines(name, since.elapsed().as_secs(), failed);
+    Ok(choose(lines, &[(RECONNECT, KeyCode::Enter), (CLOSE, KeyCode::Esc)], cfg, appearance)? == 0)
+}
+
+#[derive(Clone, Copy)]
+enum Taken {
+    Over,
+    New,
+    Cancel,
+}
+
+/// Asked before a bare `nerd` takes its server from the session that shows it.
+fn ask_taken(id: &str) -> std::io::Result<Taken> {
+    use crossterm::event::KeyCode;
+    let line = format!("Server {} is open in another session.", printable(&crate::session::instance_label(id)));
+    // No poller: this runs before `NERD_INSTANCE` is set, while no thread may run.
+    let appearance = Appearance::new(std::sync::atomic::AtomicU8::new(encode(appearance_dark())));
+    let buttons = [(TAKE_OVER, KeyCode::Char('t')), (NEW_SERVER, KeyCode::Char('n')), (CANCEL, KeyCode::Esc)];
+    let pick = choose(|| vec![line.clone()], &buttons, &crate::config::load_or_init(), &appearance)?;
+    Ok([Taken::Over, Taken::New, Taken::Cancel][pick])
+}
+
+/// A screen before any session: `lines`, then buttons pressed by a click or their key. Control + C presses the
+/// one keyed Esc. Returns the button's index.
+fn choose(lines: impl Fn() -> Vec<String>, buttons: &[(&str, crossterm::event::KeyCode)], cfg: &crate::config::Config, appearance: &Appearance) -> std::io::Result<usize> {
     // The buttons answer the mouse whatever config.json says about the panes.
     let tui = Tui::up(true)?;
     let mut out = std::io::stdout();
-    let chosen = reconnect_wait(&mut out, name, since, failed, cfg, appearance);
+    let chosen = choose_wait(&mut out, lines, buttons, cfg, appearance);
     let _ = execute!(out, crossterm::cursor::Show);
     drop(tui);
-    // Motion reports still queued would otherwise reach ssh's password prompt.
+    // Motion reports still queued would otherwise reach ssh's password prompt or the session.
     let _ = nix::sys::termios::tcflush(std::io::stdin(), nix::sys::termios::FlushArg::TCIFLUSH);
     chosen
 }
 
-fn reconnect_wait(out: &mut std::io::Stdout, name: &str, since: Instant, failed: Option<&str>, cfg: &crate::config::Config, appearance: &Appearance) -> std::io::Result<bool> {
+fn choose_wait(
+    out: &mut std::io::Stdout,
+    lines: impl Fn() -> Vec<String>,
+    buttons: &[(&str, crossterm::event::KeyCode)],
+    cfg: &crate::config::Config,
+    appearance: &Appearance,
+) -> std::io::Result<usize> {
     use crossterm::cursor::{Hide, MoveTo};
     use crossterm::event::{KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
     use crossterm::style::{Attribute, Print, SetAttribute, SetBackgroundColor, SetForegroundColor};
     use crossterm::terminal::{Clear, ClearType};
+    let labels: Vec<&str> = buttons.iter().map(|b| b.0).collect();
+    let esc = buttons.iter().position(|b| b.1 == KeyCode::Esc);
     let mut shown = None;
     loop {
-        let secs = since.elapsed().as_secs();
         let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
-        let (lines, reconnect, close) = reconnect_layout(name, secs, failed, rows);
-        if shown != Some(secs) {
-            shown = Some(secs);
+        let (text, rects) = screen_layout(lines(), &labels, rows);
+        if shown.as_ref() != Some(&text) {
             let dark = match appearance.load(std::sync::atomic::Ordering::Relaxed) {
                 UNKNOWN => None,
                 v => Some(v == DARK),
             };
             let (theme, _) = crate::render::pick_theme(cfg, dark);
-            let (ground, text) = (crossterm_color(theme.ground), crossterm_color(theme.text));
+            let (ground, fg) = (crossterm_color(theme.ground), crossterm_color(theme.text));
             // The terminal's own background takes nerd's ground, as the server does; tui_down gives it back.
             if let ratatui::style::Color::Rgb(r, g, b) = theme.ground {
                 write!(out, "\x1b]11;#{r:02x}{g:02x}{b:02x}\x07")?;
             }
-            let width = usize::from(cols.saturating_sub(RECONNECT_LEFT));
-            crossterm::queue!(out, Hide, SetBackgroundColor(ground), Clear(ClearType::All), SetForegroundColor(text))?;
-            for (i, line) in lines.iter().enumerate() {
+            let width = usize::from(cols.saturating_sub(SCREEN_LEFT));
+            crossterm::queue!(out, Hide, SetBackgroundColor(ground), Clear(ClearType::All), SetForegroundColor(fg))?;
+            for (i, line) in text.iter().enumerate() {
                 let line: String = line.chars().take(width).collect();
-                crossterm::queue!(out, MoveTo(RECONNECT_LEFT, RECONNECT_TOP + i as u16), Print(line))?;
+                crossterm::queue!(out, MoveTo(SCREEN_LEFT, SCREEN_TOP + i as u16), Print(line))?;
             }
-            // As a dialog draws them: the one Enter picks in the accent bar, the other plain.
-            let key = crossterm_color(theme.border_focus);
-            crossterm::queue!(
-                out,
-                MoveTo(reconnect.x, reconnect.y),
-                SetForegroundColor(ground),
-                SetBackgroundColor(key),
-                SetAttribute(Attribute::Bold),
-                Print(RECONNECT),
-                SetAttribute(Attribute::NormalIntensity),
-                SetBackgroundColor(ground),
-                MoveTo(close.x, close.y),
-                SetForegroundColor(text),
-                Print(CLOSE),
-            )?;
+            // As a dialog draws them: the one Enter picks in the accent bar, the others plain.
+            for ((label, key), r) in buttons.iter().zip(&rects) {
+                crossterm::queue!(out, MoveTo(r.x, r.y))?;
+                if *key == KeyCode::Enter {
+                    let accent = crossterm_color(theme.border_focus);
+                    crossterm::queue!(out, SetForegroundColor(ground), SetBackgroundColor(accent), SetAttribute(Attribute::Bold), Print(label))?;
+                    crossterm::queue!(out, SetAttribute(Attribute::NormalIntensity), SetBackgroundColor(ground), SetForegroundColor(fg))?;
+                } else {
+                    crossterm::queue!(out, Print(label))?;
+                }
+            }
             out.flush()?;
+            shown = Some(text);
         }
         if crate::signals::caught() != 0 {
             return Err(std::io::ErrorKind::Interrupted.into());
@@ -1165,20 +1288,21 @@ fn reconnect_wait(out: &mut std::io::Stdout, name: &str, since: Instant, failed:
             continue;
         }
         match crossterm::event::read()? {
-            Event::Key(k) if k.kind == KeyEventKind::Press => match k.code {
-                KeyCode::Enter => return Ok(true),
-                KeyCode::Esc => return Ok(false),
-                KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => return Ok(false),
-                _ => {}
-            },
+            Event::Key(k) if k.kind == KeyEventKind::Press => {
+                if let Some(i) = buttons.iter().position(|b| b.1 == k.code) {
+                    return Ok(i);
+                }
+                if k.code == KeyCode::Char('c') && k.modifiers.contains(KeyModifiers::CONTROL)
+                    && let Some(i) = esc
+                {
+                    return Ok(i);
+                }
+            }
             // On release: a press would leave its release to reach ssh's prompt in cooked mode.
             Event::Mouse(m) if m.kind == MouseEventKind::Up(MouseButton::Left) => {
                 let at = ratatui::layout::Position::new(m.column, m.row);
-                if reconnect.contains(at) {
-                    return Ok(true);
-                }
-                if close.contains(at) {
-                    return Ok(false);
+                if let Some(i) = rects.iter().position(|r| r.contains(at)) {
+                    return Ok(i);
                 }
             }
             Event::Resize(..) => shown = None,
@@ -1724,7 +1848,11 @@ mod remote_tests {
     #[test]
     fn the_reconnect_screen_counts_and_its_buttons_are_where_they_are_drawn() {
         use ratatui::layout::Position;
-        let (lines, reconnect, close) = reconnect_layout("studio", 12, None, 24);
+        let layout = |secs, failed, rows| {
+            let (lines, b) = screen_layout(reconnect_lines("studio", secs, failed), &[RECONNECT, CLOSE], rows);
+            (lines, b[0], b[1])
+        };
+        let (lines, reconnect, close) = layout(12, None, 24);
         assert_eq!(lines, ["nerd: the link to studio dropped 12 s ago. The panes keep running there."]);
         assert_eq!((reconnect.y, reconnect.width, close.width), (3, RECONNECT.len() as u16, CLOSE.len() as u16));
         assert_eq!(reconnect.right() + 1, close.x, "one cell between them, as in a dialog");
@@ -1735,18 +1863,27 @@ mod remote_tests {
         assert!(!reconnect.contains(Position::new(reconnect.x, 2)), "the row above is not a button");
 
         // A failure's own words sit above the buttons, which move down under them.
-        let (lines, again, _) = reconnect_layout("studio", 70, Some("ssh to studio failed\n  second"), 24);
+        let (lines, again, _) = layout(70, Some("ssh to studio failed\n  second"), 24);
         assert_eq!(lines[0], "nerd: the link to studio dropped 70 s ago. The panes keep running there.");
         assert_eq!(&lines[1..], ["", "ssh to studio failed", "  second"]);
-        assert_eq!(again.y, RECONNECT_TOP + 4 + 1);
+        assert_eq!(again.y, SCREEN_TOP + 4 + 1);
 
         // A long failure is cut, so the buttons stay on screen.
         let long: String = (0..40).map(|i| format!("line {i}\n")).collect();
         for rows in [6, 12, 24] {
-            let (lines, reconnect, close) = reconnect_layout("studio", 1, Some(&long), rows);
+            let (lines, reconnect, close) = layout(1, Some(&long), rows);
             assert_eq!(lines.last().map(String::as_str), Some("\u{2026}"), "{rows} rows: the cut is shown");
             assert!(reconnect.y < rows && close.y == reconnect.y, "{rows} rows: buttons at {} are on screen", reconnect.y);
         }
+    }
+
+    #[test]
+    fn the_question_s_three_buttons_sit_in_one_row_under_it() {
+        let (lines, b) = screen_layout(vec!["Server work is open in another session.".into()], &[TAKE_OVER, NEW_SERVER, CANCEL], 24);
+        assert_eq!(lines.len(), 1);
+        assert_eq!((b[0].x, b[0].y), (SCREEN_LEFT, SCREEN_TOP + 2));
+        assert!(b.windows(2).all(|w| w[0].right() + 1 == w[1].x && w[0].y == w[1].y), "{b:?}");
+        assert_eq!(b.iter().map(|r| r.width).collect::<Vec<_>>(), [TAKE_OVER, NEW_SERVER, CANCEL].map(|l| l.len() as u16));
     }
 
     /// This test binary hard-linked as `sshd-session` once per build: macOS checks each new path it launches, up to 10 s under load.
@@ -1886,6 +2023,7 @@ mod remote_tests {
             cell_px: None,
             if_free: false,
             switches: false,
+            reopened: false,
         }
     }
 

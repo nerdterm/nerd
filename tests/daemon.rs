@@ -1032,6 +1032,245 @@ fn a_client_gone_before_its_first_frame_does_not_stop_the_server() {
     let _ = std::fs::remove_dir_all(&env.dir);
 }
 
+/// A client in a terminal of its own, as a person starts it: a pty whose screen the test reads, in a test HOME and
+/// none of the test variables.
+struct Tty {
+    home: PathBuf,
+    master: std::fs::File,
+    child: Child,
+    out: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+}
+
+const TTY: (u16, u16) = (120, 40);
+
+fn nerd_in_tty(home: &std::path::Path, args: &[&str], extra: &[(&str, &str)]) -> Tty {
+    use std::os::unix::process::CommandExt as _;
+    let size = nix::pty::Winsize { ws_row: TTY.1, ws_col: TTY.0, ws_xpixel: 0, ws_ypixel: 0 };
+    let pty = nix::pty::openpty(Some(&size), None).unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_nerd"));
+    cmd.args(args).env("HOME", home).env("TERM", "xterm-256color").env("SHELL", "/bin/sh");
+    for k in ["NERD_STATE_DIR", "NERD_SOCKET", "NERD_INSTANCE", "NERD_PANE", "TMUX", "STY", "TERMINFO", "TERMINFO_DIRS"] {
+        cmd.env_remove(k);
+    }
+    cmd.envs(extra.iter().copied());
+    cmd.stdin(pty.slave.try_clone().unwrap()).stdout(pty.slave.try_clone().unwrap()).stderr(pty.slave);
+    // Its own session with the pty as its terminal: /dev/tty must not be the one the tests run in.
+    unsafe {
+        cmd.pre_exec(|| {
+            nix::unistd::setsid()?;
+            if nix::libc::ioctl(0, nix::libc::TIOCSCTTY as _, 0) == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let child = cmd.spawn().expect("nerd started in a pty");
+    let master = std::fs::File::from(pty.master);
+    let out = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let (mut r, o) = (master.try_clone().unwrap(), out.clone());
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 65536];
+        while let Ok(n @ 1..) = r.read(&mut buf) {
+            o.lock().unwrap().extend_from_slice(&buf[..n]);
+        }
+    });
+    Tty { home: home.to_path_buf(), master, child, out }
+}
+
+impl Tty {
+    fn screen(&self) -> String {
+        let mut p = vt100::Parser::new(TTY.1, TTY.0, 0);
+        p.process(&self.out.lock().unwrap());
+        p.screen().contents()
+    }
+    fn until(&self, what: &str) -> String {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let screen = self.screen();
+            if screen.contains(what) {
+                return screen;
+            }
+            assert!(Instant::now() < deadline, "no {what:?} on the screen:\n{screen}");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+    fn press(&mut self, keys: &[u8]) {
+        self.master.write_all(keys).unwrap();
+    }
+    /// A left click on the first cell of `label`, as an SGR mouse report: press, then release.
+    fn click(&mut self, label: &str) {
+        let screen = self.screen();
+        let (row, col) = screen.lines().enumerate().find_map(|(r, l)| l.find(label).map(|c| (r + 1, c + 1))).unwrap_or_else(|| panic!("no {label:?}:\n{screen}"));
+        self.press(format!("\x1b[<0;{col};{row}M\x1b[<0;{col};{row}m").as_bytes());
+    }
+    fn exit(&mut self) -> std::process::ExitStatus {
+        wait_exit(&mut self.child, Duration::from_secs(10))
+    }
+}
+
+/// The client, and every server it may have started in its HOME, even after a failed assertion.
+impl Drop for Tty {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        let dir = self.home.join("Library/Application Support/nerd/instances");
+        let ids: Vec<String> = std::fs::read_dir(dir).into_iter().flatten().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        stop_own(&self.home, &ids.iter().map(String::as_str).collect::<Vec<_>>());
+    }
+}
+
+/// Stops servers of a test HOME by name: with no name, `--stop` from inside a pane is refused.
+fn stop_own(home: &std::path::Path, ids: &[&str]) {
+    for id in ids {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_nerd"));
+        cmd.args(["--stop", id]).env("HOME", home);
+        for k in ["NERD_STATE_DIR", "NERD_SOCKET", "NERD_INSTANCE"] {
+            cmd.env_remove(k);
+        }
+        let _ = cmd.output();
+    }
+}
+
+fn instance(env: &Env, id: &str) -> PathBuf {
+    own_root(env).join("instances").join(id)
+}
+
+fn answers(sock: &std::path::Path) -> bool {
+    UnixStream::connect(sock).is_ok()
+}
+
+/// Server 1 shown by a session, as a bare `nerd` in a second terminal finds it; then that `nerd`, at its question.
+fn asked(name: &str) -> (Env, DaemonGuard, UnixStream, Tty) {
+    let (env, daemon) = own_server(name, false, &[]);
+    let mut first = connect(&env, 80, 24);
+    own_wait(&env, &mut first, "attached: 80x24");
+    let tty = nerd_in_tty(&env.dir, &[], &[]);
+    let screen = tty.until("Server 1 is open in another session.");
+    assert!(screen.contains("[t] take it over") && screen.contains("[n] new server") && screen.contains("[Esc] cancel"), "{screen}");
+    assert!(!instance(&env, "2").exists(), "nothing is started before the answer");
+    (env, daemon, first, tty)
+}
+
+/// The first session is still the one shown: no farewell reached it, and the server took no one over.
+fn assert_still_shown(env: &Env, first: &mut UnixStream) {
+    let rest = read_until(first, b"took over", Duration::from_secs(1));
+    assert!(!has(&rest, b"took over") && !own_log(env).contains("taken over by"), "{}", own_log(env));
+}
+
+/// The answer was a new server: server 2, attached and marked, while server 1 stays with its session.
+fn assert_new_server(env: &Env, first: &mut UnixStream, tty: &mut Tty) {
+    tty.until("spaces");
+    assert!(answers(&instance(env, "2").join("nerd.sock")) && instance(env, "2").join("untouched").exists());
+    assert!(!tty.screen().contains("reopened server"), "a new server is not called reopened");
+    assert_still_shown(env, first);
+    stop_own(&env.dir, &["1", "2"]);
+    assert!(tty.exit().success());
+}
+
+#[test]
+fn a_bare_nerd_reopens_the_server_last_attached_not_the_last_started() {
+    let (env, mut daemon) = own_server("bare-last", false, &[]);
+    let mut client = connect(&env, 80, 24);
+    own_wait(&env, &mut client, "attached: 80x24");
+    stop_and_wait(&env, &mut daemon);
+    // Server 2 was started later and never had a session of this Mac.
+    std::thread::sleep(Duration::from_millis(1100));
+    std::fs::create_dir_all(instance(&env, "2")).unwrap();
+    // Written, not copied: a copy can keep the old mtime.
+    std::fs::write(instance(&env, "2").join("session.json"), std::fs::read(instance(&env, "1").join("session.json")).unwrap()).unwrap();
+    let mut tty = nerd_in_tty(&env.dir, &[], &[]);
+    let screen = tty.until("reopened server 1; nerd --new makes another");
+    assert!(answers(&env.socket), "server 1 runs again: {screen}");
+    assert!(!answers(&instance(&env, "2").join("nerd.sock")) && !instance(&env, "3").exists());
+    stop_own(&env.dir, &["1"]);
+    assert!(tty.exit().success());
+    let _ = std::fs::remove_dir_all(&env.dir);
+}
+
+#[test]
+fn n_at_the_question_makes_a_new_server_and_leaves_the_first_session_alone() {
+    let (env, _daemon, mut first, mut tty) = asked("ask-n");
+    tty.press(b"n");
+    assert_new_server(&env, &mut first, &mut tty);
+    let _ = std::fs::remove_dir_all(&env.dir);
+}
+
+#[test]
+fn a_click_on_new_server_works_like_its_key() {
+    let (env, _daemon, mut first, mut tty) = asked("ask-click");
+    tty.click("[n] new server");
+    assert_new_server(&env, &mut first, &mut tty);
+    let _ = std::fs::remove_dir_all(&env.dir);
+}
+
+#[test]
+fn t_at_the_question_takes_the_server_over() {
+    let (env, _daemon, mut first, mut tty) = asked("ask-t");
+    tty.press(b"t");
+    let rest = read_until(&mut first, b"took over", Duration::from_secs(10));
+    assert!(has(&rest, b"another session took over; this one is done. Reattach with `nerd --resume 1`."), "{}", own_log(&env));
+    tty.until("reopened server 1; nerd --new makes another");
+    assert!(!instance(&env, "2").exists());
+    stop_own(&env.dir, &["1"]);
+    assert!(tty.exit().success());
+    let _ = std::fs::remove_dir_all(&env.dir);
+}
+
+#[test]
+fn esc_at_the_question_starts_nothing() {
+    let (env, _daemon, mut first, mut tty) = asked("ask-esc");
+    tty.press(b"\x1b");
+    let status = tty.exit();
+    assert!(status.success(), "{status}");
+    assert!(!instance(&env, "2").exists(), "no server was made");
+    assert_still_shown(&env, &mut first);
+    let _ = std::fs::remove_dir_all(&env.dir);
+}
+
+/// A HOME with server 1 stopped: stamped as the last attached, or with only the empty snapshot the LaunchAgent's
+/// server leaves when no session ever showed it.
+fn stopped_home(name: &str, stamped: bool) -> Env {
+    let dir = own_home(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    let folder = dir.join("Library/Application Support/nerd/instances/1");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(dir.join("Library/Application Support/nerd/update-check"), "off\n").unwrap();
+    if stamped {
+        std::fs::write(folder.join("attached"), "1\n").unwrap();
+    } else {
+        std::fs::write(folder.join("session.json"), r#"{"version":2,"spaces":[]}"#).unwrap();
+    }
+    Env { socket: folder.join("nerd.sock"), dir }
+}
+
+/// `nerd` with `args` makes server 2, marked, and leaves server 1 stopped.
+fn assert_makes_a_new_server(name: &str, stamped: bool, args: &[&str], extra: &[(&str, &str)]) {
+    let env = stopped_home(name, stamped);
+    let mut tty = nerd_in_tty(&env.dir, args, extra);
+    tty.until("spaces");
+    assert!(answers(&instance(&env, "2").join("nerd.sock")), "{}", tty.screen());
+    assert!(instance(&env, "2").join("untouched").exists(), "marked, so it goes if nothing is done in it");
+    assert!(!answers(&env.socket) && !tty.screen().contains("reopened server"));
+    stop_own(&env.dir, &["2"]);
+    assert!(tty.exit().success());
+    let _ = std::fs::remove_dir_all(&env.dir);
+}
+
+#[test]
+fn a_bare_nerd_inside_a_pane_always_starts_a_new_server() {
+    assert_makes_a_new_server("bare-pane", true, &[], &[("NERD_PANE", "7")]);
+}
+
+#[test]
+fn nerd_new_always_starts_a_new_server() {
+    assert_makes_a_new_server("new", true, &["--new"], &[]);
+}
+
+#[test]
+fn a_bare_nerd_with_no_server_last_attached_starts_a_new_one() {
+    assert_makes_a_new_server("bare-none", false, &[], &[]);
+}
+
 /// `nerd --disconnect` as the server hears it: every line it writes back until EOF.
 fn disconnect_all(env: &Env) -> String {
     let mut s = UnixStream::connect(&env.socket).unwrap();

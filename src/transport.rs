@@ -26,6 +26,8 @@ pub enum Inbound {
         inside: bool,
         /// Refused when another session shows the server.
         if_free: bool,
+        /// Says which server a bare `nerd` came back to.
+        reopened: bool,
     },
     Event(u64, Event),
     Remote(u64, String, Result<Vec<crate::proto::RemoteInstance>, String>, bool, bool),
@@ -340,10 +342,10 @@ pub fn read_client(id: u64, stream: UnixStream, tx: Inbox, greeted: bool, waitin
         }
         match first {
             Ok(Some(hello @ ClientMsg::Hello { .. })) => {
-                let (Some(caps), ClientMsg::Hello { cwd, cols, rows, host, if_free, .. }) = (crate::proto::ClientCaps::from_v1_hello(&hello), hello) else { return };
+                let (Some(caps), ClientMsg::Hello { cwd, cols, rows, host, if_free, reopened, .. }) = (crate::proto::ClientCaps::from_v1_hello(&hello), hello) else { return };
                 let program = peer_program(&out);
                 let inside = nix::sys::socket::getsockopt(&out, nix::sys::socket::sockopt::LocalPeerPid).is_ok_and(|pid| inside(pid, crate::broker::pid(), parent_pid));
-                let attach = Inbound::Attach { id, stream: out, cwd, cols, rows, host, program, caps, inside, if_free };
+                let attach = Inbound::Attach { id, stream: out, cwd, cols, rows, host, program, caps, inside, if_free, reopened };
                 if tx.send(attach).is_err() {
                     return;
                 }

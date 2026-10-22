@@ -25,7 +25,7 @@ scripts/gates.sh    # build, tests under an empty HOME, clippy -D warnings, carg
 
 Install a local build with `install -m 755 target/release/nerd ~/.local/bin/nerd && codesign --force --sign - ~/.local/bin/nerd`. Never `cp` over the old binary: macOS kills it.
 
-Check visible changes in a nested tmux on its own tmux server against a test nerd server with its own home: `tmux -L nt new-session -d -e HOME=/tmp/nt -e NERD_SOCKET=/tmp/nt/s.sock <nerd>` (pass the variables with `-e`), then read `tmux capture-pane -p`. Stop only that test server, found by its socket; never `pkill -f 'nerd --daemon'`, which also stops your own nerd.
+Check visible changes in a nested tmux on its own tmux server against a test nerd server with its own home: `tmux -L nt new-session -d -e HOME=/tmp/nt <nerd> --new` (pass the variable with `-e`; no `NERD_SOCKET`, which would point every server of that home at one socket), then read `tmux capture-pane -p`. Stop only the test servers, with `HOME=/tmp/nt <nerd> --stop`; never `pkill -f 'nerd --daemon'`, which also stops your own nerd.
 
 ## Workflow
 

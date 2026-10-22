@@ -60,6 +60,9 @@ pub enum ClientMsg {
         /// This client can switch itself to another server of this Mac when asked.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         switches: bool,
+        /// A bare `nerd` came back to the server it last attached to; the server says so once.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        reopened: bool,
     },
     Event(crossterm::event::Event),
     /// The macOS appearance changed while attached: dark or not.
@@ -437,7 +440,7 @@ mod tests {
     fn screen_rides_the_hello_only_when_it_is_true() {
         let hello = |screen| ClientMsg::Hello {
             cwd: "/tmp".into(), cols: 80, rows: 24, mux: true, screen, graphics: None, terminal: None, opened_by_nerd: false, opens_windows: false,
-            dark: None, host: None, bye: false, connects: false, reattach: None, machine: None, cell_px: None, if_free: false, switches: false,
+            dark: None, host: None, bye: false, connects: false, reattach: None, machine: None, cell_px: None, if_free: false, switches: false, reopened: false,
         };
         let json = |m: &ClientMsg| serde_json::to_string(m).unwrap();
         assert!(!json(&hello(false)).contains("screen"), "the v1 hello is unchanged for tmux");
@@ -469,6 +472,7 @@ mod tests {
             cell_px: Some(35),
             if_free: false,
             switches: false,
+            reopened: false,
         }
             .write_to(&mut buf)
             .unwrap();
@@ -578,15 +582,15 @@ mod tests {
         }
     }
 
-    /// What this build adds for Servers…: an older server closes on `Probe` and ignores the two Hello fields.
+    /// What this build adds for Servers…: an older server closes on `Probe` and ignores the three Hello fields.
     #[test]
     fn the_probe_and_the_attach_asks_are_pinned() {
-        for line in [r#""Probe""#, r#"{"Hello":{"cwd":"/tmp","cols":80,"rows":24,"mux":false,"graphics":null,"terminal":null,"opened_by_nerd":false,"opens_windows":false,"dark":null,"host":null,"bye":false,"connects":true,"reattach":null,"machine":null,"if_free":true,"switches":true}}"#] {
+        for line in [r#""Probe""#, r#"{"Hello":{"cwd":"/tmp","cols":80,"rows":24,"mux":false,"graphics":null,"terminal":null,"opened_by_nerd":false,"opens_windows":false,"dark":null,"host":null,"bye":false,"connects":true,"reattach":null,"machine":null,"if_free":true,"switches":true,"reopened":true}}"#] {
             let msg: ClientMsg = serde_json::from_str(line).unwrap_or_else(|e| panic!("{line}: {e}"));
             assert_eq!(serde_json::to_string(&msg).unwrap(), line);
         }
-        let ClientMsg::Hello { if_free, switches, .. } = serde_json::from_str(r#"{"Hello":{"cwd":"/tmp","cols":80,"rows":24}}"#).unwrap() else { panic!() };
-        assert!(!if_free && !switches, "an older client asks for neither");
+        let ClientMsg::Hello { if_free, switches, reopened, .. } = serde_json::from_str(r#"{"Hello":{"cwd":"/tmp","cols":80,"rows":24}}"#).unwrap() else { panic!() };
+        assert!(!if_free && !switches && !reopened, "an older client asks for none");
         let a = ProbeAnswer { shown: true, version: "nerd 0.16.0 (abc1234, 2026-10-22 12:00)".into(), spaces: 2 };
         assert_eq!(serde_json::to_string(&a).unwrap(), r#"{"shown":true,"version":"nerd 0.16.0 (abc1234, 2026-10-22 12:00)","spaces":2}"#);
     }

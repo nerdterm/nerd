@@ -150,7 +150,7 @@ pub struct WorkspaceSnapshot {
     pub active_space: usize,
 }
 
-/// Each instance gets its own subfolder, so a plain `nerd` in a second window is a second desktop.
+/// Each instance gets its own subfolder, so `nerd --new` in a second window is a second desktop.
 pub fn state_dir() -> PathBuf {
     if std::env::var_os("NERD_STATE_DIR").is_some() {
         return crate::paths::state_root();

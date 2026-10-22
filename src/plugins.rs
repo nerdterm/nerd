@@ -1340,6 +1340,7 @@ mod tests {
                 cell_px: None,
                 if_free: false,
                 switches: false,
+                reopened: false,
             },
             ClientMsg::Event(Ev::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE))),
             ClientMsg::Appearance(true),

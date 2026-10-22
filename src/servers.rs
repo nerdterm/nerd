@@ -145,7 +145,6 @@ fn ask(path: &Path, limit: Duration) -> (Probe, Option<ProbeAnswer>, Option<i32>
 }
 
 /// Whether a session shows server `id`, asked within `limit`.
-#[allow(dead_code)] // until a bare `nerd` asks it before it attaches
 pub fn probe(id: &str, limit: Duration) -> Probe {
     ask(&socket_of(id), limit).0
 }

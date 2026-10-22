@@ -377,7 +377,7 @@ fn serve(started: &mut bool) -> std::io::Result<()> {
         let mut redraw = false;
         while let Ok(msg) = rx.try_recv() {
             match msg {
-                Inbound::Attach { id, stream, cwd, cols, rows, host, program, caps, inside, if_free } => {
+                Inbound::Attach { id, stream, cwd, cols, rows, host, program, caps, inside, if_free, reopened } => {
                     // Here, not on the reader's thread: two `if_free` attaches cannot both find the server free.
                     if if_free && sink.attached() && !sink.hung_up() {
                         info(&format!("client {id} refused: it asked for a free server and client {current} shows this one, {}", Peer::of(&stream)));
@@ -448,6 +448,9 @@ fn serve(started: &mut bool) -> std::io::Result<()> {
                     // tty to answer, so it would hang forever. resize() clears the buffer instead.
                     lose_on_error(resize(&mut tui, &mut app, cols, rows), &mut app, &sink, id);
                     app.screen = Rect::new(0, 0, cols, rows);
+                    if reopened {
+                        app.toast = Some(format!("reopened server {}; nerd --new makes another", crate::session::instance_label(&server)));
+                    }
                     app.offer_outside_tmux(id);
                     app.offer_release_check();
                     warn_sandbox(&mut app);
@@ -926,7 +929,7 @@ fn farewell(reattach: Option<&str>, instance: &str) -> String {
 }
 
 fn way_back(reattach: Option<&str>, instance: &str) -> String {
-    // Plain `nerd` opens a new instance, so the way back names this one.
+    // Plain `nerd` asks before it takes a server back, and may come back to another; the way back names this one.
     match reattach {
         Some(r) => r.to_string(),
         None if instance.is_empty() => "nerd".to_string(),

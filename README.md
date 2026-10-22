@@ -72,7 +72,7 @@ nerd
 - Start an agent in a pane, for example `claude`. The sidebar shows its state. When it finishes or asks you something, it moves up into **needs you**.
 - Click **≡** at the top of the sidebar for the main menu: the file tree, new spaces, settings, plugins and the rest.
 - Right-click a pane and choose **Isolation…** to limit what its program can reach.
-- Close the window whenever you like. `nerd --resume` brings it back.
+- Close the window whenever you like. `nerd` brings it back; `nerd --new` starts another server with a desktop of its own.
 
 ### Supported agents
 

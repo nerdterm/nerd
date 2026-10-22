@@ -58,7 +58,8 @@ The right Option key keeps typing the layout's symbols, such as — and €. ner
 
 | Command | What it does |
 |---|---|
-| `nerd` | Start a new server, with its own desktop, in the current folder |
+| `nerd` | Reopen the server a session on this Mac attached to last. When another session shows it, nerd asks first: **take it over**, **new server** or **cancel**. With no such server, or from inside a pane, it starts a new one |
+| `nerd --new` | Start a new server, with its own desktop, in the current folder |
 | `nerd --resume [NAME]` | Return to a server by name or number; by default the one a session on this Mac attached to last |
 | `nerd --rename N [NAME]` | Name a server, or clear its name. Also **Rename this server…** |
 | `nerd --list` | Servers, stopped, running or in a session, with their names, when a session last attached, sandbox and spaces; then any `nerd --daemon` no listed server leads to, as a stray |

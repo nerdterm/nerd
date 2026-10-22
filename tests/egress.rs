@@ -79,6 +79,7 @@ const ALLOW: &[(&str, &str, &str, &str, &str, &str)] = &[
     ("src/presets.rs", "pref_now", "spawn", "\"/usr/bin/defaults\"", "local", "reads iTerm2's margins and default profile before its preset changes them"),
     ("src/presets.rs", "pref_set", "spawn", "\"/usr/bin/defaults\"", "local", "sets iTerm2's margins and default profile for its preset, and puts them back on undo"),
     ("src/client.rs", "connect_or_spawn", "spawn", "exe --daemon", "local", "starts nerd's server"),
+    ("src/client.rs", "new_in_place", "spawn", "exe --new", "local", "becomes nerd --new when a session took the last server first and you chose a new one"),
     ("src/daemon.rs", "start", "spawn", "& exe --version", "local", "asks the installed build its version"),
     ("src/daemon.rs", "handover_exec", "command", "std :: env :: current_exe ()", "local", "update in place: the new build takes over the open panes and sockets"),
     ("src/git.rs", "run_git", "spawn", "\"git\"", "local", "the file tree's git, without lazy fetch, fsmonitor or filters"),
