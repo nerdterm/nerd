@@ -22,6 +22,8 @@ pub enum Open {
     Last,
     New,
     Resume(Option<String>),
+    /// A server by id or name as another session of this Mac opens it: asking first when a session shows it.
+    Free(String),
 }
 
 /// How the Hello asks: refused while another session shows the server; `reopened` has the server say which it is.
@@ -42,22 +44,19 @@ fn fresh_instance() -> String {
 
 /// Sets `NERD_INSTANCE` so every state path below, and the daemon we may spawn, resolve to it; `None` is a cancel.
 fn select_instance(open: Open) -> std::io::Result<Option<(String, Ask)>> {
-    use crate::servers::Probe;
     let (name, ask) = match open {
         // An agent in a pane would land on the person's own desktop.
         Open::Last if std::env::var_os("NERD_PANE").is_some() => (fresh_instance(), PLAIN),
         Open::Last => match crate::session::last_instance() {
             None => (fresh_instance(), PLAIN),
-            Some(last) => match crate::servers::probe(&last, crate::servers::PROBE_LIMIT) {
-                // One this client starts is of this build, so it reads `if_free` too.
-                Probe::NotRunning | Probe::Free => (last, Ask { if_free: true, reopened: true }),
-                // An older server would take `if_free` for a plain attach: asked here instead.
-                Probe::Shown | Probe::Unknown => match ask_taken(&last)? {
-                    Taken::Over => (last, Ask { if_free: false, reopened: true }),
-                    Taken::New => (fresh_instance(), PLAIN),
-                    Taken::Cancel => return Ok(None),
-                },
+            Some(last) => match unless_shown(last, true)? {
+                Some(chosen) => chosen,
+                None => return Ok(None),
             },
+        },
+        Open::Free(n) => match unless_shown(crate::session::resolve(&n).ok_or_else(|| unknown_instance(&n))?, false)? {
+            Some(chosen) => chosen,
+            None => return Ok(None),
         },
         Open::New => (fresh_instance(), PLAIN),
         // By id or by name; an unknown one no longer makes an empty desktop.
@@ -72,6 +71,21 @@ fn select_instance(open: Open) -> std::io::Result<Option<(String, Ask)>> {
     Ok(Some((name, ask)))
 }
 
+/// Server `id` with `if_free` when no session shows it, else as the question answers; `None` is a cancel.
+fn unless_shown(id: String, reopened: bool) -> std::io::Result<Option<(String, Ask)>> {
+    use crate::servers::Probe;
+    Ok(Some(match crate::servers::probe(&id, crate::servers::PROBE_LIMIT) {
+        // One this client starts is of this build, so it reads `if_free` too.
+        Probe::NotRunning | Probe::Free => (id, Ask { if_free: true, reopened }),
+        // An older server would take `if_free` for a plain attach: asked here instead.
+        Probe::Shown | Probe::Unknown => match ask_taken(&id)? {
+            Taken::Over => (id, Ask { if_free: false, reopened }),
+            Taken::New => (fresh_instance(), PLAIN),
+            Taken::Cancel => return Ok(None),
+        },
+    }))
+}
+
 const CANCELLED: &str = "cancelled: the server is open in another session; nothing was started";
 
 pub fn run(open: Open, from_window: bool) -> std::io::Result<()> {
@@ -82,7 +96,7 @@ pub fn run(open: Open, from_window: bool) -> std::io::Result<()> {
     };
     // A typo in a name says more than a missing terminal; an old single-instance layout is moved first.
     crate::session::migrate_legacy();
-    if let Open::Resume(Some(n)) = &open
+    if let Open::Resume(Some(n)) | Open::Free(n) = &open
         && crate::session::resolve(n).is_none()
     {
         return Err(early(unknown_instance(n)));
@@ -102,6 +116,9 @@ pub fn run(open: Open, from_window: bool) -> std::io::Result<()> {
     guard();
     loop {
         let result = attach(&name, ask, from_window);
+        if let Ok(Seen { switch: Some((id, over)), .. }) = &result {
+            return Err(early(switch_in_place(id, *over)));
+        }
         // A session took the server between the probe and this attach.
         if let Ok(Seen { refused: Some(line), .. }) = &result
             && line == crate::proto::TAKEN
@@ -142,6 +159,29 @@ fn new_in_place(from_window: bool) -> std::io::Error {
     cmd.exec()
 }
 
+/// `nerd --resume <id>` in this process's place, as the server asked: the same terminal, the same pid.
+fn switch_in_place(id: &str, over: bool) -> std::io::Error {
+    use std::os::unix::process::CommandExt as _;
+    let exe = match std::env::current_exe() {
+        Ok(e) => e,
+        Err(e) => return e,
+    };
+    leave(crate::log::Level::Info, &format!("switching to server {id}"));
+    let mut cmd = crate::spawn::cmd(exe);
+    cmd.args(["--resume", id, "--from-window"]).env_remove("NERD_INSTANCE");
+    if !over {
+        cmd.arg("--if-free");
+    }
+    let e = cmd.exec();
+    crate::log::error(&format!("switch to server {id} failed: {e}"));
+    e
+}
+
+/// Another server of this Mac is reached by the same command line only when no variable names this one.
+fn can_switch() -> bool {
+    std::env::var_os("NERD_SOCKET").is_none() && std::env::var_os("NERD_STATE_DIR").is_none()
+}
+
 /// One attach to server `name`: the Hello, then the session until it ends.
 fn attach(name: &str, ask: Ask, from_window: bool) -> std::io::Result<Seen> {
     let mut stream = connect_or_spawn()?;
@@ -154,6 +194,11 @@ fn attach(name: &str, ask: Ask, from_window: bool) -> std::io::Result<Seen> {
     let mux = in_multiplexer();
     // `tmux` and `ps` are asked with their output captured, so nothing of theirs reaches the screen.
     let terminal = if mux { terminal_app() } else { None };
+    // `ps` up the process tree, while the graphics query waits for its answer.
+    let windows = {
+        let terminal = terminal.clone();
+        std::thread::spawn(move || window_app(&terminal, mux).is_some())
+    };
     // After the alternate screen: a terminal that prints the unknown query leaves it there, not in scrollback.
     let graphics = !mux && query_graphics();
     // After the query: tmux would otherwise leave the query's text as the window name.
@@ -177,7 +222,7 @@ fn attach(name: &str, ask: Ask, from_window: bool) -> std::io::Result<Seen> {
         graphics: Some(graphics),
         terminal: terminal.clone(),
         opened_by_nerd: from_window,
-        opens_windows: terminal.is_some(),
+        opens_windows: windows.join().unwrap_or(false),
         dark,
         host: hostname(),
         bye: false,
@@ -186,7 +231,7 @@ fn attach(name: &str, ask: Ask, from_window: bool) -> std::io::Result<Seen> {
         machine: None,
         cell_px: Some(cell),
         if_free: ask.if_free,
-        switches: false,
+        switches: can_switch(),
         reopened: ask.reopened,
     };
     crate::log::info(&format!("started in {}, mux={mux}", term_program()));
@@ -570,10 +615,13 @@ struct Seen {
     stopped: Option<String>,
     /// The server's `refused:` line, sent instead of a first frame.
     refused: Option<String>,
+    /// The server of this Mac to become, and whether to take it over; the pump stops at it.
+    switch: Option<(String, bool)>,
 }
 
 /// Copies the stream to `out` until it ends; `first` arrived before the terminal was ready for it.
-fn pump(first: Vec<u8>, mut reader: impl Read, out: &mut impl Write, mut ask: impl FnMut(&Requests)) -> Seen {
+/// `switches`: a `switch` request ends it, once what came before is on the screen.
+fn pump(first: Vec<u8>, mut reader: impl Read, out: &mut impl Write, switches: bool, mut ask: impl FnMut(&Requests)) -> Seen {
     let mut seen = Seen::default();
     let mut carry = Vec::new();
     let mut data = first;
@@ -600,6 +648,12 @@ fn pump(first: Vec<u8>, mut reader: impl Read, out: &mut impl Write, mut ask: im
                 return seen;
             }
             ask(&r);
+            if let Some((id, over)) = r.switch.filter(|_| switches)
+                && let Some(id) = own_server(&id)
+            {
+                seen.switch = Some((id, over));
+                return seen;
+            }
         }
         data = match reader.read(&mut buf) {
             Ok(0) | Err(_) => return seen,
@@ -622,12 +676,13 @@ fn session(
     mut cell: u16,
 ) -> std::io::Result<Seen> {
     let instance = crate::session::instance_name();
+    let switches = connects && can_switch();
     // Answers from ssh threads go out through the one writer the input loop owns.
     let (tx, rx) = std::sync::mpsc::channel::<ClientMsg>();
     let fetched: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, Vec<String>>>> = Default::default();
     let pump = std::thread::Builder::new().name("screen".into()).spawn(move || {
         let mut out = Screen;
-        pump(first, reader, &mut out, |r| {
+        pump(first, reader, &mut out, switches, |r| {
             if r.reload {
                 reload_ghostty();
             }
@@ -642,6 +697,15 @@ fn session(
             }
             for (name, id) in connect {
                 open_remote_window(name, id.as_deref(), &terminal, mux, &fetched);
+            }
+            for (id, over) in r.open_server.iter().filter(|_| switches) {
+                if let (Some(id), Some(app)) = (own_server(id), window_app(&terminal, mux)) {
+                    let mut args = vec!["--resume", id.as_str()];
+                    if !over {
+                        args.push("--if-free");
+                    }
+                    open_window(&app, &args);
+                }
             }
         })
     })?;
@@ -701,6 +765,11 @@ fn session(
 /// A remote client serves no connect requests: that server would reach this Mac's other machines.
 fn connect_asks(r: &Requests, connects: bool) -> (&[String], &[(String, Option<String>)]) {
     if connects { (&r.list, &r.connect) } else { (&[], &[]) }
+}
+
+/// The id of server `query` of this Mac, by id or name; never the legacy one, which has no id to resume.
+fn own_server(query: &str) -> Option<String> {
+    crate::session::resolve(query).filter(|id| crate::session::valid_id(id))
 }
 
 /// The window app this client can open a terminal in: its tmux's, or the one it runs in.
@@ -2009,7 +2078,7 @@ mod remote_tests {
             // As the real client: a relay that fails at once may close the pipe before Hello.
             let _ = hello().write_to(&mut stdin);
             let mut screen = Vec::new();
-            let seen = pump(Vec::new(), stdout, &mut screen, |_| {});
+            let seen = pump(Vec::new(), stdout, &mut screen, false, |_| {});
             drop(stdin);
             let (exit, said) = finish(child, stderr);
             (seen, screen, exit, said)
@@ -2166,7 +2235,7 @@ mod remote_tests {
         first.truncate(n);
         // What the input loop writes for every event it reads, a click included.
         ClientMsg::Event(Event::Mouse(click)).write_to(&mut stdin).unwrap();
-        let seen = pump(first, stdout, &mut Vec::new(), |_| {});
+        let seen = pump(first, stdout, &mut Vec::new(), false, |_| {});
         drop(stdin);
         let (exit, said) = finish(child, stderr);
         server.join().unwrap();
@@ -2311,10 +2380,27 @@ mod remote_tests {
     #[test]
     fn a_refused_attach_is_kept_off_the_screen_for_the_caller_to_say() {
         let mut screen = Vec::new();
-        let seen = super::pump(b"\x1b[?1049l\r\nrefused: attach from inside a pane\r\n\x1b[?1049h".to_vec(), std::io::empty(), &mut screen, |_| {});
+        let seen = super::pump(b"\x1b[?1049l\r\nrefused: attach from inside a pane\r\n\x1b[?1049h".to_vec(), std::io::empty(), &mut screen, false, |_| {});
         assert_eq!(seen.refused.as_deref(), Some("refused: attach from inside a pane"));
         assert!(screen.is_empty() && !seen.bytes);
-        let seen = super::pump(b"frame refused: nothing".to_vec(), std::io::empty(), &mut Vec::new(), |_| {});
+        let seen = super::pump(b"frame refused: nothing".to_vec(), std::io::empty(), &mut Vec::new(), false, |_| {});
         assert!(seen.refused.is_none());
+    }
+
+    #[test]
+    fn a_switch_to_a_known_server_ends_the_pump_of_a_client_that_switches() {
+        crate::session::tests::with_temp_state_dir("pump-switch", || {
+            std::fs::create_dir_all(crate::session::instances_dir().join("2")).unwrap();
+            let first = [b"frame".to_vec(), crate::proto::switch_marker("2", true)].concat();
+            let mut screen = Vec::new();
+            let seen = super::pump(first.clone(), &b"later"[..], &mut screen, true, |_| {});
+            assert_eq!((seen.switch, screen.as_slice()), (Some(("2".to_string(), true)), b"frame".as_slice()), "nothing is read after it");
+            let mut screen = Vec::new();
+            let seen = super::pump(first, &b"later"[..], &mut screen, false, |_| {});
+            assert_eq!((seen.switch, screen.as_slice()), (None, b"framelater".as_slice()), "a remote session ignores it");
+            for bad in ["", "9", "-x"] {
+                assert_eq!(super::pump(crate::proto::switch_marker(bad, false), std::io::empty(), &mut Vec::new(), true, |_| {}).switch, None, "{bad:?}");
+            }
+        });
     }
 }

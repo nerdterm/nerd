@@ -1375,6 +1375,38 @@ fn remove_stopped_takes_each_on_yes_and_refuses_one_started_after_the_list() {
     let _ = std::fs::remove_dir_all(&env.dir);
 }
 
+/// Server 1 is the test, playing a server of this build; server 2 is real.
+#[test]
+fn a_switch_marker_makes_the_client_server_2_s_in_the_same_terminal_and_process() {
+    use std::io::BufRead as _;
+    let env = stopped_home("switch", false);
+    stopped_server(&env, "2");
+    let _two = start_own(&env, "2");
+    let listener = std::os::unix::net::UnixListener::bind(&env.socket).unwrap();
+    let mut tty = nerd_in_tty(&env.dir, &["--resume", "1"], &[]);
+    let (one, _) = listener.accept().unwrap();
+    let mut hello = String::new();
+    std::io::BufReader::new(&one).read_line(&mut hello).unwrap();
+    assert!(hello.contains(r#""switches":true"#) && hello.contains(r#""connects":true"#), "{hello}");
+    let pid = tty.child.id();
+    assert_eq!(nix::sys::socket::getsockopt(&one, nix::sys::socket::sockopt::LocalPeerPid).unwrap(), pid as i32);
+
+    (&one).write_all(b"\x1b[2J\x1b[Hserver one here\x1b_nerd;switch:2\x1b\\").unwrap();
+    tty.until("spaces");
+    let log = |id: &str| std::fs::read_to_string(instance(&env, id).join("daemon.log")).unwrap_or_default();
+    assert!(log("1").contains("] left: switching to server 2\n"), "{}", log("1"));
+    let attached = log("2").lines().find(|l| l.contains(" attached: ")).map(str::to_string).unwrap_or_default();
+    assert!(attached.contains(&format!("client pid {pid} ")), "the same process attached to server 2: {}", log("2"));
+    assert!(log("2").contains(&format!("client[{pid}] started in")), "{}", log("2"));
+    let mut rest = Vec::new();
+    let _ = (&one).read_to_end(&mut rest);
+    assert!(rest.is_empty(), "the client let go of server 1 and sent it nothing more");
+    assert!(tty.child.try_wait().unwrap().is_none());
+    stop_own(&env.dir, &["2"]);
+    assert!(tty.exit().success());
+    let _ = std::fs::remove_dir_all(&env.dir);
+}
+
 #[test]
 fn remove_stopped_takes_nothing_on_no() {
     let (env, mut tty) = remove_stopped("rm-no");

@@ -367,6 +367,17 @@ pub fn open_remote_marker(name: &str, id: Option<&str>) -> Vec<u8> {
     marker(&format!("open-remote:{name}{}", id.map(|i| format!(":{i}")).unwrap_or_default()))
 }
 
+/// Asks a client of this Mac to become `nerd --resume <id>` in the same terminal; `over` takes the server from the
+/// session that shows it, without it the new client asks first.
+pub fn switch_marker(id: &str, over: bool) -> Vec<u8> {
+    marker(&format!("switch:{id}{}", if over { ":over" } else { "" }))
+}
+
+/// The same in a new terminal window, the client's own.
+pub fn open_server_marker(id: &str, over: bool) -> Vec<u8> {
+    marker(&format!("open-server:{id}{}", if over { ":over" } else { "" }))
+}
+
 /// What the daemon asked of the client in one read, and what the terminal should see.
 #[derive(Default, Debug, PartialEq)]
 pub struct Requests {
@@ -378,6 +389,9 @@ pub struct Requests {
     pub stopped: Option<String>,
     pub list: Vec<String>,
     pub connect: Vec<(String, Option<String>)>,
+    /// A server of this Mac and whether to take it over: the first one asked wins.
+    pub switch: Option<(String, bool)>,
+    pub open_server: Vec<(String, bool)>,
 }
 
 impl Requests {
@@ -396,8 +410,20 @@ impl Requests {
                 Some((name, id)) => (name.to_string(), Some(id.to_string())),
                 None => (rest.to_string(), None),
             }),
+            Some(("switch", rest)) => {
+                self.switch.get_or_insert_with(|| over(rest));
+            }
+            Some(("open-server", rest)) => self.open_server.push(over(rest)),
             _ => {}
         }
+    }
+}
+
+/// `N` or `N:over`.
+fn over(rest: &str) -> (String, bool) {
+    match rest.strip_suffix(":over") {
+        Some(id) => (id.to_string(), true),
+        None => (rest.to_string(), false),
     }
 }
 
@@ -630,6 +656,19 @@ mod tests {
         assert_eq!(list_remote_marker("studio"), b"\x1b_nerd;list-remote:studio\x1b\\");
         assert_eq!(open_remote_marker("studio", Some("1")), b"\x1b_nerd;open-remote:studio:1\x1b\\");
         assert_eq!(open_remote_marker("studio", None), b"\x1b_nerd;open-remote:studio\x1b\\");
+        assert_eq!(switch_marker("2", false), b"\x1b_nerd;switch:2\x1b\\");
+        assert_eq!(switch_marker("2", true), b"\x1b_nerd;switch:2:over\x1b\\");
+        assert_eq!(open_server_marker("work", false), b"\x1b_nerd;open-server:work\x1b\\");
+        assert_eq!(open_server_marker("work", true), b"\x1b_nerd;open-server:work:over\x1b\\");
+    }
+
+    #[test]
+    fn server_markers_carry_the_id_and_the_take_over() {
+        let data = [switch_marker("2", true), b"frame".to_vec(), switch_marker("3", false), open_server_marker("4", false), open_server_marker("5", true)].concat();
+        let r = take_requests(&data, &mut Vec::new());
+        assert_eq!(r.out.as_slice(), b"frame".as_ref());
+        assert_eq!(r.switch, Some(("2".to_string(), true)), "the first switch asked");
+        assert_eq!(r.open_server, vec![("4".to_string(), false), ("5".to_string(), true)]);
     }
 
     /// The broker outlives an Update, so the daemon on either side of it speaks this to the same broker.

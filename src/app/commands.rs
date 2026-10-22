@@ -196,6 +196,7 @@ impl App {
             Pending::DisconnectAll => "Disconnect everyone",
             Pending::LeaveTmux | Pending::CopyResumeCommand => "nerd is inside tmux",
             Pending::OpenRemote(_) | Pending::CopyCommand(_) | Pending::Dismiss => "Connect to another computer",
+            Pending::OpenServer(..) => "Open a server",
             Pending::ShowInFinder(_) => "Logs exported",
             Pending::InstallHook(_) => "Install the hook",
             Pending::RemoveHook => "Remove agent hooks",
@@ -266,7 +267,7 @@ impl App {
             Pending::DeletePath(_) => 0,
             // Detach never reaches here: its dialog is built on its own.
             Pending::Detach | Pending::DisconnectAll | Pending::Update | Pending::LeaveTmux | Pending::CopyResumeCommand => 0,
-            Pending::OpenRemote(_) | Pending::CopyCommand(_) | Pending::Dismiss | Pending::ShowInFinder(_) | Pending::InstallHook(_) | Pending::RemoveHook | Pending::StopServer | Pending::PluginReady(..) | Pending::RemovePlugin(_) | Pending::Rename(..) | Pending::Topology(..) | Pending::Preset(..) => 0,
+            Pending::OpenRemote(_) | Pending::OpenServer(..) | Pending::CopyCommand(_) | Pending::Dismiss | Pending::ShowInFinder(_) | Pending::InstallHook(_) | Pending::RemoveHook | Pending::StopServer | Pending::PluginReady(..) | Pending::RemovePlugin(_) | Pending::Rename(..) | Pending::Topology(..) | Pending::Preset(..) => 0,
             Pending::ReleaseInstall(_) | Pending::ReleaseDaily => 0,
             Pending::CloseGroup(key) => self
                 .spaces
@@ -596,6 +597,7 @@ impl App {
                 let _ = self.open_remote(&name, None, true);
             }
             Pending::OpenRemote(_) => self.notice = Some("this window cannot open another; connect from a nerd window on this Mac".into()),
+            Pending::OpenServer(id, new_window) => self.send_open_server(&id, true, new_window),
             Pending::Dismiss => {}
             Pending::Rename(pane, name) => {
                 self.mail_done(MailAction::Rename { pane, name: Some(name), keep: true });
@@ -2106,6 +2108,9 @@ pub enum Pending {
     DeletePath(PathBuf),
     /// Ask the client to open a terminal running `nerd --remote <name>`.
     OpenRemote(String),
+    /// Take server `id` of this Mac from the session that shows it: in this session, or in a new window when true.
+    #[cfg_attr(not(test), expect(dead_code))]
+    OpenServer(String, bool),
     /// A command for the human to run; the button copies it.
     CopyCommand(String),
     /// A dialog that only informs.

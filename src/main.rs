@@ -75,9 +75,9 @@ fn from_window(args: &[String]) -> bool {
     args.iter().any(|a| a == "--from-window")
 }
 
-/// The instance `--resume` was given, if any: the flag is not a name.
+/// The instance `--resume` was given, if any: a flag is not a name.
 fn resume_name(args: &[String]) -> Option<String> {
-    args.get(1).filter(|a| *a != "--from-window").cloned()
+    args.get(1).filter(|a| !a.starts_with("--")).cloned()
 }
 
 /// Commands that print and exit end quietly on a closed pipe (`nerd --list | head -1`), as Unix
@@ -147,7 +147,12 @@ fn run() -> std::io::Result<()> {
         Some("--rename") => return client::rename(args.get(1).cloned(), args.get(2).cloned()),
         Some("--resume") => {
             log::set_role("client");
-            return client::run(client::Open::Resume(resume_name(&args)), from_window);
+            // Internal: `--if-free` is how a session that opens another server of this Mac asks before taking it.
+            let open = match resume_name(&args) {
+                Some(n) if args.iter().any(|a| a == "--if-free") => client::Open::Free(n),
+                n => client::Open::Resume(n),
+            };
+            return client::run(open, from_window);
         }
         Some("--new") => {
             log::set_role("client");

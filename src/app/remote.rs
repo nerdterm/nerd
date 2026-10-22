@@ -85,6 +85,49 @@ impl App {
         self.overlay = Overlay::Picker(crate::menu::Picker::new(format!("Servers on {name}"), items), Pick::RemoteInstance { name, list, window });
     }
 
+    /// Opens server `id` of this Mac for this session: in its place, or in a terminal window of its own.
+    /// `shown`: what the listing said; anything but "no session shows it" asks before taking it over.
+    // Servers… calls it; until then only the tests do.
+    #[cfg_attr(not(test), expect(dead_code))]
+    pub fn open_server(&mut self, id: &str, shown: Option<bool>, new_window: bool) -> Overlay {
+        use crate::menu::Confirm;
+        let label = printable(&crate::session::instance_label(id));
+        let cmd = format!("nerd --resume {label}");
+        let copy = |body: String| Overlay::Confirm(Confirm::new("Open a server", body).labels(" [Enter] copy the command ", " [Esc] close "), Pending::CopyCommand(cmd.clone()));
+        if self.client_inside {
+            self.notice = Some(super::mail::INSIDE_REFUSED.into());
+            return Overlay::None;
+        }
+        if !crate::session::valid_id(id) || id == crate::session::instance_name() {
+            self.notice = Some(format!("server {label} is the one this session shows"));
+            return Overlay::None;
+        }
+        if !self.caps.connects {
+            return Overlay::Confirm(Confirm::new("Open a server", "This session shows nerd on another Mac. Open its servers from a terminal there.").info(), Pending::Dismiss);
+        }
+        if !self.caps.switches {
+            return copy(format!("This session cannot move to another server: its nerd is older than the server, or it was started for a test server. Run `{cmd}` in a terminal; the button copies it."));
+        }
+        if new_window && !self.caps.opens_windows {
+            return copy(format!("nerd cannot open a terminal window from here. Run `{cmd}` in a terminal on this Mac; the button copies it."));
+        }
+        if shown != Some(false) {
+            let ask = Confirm::new("Open a server", format!("Server {label} is open in another session. Take it over?")).does("take it over");
+            return Overlay::Confirm(ask, Pending::OpenServer(id.to_string(), new_window));
+        }
+        self.send_open_server(id, false, new_window);
+        Overlay::None
+    }
+
+    /// The marker for an open the person settled; `over` takes the server from the session that shows it.
+    pub(super) fn send_open_server(&mut self, id: &str, over: bool, new_window: bool) {
+        let label = printable(&crate::session::instance_label(id));
+        let (marker, how) = if new_window { (crate::proto::open_server_marker(id, over), "in a new window") } else { (crate::proto::switch_marker(id, over), "in this session") };
+        crate::log::info(&format!("servers: asked client {} to open server {id} {how}{}", self.client, if over { ", taking it over" } else { "" }));
+        self.to_client.extend(marker);
+        self.toast = Some(format!("opening server {label} {how}"));
+    }
+
     /// The client opens the window; one that cannot gets the command to run instead.
     pub(super) fn open_remote(&mut self, name: &str, id: Option<&str>, window: bool) -> Overlay {
         let cmd = format!("nerd --remote {name}{}", id.map(|i| format!(" {i}")).unwrap_or_default());

@@ -1073,6 +1073,48 @@ mod tests {
     }
 
     #[test]
+    fn a_server_opens_only_through_a_client_that_switches_and_asks_before_a_take_over() {
+        use crate::proto::{open_server_marker, switch_marker, ClientCaps};
+        crate::session::tests::with_temp_state_dir("open-server", || {
+            crate::session::tests::INSTANCE.set(Some("1".into()));
+            let mut app = App::new(Config::default());
+            let copied = |o: Overlay| match o {
+                Overlay::Confirm(c, Pending::CopyCommand(cmd)) => (c.body, cmd),
+                o => panic!("the command to copy expected, got {}", o.is_open()),
+            };
+            app.caps = ClientCaps { connects: true, ..Default::default() };
+            let (body, cmd) = copied(app.open_server("2", Some(false), false));
+            assert!(body.contains("older than the server") && cmd == "nerd --resume 2", "{body}");
+            assert!(app.to_client.is_empty(), "a client without switches gets no marker");
+
+            app.caps = ClientCaps { connects: true, switches: true, ..Default::default() };
+            assert!(copied(app.open_server("2", Some(false), true)).0.contains("cannot open a terminal window"));
+            assert!(app.to_client.is_empty());
+            assert!(matches!(app.open_server("2", Some(false), false), Overlay::None));
+            assert_eq!(std::mem::take(&mut app.to_client), switch_marker("2", false), "free: the new client still asks if it was taken meanwhile");
+
+            app.caps.opens_windows = true;
+            for shown in [Some(true), None] {
+                let Overlay::Confirm(c, what @ Pending::OpenServer(..)) = app.open_server("2", shown, true) else { panic!("{shown:?}: it asks") };
+                assert_eq!(c.body, "Server 2 is open in another session. Take it over?");
+                assert!(app.to_client.is_empty(), "nothing before the answer");
+                app.perform(what);
+                assert_eq!(std::mem::take(&mut app.to_client), open_server_marker("2", true));
+            }
+
+            assert!(matches!(app.open_server("1", Some(false), false), Overlay::None) && app.to_client.is_empty(), "not the server it shows");
+            app.notice = None;
+            app.client_inside = true;
+            assert!(matches!(app.open_server("2", Some(false), false), Overlay::None) && app.notice.take().as_deref() == Some(super::mail::INSIDE_REFUSED));
+            app.client_inside = false;
+            app.caps = ClientCaps { bye: true, switches: true, ..Default::default() };
+            assert!(matches!(app.open_server("2", Some(false), false), Overlay::Confirm(_, Pending::Dismiss)), "a session from another Mac");
+            assert!(app.to_client.is_empty());
+            crate::session::tests::INSTANCE.set(None);
+        });
+    }
+
+    #[test]
     fn connect_asks_the_client_and_drops_an_answer_nobody_waits_for() {
         use crate::proto::RemoteInstance;
         crate::session::tests::with_temp_state_dir("connect", || {
