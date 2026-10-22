@@ -1271,6 +1271,120 @@ fn a_bare_nerd_with_no_server_last_attached_starts_a_new_one() {
     assert_makes_a_new_server("bare-none", false, &[], &[]);
 }
 
+/// The test HOME's state root named by `NERD_STATE_DIR`: the same folders, and a run from inside a nerd pane (a
+/// test run in the person's own nerd) is not refused as one.
+fn at_root(home: &std::path::Path) -> std::ffi::OsString {
+    home.join("Library/Application Support/nerd").into_os_string()
+}
+
+fn nerd_remove(home: &std::path::Path, args: &[&str], extra: &[(&str, &str)]) -> (bool, String) {
+    let out = Command::new(env!("CARGO_BIN_EXE_nerd"))
+        .arg("--remove")
+        .args(args)
+        .env("HOME", home)
+        .env("NERD_STATE_DIR", at_root(home))
+        .env_remove("NERD_SOCKET")
+        .env_remove("NERD_INSTANCE")
+        .envs(extra.iter().copied())
+        .output()
+        .expect("nerd ran");
+    (out.status.success(), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+}
+
+/// A stopped server `id` of `env`'s HOME with one space, on a folder of its own.
+fn stopped_server(env: &Env, id: &str) {
+    let cwd = env.dir.join(format!("proj{id}"));
+    std::fs::create_dir_all(&cwd).unwrap();
+    std::fs::create_dir_all(instance(env, id)).unwrap();
+    let s = serde_json::json!({"version": 2, "spaces": [{"name": null, "cwd": cwd, "tabs": [], "active_tab": 0}]});
+    std::fs::write(instance(env, id).join("session.json"), s.to_string()).unwrap();
+}
+
+/// Server `id` of `env`'s HOME started as a client starts it, with no test variables.
+fn start_own(env: &Env, id: &str) -> DaemonGuard {
+    let at = Env { socket: instance(env, id).join("nerd.sock"), dir: env.dir.clone() };
+    spawn_daemon_in(&at, env!("CARGO_BIN_EXE_nerd").as_ref(), "xterm-256color", true, &["NERD_STATE_DIR", "NERD_SOCKET"], &[("NERD_INSTANCE", id.into())])
+}
+
+#[test]
+fn remove_refuses_a_running_the_current_the_legacy_and_an_unknown_server_and_removes_a_stopped_one() {
+    let (env, _daemon) = own_server("rm", false, &[]);
+    stopped_server(&env, "2");
+    let (ok, out) = nerd_remove(&env.dir, &["1"], &[]);
+    assert!(!ok && out.contains("refused: 1 is running; stop it first with nerd --stop 1"), "{out}");
+    let (ok, out) = nerd_remove(&env.dir, &["2"], &[("NERD_INSTANCE", "2")]);
+    assert!(!ok && out.contains("refused: 2 is the server this session shows"), "{out}");
+    let (ok, out) = nerd_remove(&env.dir, &[""], &[]);
+    assert!(!ok && out.contains("refused: the legacy server"), "{out}");
+    let (ok, out) = nerd_remove(&env.dir, &["9"], &[]);
+    assert!(!ok && out.contains("no server 9; known: 1, 2"), "{out}");
+    let (ok, out) = nerd_remove(&env.dir, &[], &[]);
+    assert!(!ok && out.contains("usage: nerd --remove"), "{out}");
+    assert!(instance(&env, "1").is_dir() && instance(&env, "2").is_dir(), "nothing went on a refusal");
+
+    let (ok, out) = nerd_remove(&env.dir, &["2"], &[]);
+    assert!(ok && out.contains(&format!("2 removed ({}): its layout, pane text", env.dir.join("proj2").display())), "{out}");
+    assert!(!instance(&env, "2").exists() && !instance(&env, ".gone-2").exists());
+    assert!(answers(&env.socket), "server 1 runs on");
+    assert!(std::fs::read_to_string(own_root(&env).join("daemon.log")).unwrap_or_default().contains("server 2 removed"));
+    let _ = std::fs::remove_dir_all(&env.dir);
+}
+
+#[test]
+fn remove_is_refused_from_inside_a_pane() {
+    let (env, _daemon) = own_server("rm-pane", false, &[]);
+    stopped_server(&env, "2");
+    let mut client = connect(&env, 200, 50);
+    own_wait(&env, &mut client, "attached: 200x50");
+    type_line(&mut client, &format!("'{}' --remove 2 2>\"$HOME/out\"; echo $? >\"$HOME/rc\"", env!("CARGO_BIN_EXE_nerd")));
+    let rc = env.dir.join("rc");
+    assert!(wait_reading(&mut client, Duration::from_secs(10), || std::fs::read_to_string(&rc).is_ok_and(|s| s.ends_with('\n'))), "{}", own_log(&env));
+    assert_eq!(std::fs::read_to_string(env.dir.join("out")).unwrap(), "nerd: refused: remove from inside a pane\n");
+    assert_eq!(std::fs::read_to_string(&rc).unwrap(), "1\n");
+    assert!(instance(&env, "2").join("session.json").exists(), "nothing went");
+    let _ = std::fs::remove_dir_all(&env.dir);
+}
+
+/// `nerd --remove --stopped` at its question, over servers 1 to 3 of a HOME where none runs.
+fn remove_stopped(name: &str) -> (Env, Tty) {
+    let env = stopped_home(name, true);
+    for id in ["1", "2", "3"] {
+        stopped_server(&env, id);
+    }
+    let root = at_root(&env.dir);
+    let tty = nerd_in_tty(&env.dir, &["--remove", "--stopped"], &[("NERD_STATE_DIR", root.to_str().unwrap())]);
+    let screen = tty.until("[y/N]");
+    assert!(screen.contains("Remove these 3 stopped servers, each with its layout"), "{screen}");
+    for id in ["1", "2", "3"] {
+        assert!(screen.contains(&format!("{id} ({id}): {}", env.dir.join(format!("proj{id}")).display())), "{screen}");
+    }
+    (env, tty)
+}
+
+#[test]
+fn remove_stopped_takes_each_on_yes_and_refuses_one_started_after_the_list() {
+    let (env, mut tty) = remove_stopped("rm-yes");
+    let _two = start_own(&env, "2");
+    tty.press(b"y\r");
+    let screen = tty.until("1 not removed");
+    assert!(screen.contains("1 removed (") && screen.contains("3 removed (") && screen.contains("refused: 2 is running"), "{screen}");
+    assert!(!tty.exit().success(), "a server kept is a failure to say");
+    assert!(!instance(&env, "1").exists() && !instance(&env, "3").exists());
+    assert!(answers(&instance(&env, "2").join("nerd.sock")) && instance(&env, "2").join("session.json").exists(), "the one that started keeps its folder");
+    drop(tty);
+    let _ = std::fs::remove_dir_all(&env.dir);
+}
+
+#[test]
+fn remove_stopped_takes_nothing_on_no() {
+    let (env, mut tty) = remove_stopped("rm-no");
+    tty.press(b"n\r");
+    tty.until("nothing removed");
+    assert!(tty.exit().success());
+    assert!(["1", "2", "3"].iter().all(|id| instance(&env, id).join("session.json").exists()));
+    let _ = std::fs::remove_dir_all(&env.dir);
+}
+
 /// `nerd --disconnect` as the server hears it: every line it writes back until EOF.
 fn disconnect_all(env: &Env) -> String {
     let mut s = UnixStream::connect(&env.socket).unwrap();

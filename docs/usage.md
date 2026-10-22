@@ -62,6 +62,8 @@ The right Option key keeps typing the layout's symbols, such as — and €. ner
 | `nerd --new` | Start a new server, with its own desktop, in the current folder |
 | `nerd --resume [NAME]` | Return to a server by name or number; by default the one a session on this Mac attached to last |
 | `nerd --rename N [NAME]` | Name a server, or clear its name. Also **Rename this server…** |
+| `nerd --remove NAME` | Remove a stopped server: its layout, pane text, messages, routes, logs and saved agent session ids. config.json, plugins and the agents' own sessions stay. A running server, the legacy one and the server a pane belongs to are refused, and so is the command from inside a pane |
+| `nerd --remove --stopped` | List every stopped server, ask `y` or `n`, then remove each the same way |
 | `nerd --list` | Servers, stopped, running or in a session, with their names, when a session last attached, sandbox and spaces; then any `nerd --daemon` no listed server leads to, as a stray |
 | `nerd --stop [NAME]` | Stop a server, or all of them. Also **Stop this server…** |
 | `nerd --update [NAME]` | Switch running servers to the installed build; panes keep running. Also **Update…** |

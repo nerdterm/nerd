@@ -1432,14 +1432,17 @@ pub fn rename(instance: Option<String>, name: Option<String>) -> std::io::Result
         return Err(std::io::Error::other("usage: nerd --rename <server> [name]; without a name the name is cleared"));
     };
     let id = crate::session::resolve(&query).ok_or_else(|| unknown_instance(&query))?;
-    let name = name.unwrap_or_default();
-    crate::session::set_name(&id, &name).map_err(std::io::Error::other)?;
-    if name.is_empty() {
-        println!("{id}: name cleared");
-    } else {
-        println!("{id} is now {name}: nerd --resume {name}");
-    }
+    println!("{}", crate::servers::rename(&id, &name.unwrap_or_default()).map_err(std::io::Error::other)?);
     Ok(())
+}
+
+/// Where the command line reaches server `id`: `NERD_SOCKET` or `NERD_STATE_DIR` name one server for every id.
+fn socket_for(id: &str) -> PathBuf {
+    if std::env::var_os("NERD_SOCKET").is_some() || std::env::var_os("NERD_STATE_DIR").is_some() {
+        socket_path()
+    } else {
+        crate::servers::socket_of(id)
+    }
 }
 
 /// Panes close; the snapshot stays, so `--resume` brings the desktop back.
@@ -1461,36 +1464,7 @@ pub fn stop(name: Option<String>) -> std::io::Result<()> {
         return Ok(());
     }
     for n in names {
-        let label = crate::session::instance_label(&n);
-        unsafe { std::env::set_var("NERD_INSTANCE", &n) };
-        let path = socket_path();
-        let n = label;
-        let mut s = match crate::transport::connect_own(&path) {
-            Ok(s) => s,
-            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
-                println!("{n}: {e}");
-                continue;
-            }
-            Err(_) => {
-                println!("{n}: not running");
-                continue;
-            }
-        };
-        let _ = s.set_read_timeout(Some(Duration::from_secs(1)));
-        ClientMsg::Shutdown.write_to(&mut s)?;
-        if let Some(line) = refusal(&s) {
-            return Err(std::io::Error::other(line));
-        }
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while path.exists() && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        if path.exists() {
-            println!("{n}: did not respond within 5 s");
-        } else {
-            let again = if n == "legacy" { "nerd".to_string() } else { format!("nerd --resume {n}") };
-            println!("{n}: stopped, resume with {again}");
-        }
+        println!("{}", crate::servers::stop(&n, &socket_for(&n)).map_err(std::io::Error::other)?);
     }
     Ok(())
 }
@@ -1515,9 +1489,8 @@ pub fn disconnect(name: Option<String>) -> std::io::Result<()> {
     }
     let mut any = false;
     for n in names {
-        unsafe { std::env::set_var("NERD_INSTANCE", &n) };
         let label = crate::session::instance_label(&n);
-        let s = match crate::transport::connect_own(&socket_path()) {
+        let s = match crate::transport::connect_own(&socket_for(&n)) {
             Ok(s) => s,
             Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
                 println!("{label}: {e}");
@@ -1581,7 +1554,7 @@ fn ask_to_disconnect(mut s: UnixStream) -> Result<(Vec<String>, bool), Option<St
 }
 
 /// The server's `refused:` line; an accepted request closes the socket at once, and the read timeout set before the request bounds the wait.
-fn refusal(s: &UnixStream) -> Option<String> {
+pub(crate) fn refusal(s: &UnixStream) -> Option<String> {
     use std::io::BufRead as _;
     let mut line = String::new();
     BufReader::new(s).read_line(&mut line).ok()?;
@@ -1590,12 +1563,7 @@ fn refusal(s: &UnixStream) -> Option<String> {
 
 /// The no-name forms act on every instance: from inside a pane they need a name, or `NERD_SOCKET`/`NERD_STATE_DIR` as the target.
 fn every_instance(flag: &str) -> std::io::Result<()> {
-    let targeted = std::env::var_os("NERD_SOCKET").is_some() || std::env::var_os("NERD_STATE_DIR").is_some();
-    if targeted {
-        return Ok(());
-    }
-    let Some(procs) = crate::detect::procs() else { return Ok(()) };
-    if !crate::detect::under_broker(&procs, std::process::id() as i32) || crate::msock::pane_rights() {
+    if in_pane() != Some(true) {
         return Ok(());
     }
     crate::log::warn(&format!("refused nerd {flag} with no name, inside a pane"));
@@ -1606,9 +1574,73 @@ fn every_instance(flag: &str) -> std::io::Result<()> {
     )))
 }
 
+/// Run below a nerd broker without **Programs in panes may stop or update nerd**, and with no test server named
+/// by `NERD_SOCKET` or `NERD_STATE_DIR`; `None` when the process table cannot be read.
+fn in_pane() -> Option<bool> {
+    if std::env::var_os("NERD_SOCKET").is_some() || std::env::var_os("NERD_STATE_DIR").is_some() {
+        return Some(false);
+    }
+    let procs = crate::detect::procs()?;
+    Some(crate::detect::under_broker(&procs, std::process::id() as i32) && !crate::msock::pane_rights())
+}
+
+/// `--remove N`, or `--remove --stopped` after asking: a stopped server's folder, never one a server runs from.
+pub fn remove(what: Option<String>) -> std::io::Result<()> {
+    use std::io::IsTerminal as _;
+    crate::session::migrate_legacy();
+    // Unknown counts as a pane: what goes does not come back.
+    if in_pane() != Some(false) {
+        crate::log::warn("refused nerd --remove inside a pane");
+        return Err(std::io::Error::other("refused: remove from inside a pane"));
+    }
+    let own = std::env::var("NERD_INSTANCE").ok().filter(|n| !n.is_empty());
+    let Some(what) = what else {
+        return Err(std::io::Error::other("usage: nerd --remove <server>, or nerd --remove --stopped for every stopped one"));
+    };
+    if what != "--stopped" {
+        let id = crate::session::resolve(&what).ok_or_else(|| unknown_instance(&what))?;
+        println!("{}", crate::servers::remove(&id, own.as_deref()).map_err(std::io::Error::other)?);
+        return Ok(());
+    }
+    let (list, _) = crate::servers::servers(own.as_deref());
+    let stopped: Vec<_> = list.into_iter().filter(|s| !s.running && !s.id.is_empty()).collect();
+    if stopped.is_empty() {
+        println!("no stopped servers");
+        return Ok(());
+    }
+    for s in &stopped {
+        let folders: Vec<String> = s.folders.iter().map(|f| listed_folder(f)).collect();
+        println!("{} ({}): {}", s.label, s.id, if folders.is_empty() { "no spaces".into() } else { folders.join(", ") });
+    }
+    let q = format!("Remove these {} stopped servers, each with {}? {}.", stopped.len(), crate::servers::GOES, crate::servers::STAYS);
+    if !std::io::stdin().is_terminal() {
+        println!("{q} No terminal to answer in: nothing removed.");
+        return Ok(());
+    }
+    print!("{q} [y/N] ");
+    let _ = std::io::stdout().flush();
+    if !crate::install::answered_yes(std::io::stdin().lock())? {
+        println!("nothing removed");
+        return Ok(());
+    }
+    let mut kept = 0;
+    for s in stopped {
+        match crate::servers::remove(&s.id, own.as_deref()) {
+            Ok(line) => println!("{line}"),
+            Err(line) => {
+                kept += 1;
+                println!("{line}");
+            }
+        }
+    }
+    if kept > 0 {
+        return Err(std::io::Error::other(format!("{kept} not removed")));
+    }
+    Ok(())
+}
+
 fn legacy_alive() -> bool {
-    unsafe { std::env::set_var("NERD_INSTANCE", "") };
-    UnixStream::connect(socket_path()).is_ok()
+    UnixStream::connect(socket_for("")).is_ok()
 }
 
 /// Panes and screens survive the swap.
@@ -1622,20 +1654,7 @@ pub fn update(name: Option<String>) -> std::io::Result<()> {
         }
     };
     for n in names {
-        unsafe { std::env::set_var("NERD_INSTANCE", &n) };
-        let label = crate::session::instance_label(&n);
-        match crate::transport::connect_own(&socket_path()) {
-            Ok(mut s) => {
-                let _ = s.set_read_timeout(Some(Duration::from_secs(1)));
-                ClientMsg::Update.write_to(&mut s)?;
-                if let Some(line) = refusal(&s) {
-                    return Err(std::io::Error::other(line));
-                }
-                println!("{label}: updating in place");
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => println!("{label}: {e}"),
-            Err(_) => println!("{label}: not running"),
-        }
+        println!("{}", crate::servers::update(&n, &socket_for(&n)).map_err(std::io::Error::other)?);
     }
     Ok(())
 }

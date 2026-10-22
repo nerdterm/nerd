@@ -149,6 +149,93 @@ pub fn probe(id: &str, limit: Duration) -> Probe {
     ask(&socket_of(id), limit).0
 }
 
+/// "work (3)" when a name hides the id.
+fn shown_as(id: &str) -> String {
+    match instance_label(id) {
+        l if l == id || id.is_empty() => l,
+        l => format!("{l} ({id})"),
+    }
+}
+
+/// Sends `msg` to server `id` at `sock`: `Ok(None)` accepted, `Ok(Some)` a line to say instead, `Err` its refusal.
+fn tell(id: &str, sock: &Path, msg: ClientMsg) -> Result<Option<String>, String> {
+    let n = instance_label(id);
+    let mut s = match crate::transport::connect_own(sock) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => return Ok(Some(format!("{n}: {e}"))),
+        Err(_) => return Ok(Some(format!("{n}: not running"))),
+    };
+    let _ = s.set_read_timeout(Some(Duration::from_secs(1)));
+    msg.write_to(&mut s).map_err(|e| format!("{n}: {e}"))?;
+    crate::client::refusal(&s).map_or(Ok(None), Err)
+}
+
+/// Stops server `id` listening at `sock` and waits up to 5 s for it to go, so never on a main loop.
+/// Ok is the line to show, Err the server's refusal.
+pub fn stop(id: &str, sock: &Path) -> Result<String, String> {
+    if let Some(said) = tell(id, sock, ClientMsg::Shutdown)? {
+        return Ok(said);
+    }
+    let n = instance_label(id);
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while sock.exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    if sock.exists() {
+        return Ok(format!("{n}: did not respond within 5 s"));
+    }
+    let again = if id.is_empty() { "nerd".to_string() } else { format!("nerd --resume {n}") };
+    Ok(format!("{n}: stopped, resume with {again}"))
+}
+
+/// Has server `id` listening at `sock` swap itself for the installed build.
+pub fn update(id: &str, sock: &Path) -> Result<String, String> {
+    Ok(tell(id, sock, ClientMsg::Update)?.unwrap_or_else(|| format!("{}: updating in place", instance_label(id))))
+}
+
+/// Names server `id`, or clears its name when `name` is empty. Only files: no server is needed.
+pub fn rename(id: &str, name: &str) -> Result<String, String> {
+    crate::session::set_name(id, name)?;
+    Ok(if name.is_empty() { format!("{id}: name cleared") } else { format!("{id} is now {name}: nerd --resume {name}") })
+}
+
+/// What a removal takes, and what it leaves.
+pub const GOES: &str = "its layout, pane text, messages, routes, logs and saved agent session ids";
+pub const STAYS: &str = "config.json, plugins and the agents' own sessions stay";
+
+/// Removes stopped server `id`'s folder; `own` is the caller's own server. Only ever `instances/<id>`, and
+/// never one a server runs from: renamed first, then asked again, so a server started meanwhile keeps it.
+pub fn remove(id: &str, own: Option<&str>) -> Result<String, String> {
+    let n = shown_as(id);
+    if id.is_empty() {
+        return Err("refused: the legacy server keeps its state in nerd's own folder and is not removed".into());
+    }
+    if !crate::session::valid_id(id) || !instances().iter().any(|i| i == id) {
+        return Err(format!("no server {id}"));
+    }
+    if own == Some(id) {
+        return Err(format!("refused: {n} is the server this session shows"));
+    }
+    if probe(id, PROBE_LIMIT) != Probe::NotRunning {
+        return Err(format!("refused: {n} is running; stop it first with nerd --stop {}", instance_label(id)));
+    }
+    let (dir, gone) = (instances_dir().join(id), instances_dir().join(format!(".gone-{id}")));
+    let folders: Vec<String> = crate::session::load_from(&dir)
+        .map(|s| s.spaces.iter().map(|sp| crate::render::unspoofed(&crate::log::escape(&sp.cwd.display().to_string()))).collect())
+        .unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&gone);
+    std::fs::rename(&dir, &gone).map_err(|e| format!("{n}: not removed: {e}"))?;
+    // A server started between the probe and the rename listens in the folder that moved.
+    if ask(&gone.join("nerd.sock"), PROBE_LIMIT).0 != Probe::NotRunning {
+        let back = std::fs::rename(&gone, &dir).err().map(|e| format!("; its folder stays at {}: {e}", gone.display())).unwrap_or_default();
+        return Err(format!("refused: {n} started while it was being removed{back}"));
+    }
+    std::fs::remove_dir_all(&gone).map_err(|e| format!("{n}: {} not removed: {e}", gone.display()))?;
+    crate::log::info(&format!("server {id} removed"));
+    let spaces = if folders.is_empty() { "no spaces".into() } else { folders.join(", ") };
+    Ok(format!("{n} removed ({spaces}): {GOES} went; {STAYS}"))
+}
+
 /// Every server, the legacy one only while it runs, and the daemons none of them is. `own` is the
 /// calling server's id: it is not asked, it knows itself. Each probe waits up to `PROBE_LIMIT`, all
 /// at once, so this is never called on a main loop.
@@ -454,6 +541,40 @@ mod tests {
             assert!(!untouched(&id), "a server name is a touch");
             crate::session::set_name(&id, "").unwrap();
             assert!(!untouched(&id), "and the mark does not come back");
+        });
+    }
+
+    #[test]
+    fn a_removal_refuses_what_it_must_and_takes_only_that_folder() {
+        short_state("remove", || {
+            let root = crate::paths::state_root();
+            let spaced = |id: &str| {
+                let cwd = root.join(format!("proj{id}"));
+                std::fs::create_dir_all(&cwd).unwrap();
+                std::fs::create_dir_all(instances_dir().join(id)).unwrap();
+                let s = serde_json::json!({"version": 2, "spaces": [{"name": null, "cwd": cwd, "tabs": [], "active_tab": 0}]});
+                std::fs::write(instances_dir().join(id).join("session.json"), s.to_string()).unwrap();
+                cwd
+            };
+            let (_, _, three) = (spaced("1"), spaced("2"), spaced("3"));
+            let five = spaced(".gone-5");
+            let _listener = std::os::unix::net::UnixListener::bind(socket_of("1")).unwrap();
+
+            assert!(remove("", None).unwrap_err().starts_with("refused: the legacy server"));
+            assert_eq!(remove("9", None).unwrap_err(), "no server 9");
+            assert_eq!(remove("../1", None).unwrap_err(), "no server ../1");
+            assert_eq!(remove(".gone-5", None).unwrap_err(), "no server .gone-5");
+            assert_eq!(remove("2", Some("2")).unwrap_err(), "refused: 2 is the server this session shows");
+            assert_eq!(remove("1", None).unwrap_err(), "refused: 1 is running; stop it first with nerd --stop 1");
+            assert!(instances_dir().join("1").is_dir() && instances_dir().join("2").is_dir());
+
+            assert!(crate::session::recent_spaces().contains(&three));
+            assert!(!crate::session::recent_spaces().contains(&five), "a folder on its way out is no server");
+            let said = remove("3", Some("2")).unwrap();
+            assert!(said.starts_with(&format!("3 removed ({}): its layout", three.display())), "{said}");
+            assert!(!instances_dir().join("3").exists() && !instances_dir().join(".gone-3").exists());
+            assert!(!crate::session::recent_spaces().contains(&three), "its spaces are no longer offered");
+            assert_eq!(instances(), ["1", "2"]);
         });
     }
 

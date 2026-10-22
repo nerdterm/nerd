@@ -140,6 +140,7 @@ fn run() -> std::io::Result<()> {
         Some("--update") => return client::update(args.get(1).cloned()),
         Some("--check-update") => return release::main(&args[1..]),
         Some("--disconnect") => return client::disconnect(args.get(1).cloned()),
+        Some("--remove") => return client::remove(args.get(1).cloned()),
         Some("--rename") if args.len() > 3 => {
             return Err(std::io::Error::other("usage: nerd --rename <server> [name]; a name is one word"));
         }
@@ -253,6 +254,8 @@ fn help(autostart: &str, hook: &str) -> String {
            --update [NAME]   swap running servers for the installed build; panes survive\n\
            --check-update    ask GitHub for a newer release; from a terminal, install it after asking\n\
            --stop [NAME]     stop one server, or all of them\n\
+           --remove NAME     remove a stopped server: its layout, pane text, messages and logs\n\
+           --remove --stopped  remove every stopped server, after listing them and asking\n\
            --disconnect [NAME]  end every connection to a server, or to all; programs keep running\n\
            --daemon          start the server (usually automatic)\n\
            --install         install autostart (LaunchAgent){}\n\
