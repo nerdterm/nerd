@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.16.0](https://github.com/nerdterm/nerd/compare/v0.15.0...v0.16.0) (2026-10-22)
+
+
+### Added
+
+* Servers… lists every server, a bare nerd reopens the last one, and a server nothing was done in is not kept ([#110](https://github.com/nerdterm/nerd/issues/110)) ([d25802b](https://github.com/nerdterm/nerd/commit/d25802b179ec20dfd07602d8b3dcfecdad8a7d95))
+
+
+### Fixed
+
+* the release script names nerdterm/nerd for gh, and the docs say nerd-plugins checks the signature ([#107](https://github.com/nerdterm/nerd/issues/107)) ([545dbb5](https://github.com/nerdterm/nerd/commit/545dbb56ef48d10e5bd0523fc172ea6de42ba406))
+
 ## [0.15.0](https://github.com/nerdterm/nerd/compare/v0.14.0...v0.15.0) (2026-10-22)
 
 
