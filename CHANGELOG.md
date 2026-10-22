@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/nerdterm/nerd/compare/v0.14.0...v0.15.0) (2026-10-22)
+
+
+### Added
+
+* releases are signed, and nerd installs only what its release key signed ([#105](https://github.com/nerdterm/nerd/issues/105)) ([1cb52c8](https://github.com/nerdterm/nerd/commit/1cb52c88a9f3fe8fbdc73d334ed78781afe79c0c))
+
 ## [0.14.0](https://github.com/nerdterm/nerd/compare/v0.13.0...v0.14.0) (2026-10-21)
 
 
