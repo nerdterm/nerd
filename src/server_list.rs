@@ -205,7 +205,7 @@ impl ServerList {
             // Greyed in place, not hidden, while nothing is stopped (docs/menus.md rule 8).
             STOPPED if self.stopped().is_empty() => return Vec::new(),
             STOPPED => return vec![('d', "remove all stopped…", Act::RemoveAll)],
-            CONFIG => return vec![('e', "edit config.json…", Act::EditConfig)],
+            CONFIG => return vec![('e', "add a computer in config.json…", Act::EditConfig)],
             _ => {}
         }
         if id.starts_with("m:") {
@@ -380,7 +380,7 @@ impl ServerList {
                 Machine::Listed(..) => take(&mut rows, &format!("r:{}:", r.name)),
             }
         }
-        rows.push(line(CONFIG, "Edit config.json…".into(), text));
+        rows.push(line(CONFIG, "Connect to another computer…".into(), text));
 
         let details = |id: &str| -> Vec<String> { self.details(id).iter().flat_map(|l| wrap(l)).collect() };
         // Sized for every row's details and buttons at once, so choosing another row neither moves nor resizes the window.
@@ -410,7 +410,7 @@ impl ServerList {
                 out.push(format!("Removes every stopped server ({n}): {} go; {}.", crate::servers::GOES, crate::servers::STAYS));
             }
             CONFIG if self.machines.is_empty() && self.connects => out.push(NO_REMOTES.into()),
-            CONFIG => out.push("Machines are added to config.json as \"remotes\", with ssh keys set up for each host.".into()),
+            CONFIG => out.push("Open a machine above to list its servers. More are added to config.json as \"remotes\", with ssh keys set up for each host.".into()),
             _ => {}
         }
         if let Some(name) = id.strip_prefix("m:")
@@ -484,6 +484,22 @@ impl ServerList {
         {
             return self.act(&id, i);
         }
+        // As in the file tree: right opens a section, left closes it, and left in a section goes up to its head.
+        let at = self.view.selected(&c);
+        let section = c.rows.get(at).is_some_and(|r| r.parent);
+        match k.code {
+            crossterm::event::KeyCode::Right if section && !self.view.open.contains(&id) => return self.act(&id, 0),
+            crossterm::event::KeyCode::Left if section && self.view.open.contains(&id) => return self.act(&id, 0),
+            crossterm::event::KeyCode::Left if !section => {
+                if let Some(head) = c.rows[..at].iter().rev().find(|r| r.parent) {
+                    let head = head.id.clone();
+                    self.view.select_id(&head);
+                }
+                return Out::None;
+            }
+            crossterm::event::KeyCode::Left | crossterm::event::KeyCode::Right => return Out::None,
+            _ => {}
+        }
         match self.view.key(k, screen, &c) {
             crate::panel::Hit::Close => Out::Close,
             crate::panel::Hit::Enter(_) => self.act(&id, 0),
@@ -550,6 +566,26 @@ pub(crate) mod tests {
 
     fn offered(w: &ServerList, id: &str) -> Vec<Act> {
         w.actions(id).into_iter().map(|a| a.2).collect()
+    }
+
+    #[test]
+    fn the_arrows_open_and_close_a_section_as_in_the_file_tree() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let screen = Rect::new(0, 0, 200, 60);
+        let key = |w: &mut ServerList, code| w.key(KeyEvent::new(code, KeyModifiers::NONE), screen);
+        let mut w = fixture(true);
+        w.view.select_id(MAC);
+        key(&mut w, KeyCode::Left);
+        assert!(!ids(&w).contains(&"s:1".to_string()), "left closes an open section");
+        key(&mut w, KeyCode::Left);
+        assert!(!ids(&w).contains(&"s:1".to_string()), "left on a closed one does nothing");
+        key(&mut w, KeyCode::Right);
+        assert!(ids(&w).contains(&"s:1".to_string()), "right opens it");
+        w.view.select_id("s:3");
+        key(&mut w, KeyCode::Left);
+        let c = w.laid_out(screen, &Theme::dark());
+        assert_eq!(w.view_id(&c).as_deref(), Some(MAC), "left in a section goes up to its head");
+        assert!(ids(&w).contains(&"s:1".to_string()), "and leaves it open");
     }
 
     #[test]

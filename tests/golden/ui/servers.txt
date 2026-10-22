@@ -221,7 +221,7 @@
         │   Remove all stopped…                                                                                │        
         │   pid 4242  stray                              2 hours ago              no server folder leads to it │        
         │ ▸ studio    me@studio.local                                                                          │        
-        │ Edit config.json…                                                                                    │        
+        │ Connect to another computer…                                                                         │        
         │                                                                                                      │        
         │ Folders: /Users/me/src/proj2.                                                                        │        
         │ Sandbox: enabled, network denied to the daemon.                                                      │        
@@ -496,7 +496,7 @@
         │   pid 4242  stray                              2 hours ago              no server folder leads to it │        
         │ ▾ studio    me@studio.local                                                                          │        
         │   lab (7)   running                  0         never                    lab                          │        
-        │ Edit config.json…                                                                                    │        
+        │ Connect to another computer…                                                                         │        
         │                                                                                                      │        
         │ Folders: /Users/me/lab.                                                                              │        
         │                                                                                                      │        

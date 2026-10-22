@@ -56,9 +56,11 @@ Every window except a context menu is drawn through `chrome::dialog`, and `chrom
   shows first (State `current`), then by when a session last attached: name and number, State (`current`, `running`,
   `open in another session`, `stopped`), Sessions (0 or 1: a server shows one session at a time), Last used,
   Sandbox and Folders. Under them **New server…** (a new server, and this session moves to it; this server keeps
-  running), **Remove all stopped…**, and a row per stray: a `nerd --daemon` of yours no listed server leads to.
-  Then a collapsed section per machine in `remotes`: a click opens it and lists its servers over ssh, as
-  `nerd --remote` does; a click closes it. Last, **Edit config.json…**, where machines are added.
+  running), **Remove all stopped…** (greyed while none is stopped), and a row per stray: a `nerd --daemon` of yours
+  no listed server leads to. Then a collapsed section per machine in `remotes`: a click or the right arrow opens it
+  and lists its servers over ssh, as `nerd --remote` does; a click or the left arrow closes it, and the left arrow in a
+  section goes up to its head. Last, **Connect to another computer…**: its button opens config.json, where machines
+  are added.
 - A click on a row chooses it, and the buttons under the rows act on it; Enter does the first, the letter in a
   button its own. The current server: **Rename…**, **Update…**, **Stop…** (the same as Rename this server…, Update…
   and Stop this server…). Another running one: **Open** (this session moves to it), **Open in a new window**,
