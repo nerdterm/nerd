@@ -286,7 +286,9 @@ pub fn set_name(id: &str, name: &str) -> Result<(), String> {
     if let Some(other) = instances().into_iter().find(|o| o != id && instance_label(o) == name) {
         return Err(format!("server {other} is already called {name}"));
     }
-    crate::paths::write_private(&name_path(id), "tmp", format!("{name}\n").as_bytes()).map_err(|e| e.to_string())
+    crate::paths::write_private(&name_path(id), "tmp", format!("{name}\n").as_bytes()).map_err(|e| e.to_string())?;
+    crate::servers::clear_untouched(id);
+    Ok(())
 }
 
 /// Known instances, numeric names first in numeric order.
@@ -456,6 +458,8 @@ enum SaveMsg {
     Snapshot(WorkspaceSnapshot),
     /// Write what is owed now, then answer.
     Flush(std::sync::mpsc::Sender<()>),
+    /// Drop what is owed and end: nothing is written after the answer.
+    Stop(std::sync::mpsc::Sender<()>),
 }
 
 /// Hands snapshots to the one thread that writes `session.json`: two writers would share its temp file.
@@ -488,6 +492,14 @@ impl Saver {
         let (ack, done) = std::sync::mpsc::channel();
         self.tx.send(SaveMsg::Flush(ack)).is_ok() && done.recv_timeout(Duration::from_secs(5)).is_ok()
     }
+
+    /// Ends the saver with what it holds unwritten; false while it may still write (stuck for 5 s).
+    pub fn stop(&mut self) -> bool {
+        let (ack, done) = std::sync::mpsc::channel();
+        let _ = self.tx.send(SaveMsg::Stop(ack));
+        // A saver already gone drops the sender: it writes nothing either.
+        !matches!(done.recv_timeout(Duration::from_secs(5)), Err(std::sync::mpsc::RecvTimeoutError::Timeout))
+    }
 }
 
 /// The saver thread: a snapshot the file already holds is not written again, and a failed write is tried again every interval.
@@ -506,6 +518,10 @@ fn save_loop(rx: std::sync::mpsc::Receiver<SaveMsg>) {
                 None
             }
             Ok(SaveMsg::Flush(ack)) => Some(ack),
+            Ok(SaveMsg::Stop(ack)) => {
+                let _ = ack.send(());
+                return;
+            }
             Err(RecvTimeoutError::Timeout) => None,
             Err(RecvTimeoutError::Disconnected) => return,
         };
@@ -780,6 +796,24 @@ pub(crate) mod tests {
                 assert!(t.elapsed() < Duration::from_secs(2), "not tried again");
                 std::thread::sleep(Duration::from_millis(10));
             }
+        });
+    }
+
+    #[test]
+    fn a_stopped_saver_drops_what_it_owes_and_writes_nothing_more() {
+        with_temp_state_dir("stop", || {
+            let mut saver = Saver::new();
+            std::fs::create_dir_all(state_dir()).unwrap();
+            let blocker = state_path().with_extension("tmp");
+            std::fs::create_dir(&blocker).unwrap();
+            saver.request(sample_snapshot());
+            saver.flush();
+            assert!(saver.stop());
+            std::fs::remove_dir(&blocker).unwrap();
+            saver.request(sample_snapshot());
+            std::thread::sleep(SAVE_INTERVAL * 3);
+            assert!(load().is_none(), "the failed write was owed and is not tried again, nor the next one");
+            assert!(saver.stop(), "a saver already gone writes nothing either");
         });
     }
 

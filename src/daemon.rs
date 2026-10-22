@@ -278,6 +278,8 @@ fn serve(started: &mut bool) -> std::io::Result<()> {
     app.mail = crate::app::MailState::open(&crate::mail::path());
 
     let sink = Sink::new(bell.clone());
+    let server = crate::session::instance_name();
+    let mut untouched = crate::servers::untouched(&server);
     // Fixed viewport: the daemon has no tty, so Fullscreen's terminal::size() call would fail. The client supplies the size instead.
     let mut tui = ratatui::Terminal::with_options(
         ClientBackend { inner: CrosstermBackend::new(sink.clone()), size: Size::new(80, 24) },
@@ -418,10 +420,11 @@ fn serve(started: &mut bool) -> std::io::Result<()> {
                     if app.spaces.is_empty() {
                         app.open_space(cwd);
                     }
-                    // A session from another Mac does not make this the server a bare `nerd` here comes back to.
-                    if !app.caps.bye
-                        && let Err(e) = crate::servers::mark_attached(&crate::session::instance_name())
-                    {
+                    // A session from another Mac does not make this the server a bare `nerd` here comes back to,
+                    // and a server one has seen is never discarded.
+                    if app.caps.bye {
+                        keep(&mut untouched, &server, "a session from another Mac attached");
+                    } else if let Err(e) = crate::servers::mark_attached(&server) {
                         warn(&format!("attached stamp not written: {e}"));
                     }
                     // Clamp: 65535x65535 cells would be a four-gigabyte buffer.
@@ -502,13 +505,18 @@ fn serve(started: &mut bool) -> std::io::Result<()> {
                     redraw = true;
                 }
                 Inbound::Event(_, _) => {}
-                Inbound::Detach(id, how) => {
-                    info(&format!("client {id} detached: {how}"));
-                    crate::clients::close(&mut app.clients, id, crate::clients::End::Closed, crate::clients::now());
+                Inbound::Detach(client, how) => {
+                    info(&format!("client {client} detached: {how}"));
+                    // A client already lost to an error has no screen left to leave.
+                    let left = sink.attached() && !how.starts_with(crate::transport::READ_ERROR);
+                    crate::clients::close(&mut app.clients, client, crate::clients::End::Closed, crate::clients::now());
                     if app.caps.bye {
                         sink.say(crate::proto::BYE);
                     }
                     sink.set(None);
+                    if left && discardable(&mut untouched, &app, &server) {
+                        return Ok(DISCARD.into());
+                    }
                 }
                 Inbound::Shutdown => return Ok("--stop".into()),
                 Inbound::Update => app.upgrade = true,
@@ -658,14 +666,21 @@ fn serve(started: &mut bool) -> std::io::Result<()> {
         // `quit` here means detach, not die: panes must outlive the window.
         if let Some(why) = app.quit.take() {
             info(why);
+            let left = sink.attached();
             crate::clients::close(&mut app.clients, current, crate::clients::End::Detached, crate::clients::now());
             if app.caps.bye {
                 sink.say(crate::proto::BYE);
             }
             sink.set(None);
+            if left && discardable(&mut untouched, &app, &server) {
+                return Ok(DISCARD.into());
+            }
         }
 
         let changed = redraw || std::mem::take(&mut app.dirty) || std::mem::take(&mut first);
+        if untouched && changed {
+            keep_if_touched(&mut untouched, &app, &server);
+        }
         save_turn(&mut app, &mut unsaved, changed);
 
         // OSC 52 goes out between frames as-is; it doesn't move the cursor, so ratatui's buffer doesn't need to know.
@@ -724,6 +739,7 @@ fn serve(started: &mut bool) -> std::io::Result<()> {
     }));
 
     match outcome {
+        Ok(Ok(reason)) if reason == DISCARD && discard(&mut app, &server) => Ok(()),
         Ok(Ok(reason)) => {
             shut_down(&mut app, &sink, &path, &reason);
             Ok(())
@@ -744,6 +760,85 @@ fn serve(started: &mut bool) -> std::io::Result<()> {
             std::process::abort();
         }
     }
+}
+
+/// The loop's reason when the last session left a server nothing was done in.
+const DISCARD: &str = "discard: nothing was done in it and its last session left";
+
+/// Clears the mark for good; `why` goes to the log.
+fn keep(untouched: &mut bool, id: &str, why: &str) {
+    if std::mem::take(untouched) {
+        crate::servers::clear_untouched(id);
+        info(&format!("server {id} is kept from now on: {why}"));
+    }
+}
+
+fn keep_if_touched(untouched: &mut bool, app: &App, id: &str) {
+    let agent = app.spaces.iter().flat_map(|s| &s.tabs).flat_map(|t| t.panes.values()).any(|p| p.agent.is_some());
+    if crate::servers::touched(&app.snapshot(), agent) {
+        keep(untouched, id, "something was done in it");
+    }
+}
+
+/// Whether the server may go now that its last session left on purpose: still untouched, a folder of its own,
+/// no window on its way, and no process below a pane's shell. Anything not known keeps it.
+fn discardable(untouched: &mut bool, app: &App, id: &str) -> bool {
+    keep_if_touched(untouched, app, id);
+    if *untouched && !crate::servers::untouched(id) {
+        keep(untouched, id, "it was named, or its mark was removed");
+    }
+    if !*untouched {
+        return false;
+    }
+    let kept = |why: &str| {
+        info(&format!("server {id} not discarded: {why}"));
+        false
+    };
+    if std::env::var_os("NERD_STATE_DIR").is_some() || std::env::var_os("NERD_SOCKET").is_some() {
+        return kept("it was started at NERD_STATE_DIR or NERD_SOCKET");
+    }
+    if app.opening.is_some() {
+        return kept("a window it opened is still on its way");
+    }
+    let Some(procs) = crate::detect::procs() else { return kept("the process table could not be read") };
+    for p in app.spaces.iter().flat_map(|s| &s.tabs).flat_map(|t| t.panes.values()) {
+        match p.pty.shell_pid() {
+            None => return kept("a pane is still starting"),
+            Some(shell) if !crate::detect::descendants(&procs, shell as i32).is_empty() => return kept("a program runs in a pane"),
+            Some(_) => {}
+        }
+    }
+    true
+}
+
+/// Ends a server nothing was done in and leaves nothing of it: no screen dump, no snapshot, no folder.
+/// False when the saver could still write, which would make the folder again: the server then stops as usual.
+fn discard(app: &mut App, id: &str) -> bool {
+    if !app.saver.stop() {
+        error("discard: the session saver did not stop within 5 s; stopping as usual");
+        return false;
+    }
+    if let Some(b) = crate::broker::handle() {
+        for p in app.spaces.iter().flat_map(|s| &s.tabs).flat_map(|t| t.panes.keys()) {
+            b.kill(*p);
+        }
+    }
+    app.plugins.stop_all();
+    crate::isolation::remove_shared();
+    let dir = crate::session::instances_dir().join(id);
+    let gone = crate::session::instances_dir().join(format!(".gone-{id}"));
+    let _ = std::fs::remove_dir_all(&gone);
+    // Renamed first: a server listing it meanwhile sees no server, and the log below lands in the root.
+    match std::fs::rename(&dir, &gone) {
+        Ok(()) => {
+            info(&format!("server {id} discarded: nothing was done in it and its last session left"));
+            if let Err(e) = std::fs::remove_dir_all(&gone) {
+                warn(&format!("server {id}: {} not removed: {e}", gone.display()));
+            }
+        }
+        Err(e) => error(&format!("server {id} not discarded: its folder did not move: {e}")),
+    }
+    true
 }
 
 /// `7h 4m`, `2d 3h`, `4m`, `12s`: how long the server ran with no window.

@@ -70,6 +70,45 @@ pub fn mark_attached(id: &str) -> std::io::Result<()> {
     crate::paths::write_private(&dir.join("attached"), "tmp", format!("{now}\n").as_bytes())
 }
 
+/// `instances/N/untouched` of a server with a folder of its own; never a path for a bad or empty id.
+fn untouched_path(id: &str) -> Option<PathBuf> {
+    let dir = instances_dir().join(id);
+    (crate::session::valid_id(id) && dir.is_dir()).then(|| dir.join("untouched"))
+}
+
+/// Written by every way of making a new server, right after its folder is reserved.
+pub fn mark_untouched(id: &str) -> std::io::Result<()> {
+    match untouched_path(id) {
+        Some(p) => crate::paths::write_private(&p, "tmp", b""),
+        None => Ok(()),
+    }
+}
+
+pub fn untouched(id: &str) -> bool {
+    untouched_path(id).is_some_and(|p| p.exists())
+}
+
+/// The first thing done in server `id`: it is kept from now on, and the mark never comes back.
+pub fn clear_untouched(id: &str) {
+    if let Some(p) = untouched_path(id) {
+        let _ = std::fs::remove_file(p);
+    }
+}
+
+/// More than one space, tab or pane, a name, isolation, an agent: something was done in the server.
+/// A `cd`, a title, a size or closing its only pane is not; they change the snapshot at every prompt.
+pub fn touched(s: &crate::session::WorkspaceSnapshot, agent_seen: bool) -> bool {
+    let tabs = || s.spaces.iter().flat_map(|sp| &sp.tabs);
+    let panes = || tabs().flat_map(|t| &t.panes);
+    agent_seen
+        || s.spaces.len() > 1
+        || tabs().count() > 1
+        || panes().count() > 1
+        || s.spaces.iter().any(|sp| sp.name.is_some() || sp.isolation_new.is_some())
+        || tabs().any(|t| t.name.is_some() || t.isolation_new.is_some())
+        || panes().any(|p| p.label.is_some() || p.agent_session.is_some() || !p.isolation.is_open())
+}
+
 /// When a session last attached, else when a snapshot with a space in it was saved: an empty one
 /// is what a server started with no window writes (the LaunchAgent's), and that is no use.
 pub fn last_used(id: &str) -> Option<SystemTime> {
@@ -350,6 +389,72 @@ mod tests {
             let known = known(std::iter::empty());
             unsafe { std::env::remove_var("NERD_SOCKET") };
             assert_eq!(known, [std::process::id() as i32], "the server at NERD_SOCKET, by the pid that listens there");
+        });
+    }
+
+    fn one_shell() -> crate::session::WorkspaceSnapshot {
+        serde_json::from_value(serde_json::json!({"version": 2, "spaces": [{"name": null, "cwd": "/tmp", "tabs": [{
+            "name": null, "layout": {"Pane": 1}, "focused": 1,
+            "panes": [{"id": 1, "cwd": "/tmp", "argv": ["/bin/zsh"], "agent_session": null, "title": "zsh", "cols": 80, "rows": 24}],
+        }]}]}))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_cd_a_title_a_resize_or_the_last_pane_closing_is_not_a_touch() {
+        let mut s = one_shell();
+        assert!(!touched(&s, false));
+        let p = &mut s.spaces[0].tabs[0].panes[0];
+        (p.cwd, p.title, p.cols, p.rows) = ("/Users".into(), Some("~/src".into()), 200, 60);
+        assert!(!touched(&s, false), "these change at every prompt");
+        s.spaces.clear();
+        assert!(!touched(&s, false), "`exit` in the only pane");
+    }
+
+    #[test]
+    fn each_structural_change_is_a_touch() {
+        type Change = fn(&mut crate::session::WorkspaceSnapshot);
+        let changes: [(&str, Change); 10] = [
+            ("a second space", |s| s.spaces.push(s.spaces[0].clone())),
+            ("a second tab", |s| {
+                let t = s.spaces[0].tabs[0].clone();
+                s.spaces[0].tabs.push(t);
+            }),
+            ("a split", |s| {
+                let mut p = s.spaces[0].tabs[0].panes[0].clone();
+                p.id = 2;
+                s.spaces[0].tabs[0].panes.push(p);
+            }),
+            ("a space name", |s| s.spaces[0].name = Some("work".into())),
+            ("a tab name", |s| s.spaces[0].tabs[0].name = Some("main".into())),
+            ("a pane name", |s| s.spaces[0].tabs[0].panes[0].label = Some("build".into())),
+            ("an agent session", |s| s.spaces[0].tabs[0].panes[0].agent_session = Some("abc".into())),
+            ("a pane's isolation", |s| s.spaces[0].tabs[0].panes[0].isolation.files = crate::policy::Files::Folder),
+            ("a space's isolation for new panes", |s| s.spaces[0].isolation_new = Some(Default::default())),
+            ("a tab's isolation for new panes", |s| s.spaces[0].tabs[0].isolation_new = Some(Default::default())),
+        ];
+        for (what, change) in changes {
+            let mut s = one_shell();
+            change(&mut s);
+            assert!(touched(&s, false), "{what}");
+        }
+        assert!(touched(&one_shell(), true), "an agent seen in front");
+    }
+
+    #[test]
+    fn the_mark_is_written_for_a_folder_and_gone_for_good_once_named() {
+        with_temp_state_dir("servers-untouched", || {
+            let id = crate::session::new_instance_name();
+            mark_untouched(&id).unwrap();
+            assert!(untouched(&id));
+            mark_untouched("").unwrap();
+            mark_untouched("../x").unwrap();
+            mark_untouched("9").unwrap();
+            assert!(!crate::paths::state_root().join("untouched").exists() && !instances_dir().join("9").exists(), "no folder is made");
+            crate::session::set_name(&id, "work").unwrap();
+            assert!(!untouched(&id), "a server name is a touch");
+            crate::session::set_name(&id, "").unwrap();
+            assert!(!untouched(&id), "and the mark does not come back");
         });
     }
 

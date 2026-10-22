@@ -19,7 +19,12 @@ const SPAWN_WAIT: Duration = Duration::from_secs(5);
 /// Sets `NERD_INSTANCE` so every state path below, and the daemon we may spawn, resolve to it.
 fn select_instance(resume: Option<Option<String>>) -> std::io::Result<String> {
     let name = match resume {
-        None => crate::session::new_instance_name(),
+        None => {
+            let id = crate::session::new_instance_name();
+            // Without the mark the server is only ever kept.
+            let _ = crate::servers::mark_untouched(&id);
+            id
+        }
         // By id or by name; an unknown one no longer makes an empty desktop.
         Some(Some(n)) => crate::session::resolve(&n).ok_or_else(|| unknown_instance(&n))?,
         Some(None) => crate::session::last_instance()

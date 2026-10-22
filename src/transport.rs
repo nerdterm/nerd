@@ -308,6 +308,9 @@ pub fn allow_from_panes() -> bool {
     crate::policy::current().allow_from_panes
 }
 
+/// How a `Detach` begins when the socket failed rather than closed: the session was lost, it did not leave.
+pub const READ_ERROR: &str = "socket error";
+
 /// `greeted`: the client already said Hello to the previous build (handover). `allow`: `allow_from_panes`.
 pub fn read_client(id: u64, stream: UnixStream, tx: Inbox, greeted: bool, waiting: Waiting, allow: fn() -> bool) {
     let Ok(out) = stream.try_clone() else {
@@ -414,7 +417,7 @@ pub fn read_client(id: u64, stream: UnixStream, tx: Inbox, greeted: bool, waitin
                 let how = match end {
                     Ok(Some(_)) => "asked to detach".to_string(),
                     Ok(None) => "socket closed (EOF)".to_string(),
-                    Err(e) => format!("socket error: {e}"),
+                    Err(e) => format!("{READ_ERROR}: {e}"),
                 };
                 let _ = tx.send(Inbound::Detach(id, format!("{how}; {}", peer.states())));
                 return;

@@ -78,7 +78,7 @@ fn spawn_daemon_with_term(env: &Env, term: &str, probe: bool) -> DaemonGuard {
     spawn_daemon_without(env, env!("CARGO_BIN_EXE_nerd").as_ref(), term, probe, &[])
 }
 
-/// `unset`: variables of this process the daemon must not inherit.
+/// `unset`: variables of this process the daemon must not inherit, `NERD_STATE_DIR` and `NERD_SOCKET` included.
 fn spawn_daemon_without(env: &Env, exe: &std::path::Path, term: &str, probe: bool, unset: &[&str]) -> DaemonGuard {
     spawn_daemon_in(env, exe, term, probe, unset, &[])
 }
@@ -100,8 +100,7 @@ fn spawn_daemon_in(env: &Env, exe: &std::path::Path, term: &str, probe: bool, un
         .env_remove("TERMINFO")
         .env_remove("TERMINFO_DIRS")
         .env("HOME", &env.dir)
-        .env("NERD_STATE_DIR", &env.dir)
-        .env("NERD_SOCKET", &env.socket)
+        .envs([("NERD_STATE_DIR", &env.dir), ("NERD_SOCKET", &env.socket)].into_iter().filter(|(k, _)| !unset.contains(k)))
         .env("SHELL", "/bin/sh")
         .envs(extra.iter().map(|(k, v)| (k, v)))
         .stdin(std::process::Stdio::null())
@@ -795,6 +794,225 @@ fn an_attach_that_asks_for_a_free_server_is_refused_while_a_session_shows_it() {
     third.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
     third.write_all(format!("{hello}\n").as_bytes()).unwrap();
     assert!(wait_for(&mut third, "spaces", Duration::from_secs(5)), "a free server refused: {}", daemon_log(&env));
+    let _ = std::fs::remove_dir_all(&env.dir);
+}
+
+/// A short HOME: a socket's path has room for 103 bytes.
+fn own_home(name: &str) -> PathBuf {
+    PathBuf::from(format!("/tmp/nd-{name}-{}", std::process::id()))
+}
+
+/// Server 1 of a test HOME as a bare `nerd` makes it: a folder of its own, the mark when `marked`, and neither
+/// `NERD_STATE_DIR` nor `NERD_SOCKET`.
+fn own_server(name: &str, marked: bool, extra: &[(&str, std::ffi::OsString)]) -> (Env, DaemonGuard) {
+    let dir = own_home(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    let folder = dir.join("Library/Application Support/nerd/instances/1");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(dir.join("Library/Application Support/nerd/update-check"), "off\n").unwrap();
+    if marked {
+        std::fs::write(folder.join("untouched"), "").unwrap();
+    }
+    let env = Env { socket: folder.join("nerd.sock"), dir };
+    let extra = [extra, &[("NERD_INSTANCE", "1".into())]].concat();
+    let daemon = spawn_daemon_in(&env, env!("CARGO_BIN_EXE_nerd").as_ref(), "xterm-256color", true, &["NERD_STATE_DIR", "NERD_SOCKET"], &extra);
+    (env, daemon)
+}
+
+fn own_root(env: &Env) -> PathBuf {
+    env.dir.join("Library/Application Support/nerd")
+}
+
+fn own_folder(env: &Env) -> PathBuf {
+    own_root(env).join("instances/1")
+}
+
+/// The server's own log, then the state root's, where a discard is written.
+fn own_log(env: &Env) -> String {
+    let read = |p: PathBuf| std::fs::read_to_string(p).unwrap_or_default();
+    format!("{}\n--- root ---\n{}", read(own_folder(env).join("daemon.log")), read(own_root(env).join("daemon.log")))
+}
+
+fn own_wait(env: &Env, client: &mut UnixStream, what: &str) {
+    assert!(wait_reading(client, Duration::from_secs(10), || own_log(env).contains(what)), "no {what:?}: {}", own_log(env));
+}
+
+fn assert_discarded(env: &Env, daemon: &mut DaemonGuard) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let status = loop {
+        if let Some(s) = daemon.0.try_wait().unwrap() {
+            break s;
+        }
+        assert!(Instant::now() < deadline, "the server did not go: {}", own_log(env));
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert!(status.success(), "{status}: {}", own_log(env));
+    let left: Vec<_> = std::fs::read_dir(own_root(env).join("instances")).unwrap().flatten().map(|e| e.file_name()).collect();
+    assert!(left.is_empty(), "nothing of it is left, no .gone-1 either: {left:?}");
+    let root = std::fs::read_to_string(own_root(env).join("daemon.log")).unwrap_or_default();
+    assert!(root.contains("server 1 discarded: nothing was done in it and its last session left"), "{root}");
+    let _ = std::fs::remove_dir_all(&env.dir);
+}
+
+/// The last session leaves by `Detach`; the server stays running, its folder and snapshot with it.
+fn detach_and_assert_kept(env: &Env, client: &mut UnixStream, daemon: &mut DaemonGuard) {
+    ClientMsg::Detach.write_to(client).unwrap();
+    own_wait(env, client, "detached: asked to detach");
+    // The decision is made in the turn that logs the detach.
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(daemon.0.try_wait().unwrap().is_none(), "the server stays: {}", own_log(env));
+    assert!(own_folder(env).join("session.json").exists() && !own_log(env).contains("server 1 discarded"), "{}", own_log(env));
+}
+
+#[test]
+fn a_server_nothing_was_done_in_goes_when_its_session_detaches() {
+    let (env, mut daemon) = own_server("ut-detach", true, &[]);
+    let mut client = connect(&env, 80, 24);
+    assert!(wait_for(&mut client, "spaces", Duration::from_secs(5)), "no frame: {}", own_log(&env));
+    // A pane still starting keeps the server: what it would run is not known yet.
+    type_line(&mut client, "echo up-$((40+2))");
+    assert!(wait_for(&mut client, "up-42", Duration::from_secs(5)), "{}", own_log(&env));
+    ClientMsg::Detach.write_to(&mut client).unwrap();
+    assert_discarded(&env, &mut daemon);
+}
+
+#[test]
+fn exit_in_the_only_pane_of_a_server_nothing_was_done_in_discards_it() {
+    let (env, mut daemon) = own_server("ut-exit", true, &[]);
+    let mut client = connect(&env, 80, 24);
+    assert!(wait_for(&mut client, "spaces", Duration::from_secs(5)), "no frame: {}", own_log(&env));
+    type_line(&mut client, "exit");
+    assert_discarded(&env, &mut daemon);
+}
+
+#[test]
+fn a_cd_a_title_and_a_resize_do_not_keep_a_server() {
+    let (env, mut daemon) = own_server("ut-cd", true, &[]);
+    let mut client = connect(&env, 80, 24);
+    assert!(wait_for(&mut client, "spaces", Duration::from_secs(5)), "no frame: {}", own_log(&env));
+    type_line(&mut client, "cd /tmp && printf '\\033]0;a-title\\007'");
+    ClientMsg::Event(Event::Resize(120, 40)).write_to(&mut client).unwrap();
+    let saved = || std::fs::read_to_string(own_folder(&env).join("session.json")).unwrap_or_default();
+    // In the snapshot, so the change went through the server's check before the detach.
+    assert!(wait_reading(&mut client, Duration::from_secs(10), || saved().contains("\"title\": \"a-title\"")), "{}", saved());
+    ClientMsg::Detach.write_to(&mut client).unwrap();
+    assert_discarded(&env, &mut daemon);
+}
+
+#[test]
+fn a_server_something_was_done_in_is_kept_even_back_at_one_shell() {
+    let panes = |env: &Env| -> Option<usize> {
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(own_folder(env).join("session.json")).ok()?).ok()?;
+        Some(v["spaces"].as_array()?.iter().flat_map(|s| s["tabs"].as_array().into_iter().flatten()).map(|t| t["panes"].as_array().map_or(0, Vec::len)).sum())
+    };
+    let back_to_one = |env: &Env, client: &mut UnixStream| {
+        type_line(client, "exit");
+        assert!(wait_reading(client, Duration::from_secs(10), || panes(env) == Some(1)), "{:?}: {}", panes(env), own_log(env));
+    };
+    for case in ["split", "tab", "name", "agent", "remote"] {
+        let home = own_home(&format!("ut-{case}"));
+        let path = format!("{}:/usr/bin:/bin", home.join("bin").display());
+        let (env, mut daemon) = own_server(&format!("ut-{case}"), true, &[("PATH", path.into())]);
+        let mut client = if case == "remote" { connect_remote(&env) } else { connect(&env, 100, 30) };
+        assert!(wait_for(&mut client, "spaces", Duration::from_secs(5)), "{case}: no frame: {}", own_log(&env));
+        // The shell up first: a pane still starting would keep the server whatever the case.
+        type_line(&mut client, "echo up-$((40+2))");
+        assert!(wait_for(&mut client, "up-42", Duration::from_secs(5)), "{case}: {}", own_log(&env));
+        match case {
+            "split" => key(&mut client, KeyCode::Char('\\'), KeyModifiers::ALT),
+            "tab" => key(&mut client, KeyCode::Char('c'), KeyModifiers::ALT),
+            "name" => assert!(nerd_in(&env.dir, &["--rename", "1", "work"]).0),
+            // Detected as an agent by its name, as a real `claude` would be.
+            "agent" => {
+                std::fs::create_dir_all(home.join("bin")).unwrap();
+                std::fs::write(home.join("bin/claude"), "#!/bin/sh\nsleep 600\n").unwrap();
+                std::fs::set_permissions(home.join("bin/claude"), std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+                type_line(&mut client, "claude");
+            }
+            _ => {}
+        }
+        let mark = own_folder(&env).join("untouched");
+        assert!(wait_reading(&mut client, Duration::from_secs(10), || !mark.exists()), "{case}: still marked: {}", own_log(&env));
+        match case {
+            "split" | "tab" => back_to_one(&env, &mut client),
+            "agent" => {
+                key(&mut client, KeyCode::Char('c'), KeyModifiers::CONTROL);
+                type_line(&mut client, "echo agent-$((40+2))");
+                assert!(wait_for(&mut client, "agent-42", Duration::from_secs(5)), "the shell is back: {}", own_log(&env));
+            }
+            _ => {}
+        }
+        detach_and_assert_kept(&env, &mut client, &mut daemon);
+        assert!(own_log(&env).contains("server 1 is kept from now on: "), "{case}: {}", own_log(&env));
+        stop_and_wait(&env, &mut daemon);
+        let _ = std::fs::remove_dir_all(&env.dir);
+    }
+}
+
+#[test]
+fn a_program_left_running_in_the_shell_keeps_the_server() {
+    let (env, mut daemon) = own_server("ut-job", true, &[]);
+    let mut client = connect(&env, 80, 24);
+    assert!(wait_for(&mut client, "spaces", Duration::from_secs(5)), "no frame: {}", own_log(&env));
+    let pidfile = env.dir.join("job.pid");
+    type_line(&mut client, &format!("sleep 600 & echo $! > {}", pidfile.display()));
+    assert!(wait_reading(&mut client, Duration::from_secs(5), || std::fs::read_to_string(&pidfile).is_ok_and(|s| s.ends_with('\n'))), "{}", own_log(&env));
+    detach_and_assert_kept(&env, &mut client, &mut daemon);
+    assert!(own_log(&env).contains("server 1 not discarded: a program runs in a pane"), "{}", own_log(&env));
+    assert!(own_folder(&env).join("untouched").exists(), "a job is not a touch: the next leave may still discard it");
+    stop_and_wait(&env, &mut daemon);
+    let pid: i32 = std::fs::read_to_string(&pidfile).unwrap().trim().parse().unwrap();
+    let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), nix::sys::signal::Signal::SIGKILL);
+    let _ = std::fs::remove_dir_all(&env.dir);
+}
+
+/// On this Mac's socket a killed client reads as a closed one, which is a leave; a socket that fails is a loss.
+#[test]
+fn a_session_lost_to_a_socket_error_keeps_the_server() {
+    let (env, mut daemon) = own_server("ut-lost", true, &[]);
+    let mut client = connect(&env, 80, 24);
+    assert!(wait_for(&mut client, "spaces", Duration::from_secs(5)), "no frame: {}", own_log(&env));
+    type_line(&mut client, "echo up-$((40+2))");
+    assert!(wait_for(&mut client, "up-42", Duration::from_secs(5)), "{}", own_log(&env));
+    client.write_all(b"\xff\xfe\n").unwrap();
+    own_wait(&env, &mut client, "detached: socket error");
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(daemon.0.try_wait().unwrap().is_none() && own_folder(&env).join("untouched").exists(), "{}", own_log(&env));
+    stop_and_wait(&env, &mut daemon);
+    let _ = std::fs::remove_dir_all(&env.dir);
+}
+
+#[test]
+fn a_server_under_nerd_state_dir_is_never_discarded() {
+    let env = setup_env("ut-state-dir");
+    std::fs::create_dir_all(env.dir.join("instances/1")).unwrap();
+    std::fs::write(env.dir.join("instances/1/untouched"), "").unwrap();
+    let mut daemon = spawn_daemon_in(&env, env!("CARGO_BIN_EXE_nerd").as_ref(), "xterm-256color", true, &[], &[("NERD_INSTANCE", "1".into())]);
+    let mut client = connect(&env, 80, 24);
+    assert!(wait_for(&mut client, "spaces", Duration::from_secs(5)), "no frame: {}", daemon_log(&env));
+    ClientMsg::Detach.write_to(&mut client).unwrap();
+    assert!(wait_reading(&mut client, Duration::from_secs(10), || daemon_log(&env).contains("server 1 not discarded: it was started at NERD_STATE_DIR")), "{}", daemon_log(&env));
+    assert!(daemon.0.try_wait().unwrap().is_none() && env.dir.join("session.json").exists(), "the state root stays: {}", daemon_log(&env));
+    stop_and_wait(&env, &mut daemon);
+    let _ = std::fs::remove_dir_all(&env.dir);
+}
+
+#[test]
+fn a_server_never_marked_or_never_attached_is_kept() {
+    // As the LaunchAgent starts one: no mark.
+    let (env, mut daemon) = own_server("ut-agent", false, &[]);
+    let mut client = connect(&env, 80, 24);
+    assert!(wait_for(&mut client, "spaces", Duration::from_secs(5)), "no frame: {}", own_log(&env));
+    type_line(&mut client, "echo up-$((40+2))");
+    assert!(wait_for(&mut client, "up-42", Duration::from_secs(5)), "{}", own_log(&env));
+    detach_and_assert_kept(&env, &mut client, &mut daemon);
+    stop_and_wait(&env, &mut daemon);
+    let _ = std::fs::remove_dir_all(&env.dir);
+
+    let (env, mut daemon) = own_server("ut-alone", true, &[]);
+    std::thread::sleep(Duration::from_millis(1500));
+    assert!(daemon.0.try_wait().unwrap().is_none() && own_folder(&env).join("untouched").exists(), "no session ever left it: {}", own_log(&env));
+    stop_and_wait(&env, &mut daemon);
     let _ = std::fs::remove_dir_all(&env.dir);
 }
 
