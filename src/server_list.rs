@@ -202,6 +202,8 @@ impl ServerList {
         }
         match id {
             NEW => return vec![('n', "new server…", Act::New)],
+            // Greyed in place, not hidden, while nothing is stopped (docs/menus.md rule 8).
+            STOPPED if self.stopped().is_empty() => return Vec::new(),
             STOPPED => return vec![('d', "remove all stopped…", Act::RemoveAll)],
             CONFIG => return vec![('e', "edit config.json…", Act::EditConfig)],
             _ => {}
@@ -356,7 +358,7 @@ impl ServerList {
             if self.connects {
                 rows.push(line(NEW, "  New server…".into(), text));
             }
-            rows.push(line(STOPPED, "  Remove all stopped…".into(), text));
+            rows.push(line(STOPPED, "  Remove all stopped…".into(), if self.stopped().is_empty() { faint } else { text }));
             take(&mut rows, "p:");
         }
         for (r, m) in &self.machines {
@@ -402,6 +404,7 @@ impl ServerList {
         match id {
             MAC => out.push("Every server of this Mac, the one this session shows first.".into()),
             NEW => out.push("Makes a new server and moves this session to it; this server keeps running.".into()),
+            STOPPED if self.stopped().is_empty() => out.push("No server of this Mac is stopped, so there is nothing to take away.".into()),
             STOPPED => {
                 let n = self.stopped().len();
                 out.push(format!("Removes every stopped server ({n}): {} go; {}.", crate::servers::GOES, crate::servers::STAYS));
@@ -566,6 +569,10 @@ pub(crate) mod tests {
         assert!(offered(&other, "p:4242").is_empty(), "another home's server is never stopped from here");
         assert_eq!(offered(&w, "new"), [New]);
         assert_eq!(offered(&w, "stopped"), [RemoveAll]);
+        let mut none = fixture(true);
+        none.set(vec![server("1", "main", true, None)], Vec::new());
+        assert!(offered(&none, "stopped").is_empty(), "nothing stopped: greyed, no action");
+        assert!(none.details("stopped")[0].starts_with("No server of this Mac is stopped"));
         assert_eq!(offered(&w, "m:studio"), [Toggle]);
         assert_eq!(offered(&w, "config"), [EditConfig]);
         let mut legacy = fixture(true);
