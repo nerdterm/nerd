@@ -1090,7 +1090,7 @@ mod tests {
             };
             app.caps = ClientCaps { connects: true, ..Default::default() };
             let (body, cmd) = copied(app.open_server("2", Some(false), false));
-            assert!(body.contains("older than the server") && cmd == "nerd --resume 2", "{body}");
+            assert!(body.contains("started for a test") && cmd == "nerd --resume 2", "under NERD_STATE_DIR: {body}");
             assert!(app.to_client.is_empty(), "a client without switches gets no marker");
 
             app.caps = ClientCaps { connects: true, switches: true, ..Default::default() };

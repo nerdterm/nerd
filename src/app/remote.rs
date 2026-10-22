@@ -150,9 +150,9 @@ impl App {
     /// New server…: a new folder, marked as untouched, opened in this session's place as any other server is.
     fn new_server(&mut self, w: crate::server_list::ServerList) -> Overlay {
         if !self.caps.connects || !self.caps.switches {
-            let body = "This session cannot move to another server: its nerd is older than the server, or it was started for a test server. Run `nerd --new` in a terminal; the button copies it.";
+            let (body, cmd) = stays_here(!crate::client::can_switch(), "nerd --new");
             let ask = crate::menu::Confirm::new("New server", body).labels(" [Enter] copy the command ", " [Esc] close ");
-            return self.away(w, Overlay::Confirm(ask, Pending::CopyCommand("nerd --new".into())));
+            return self.away(w, Overlay::Confirm(ask, Pending::CopyCommand(cmd)));
         }
         let id = crate::session::new_instance_name();
         let _ = crate::servers::mark_untouched(&id);
@@ -216,7 +216,8 @@ impl App {
         use crate::menu::Confirm;
         let label = printable(&crate::session::instance_label(id));
         let cmd = format!("nerd --resume {label}");
-        let copy = |body: String| Overlay::Confirm(Confirm::new("Open a server", body).labels(" [Enter] copy the command ", " [Esc] close "), Pending::CopyCommand(cmd.clone()));
+        let copy_this = |body: String, cmd: String| Overlay::Confirm(Confirm::new("Open a server", body).labels(" [Enter] copy the command ", " [Esc] close "), Pending::CopyCommand(cmd));
+        let copy = |body: String| copy_this(body, cmd.clone());
         if self.client_inside {
             self.notice = Some(super::mail::INSIDE_REFUSED.into());
             return Overlay::None;
@@ -229,7 +230,8 @@ impl App {
             return Overlay::Confirm(Confirm::new("Open a server", "This session shows nerd on another Mac. Open its servers from a terminal there.").info(), Pending::Dismiss);
         }
         if !self.caps.switches {
-            return copy(format!("This session cannot move to another server: its nerd is older than the server, or it was started for a test server. Run `{cmd}` in a terminal; the button copies it."));
+            let (body, cmd) = stays_here(!crate::client::can_switch(), &cmd);
+            return copy_this(body, cmd);
         }
         if new_window && !self.caps.opens_windows {
             return copy(format!("nerd cannot open a terminal window from here. Run `{cmd}` in a terminal on this Mac; the button copies it."));
@@ -447,4 +449,27 @@ pub struct Opening {
     pub(super) pty: Option<crate::pty::Pty>,
     pub(super) until: Instant,
     pub(super) out: Vec<u8>,
+}
+
+/// Why a session that sent no `switches` stays on this server, and the command to copy instead of `cmd`.
+fn stays_here(test: bool, cmd: &str) -> (String, String) {
+    if test {
+        let body = format!("This server was started for a test (NERD_SOCKET or NERD_STATE_DIR is set), so a session cannot move from it to another server. Run `{cmd}` in a terminal without those variables; the button copies it.");
+        return (body, cmd.into());
+    }
+    let body = "This window was opened before nerd was last updated, so it cannot move to another server. Detach and run `nerd` again in this terminal to open it with the new build; the button copies it.";
+    (body.into(), "nerd".into())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_refused_move_says_whether_the_server_is_a_test_or_the_window_predates_an_update() {
+        let (body, cmd) = super::stays_here(true, "nerd --resume 2");
+        assert!(body.starts_with("This server was started for a test (NERD_SOCKET or NERD_STATE_DIR is set)") && body.contains("`nerd --resume 2`"), "{body}");
+        assert_eq!(cmd, "nerd --resume 2");
+        let (body, cmd) = super::stays_here(false, "nerd --resume 2");
+        assert!(body.starts_with("This window was opened before nerd was last updated") && body.contains("run `nerd` again"), "{body}");
+        assert_eq!(cmd, "nerd", "the old window copies the plain command that reopens it on the new build");
+    }
 }

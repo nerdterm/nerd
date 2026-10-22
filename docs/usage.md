@@ -66,7 +66,7 @@ The right Option key keeps typing the layout's symbols, such as — and €. ner
 | `nerd --remove --stopped` | List every stopped server, ask `y` or `n`, then remove each the same way. Also **Remove all stopped…** in **Servers…** |
 | `nerd --list` | Servers, stopped, running or in a session, with their names, when a session last attached, sandbox and spaces; then any `nerd --daemon` no listed server leads to, as a stray. Also **Servers…** |
 | `nerd --stop [NAME]` | Stop a server, or all of them. Also **Stop this server…**, and **Stop…** in **Servers…**, for a stray too |
-| `nerd --update [NAME]` | Switch running servers to the installed build; panes keep running. Also **Update…**, and **Update…** in **Servers…** |
+| `nerd --update [NAME]` | Switch running servers to the installed build; panes keep running, and each window reopens itself on the new build (one opened with a build older than **Servers…** keeps its build until it is opened again). Also **Update…**, and **Update…** in **Servers…** |
 | `nerd --check-update` | Ask GitHub for the newest release and show its changelog; from a terminal outside nerd's panes, install it after you answer `y`. Also **Check for a new release…** |
 | `nerd --disconnect [NAME]` | End every connection to a server, or to all; programs keep running. Also **Disconnect everyone…** |
 | `nerd --remote M [NAME]` | Open a server on machine `M` from `remotes` in config.json, over ssh. Also **Servers…**: open the machine's section, then **Open** on a server |

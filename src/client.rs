@@ -178,7 +178,7 @@ fn switch_in_place(id: &str, over: bool) -> std::io::Error {
 }
 
 /// Another server of this Mac is reached by the same command line only when no variable names this one.
-fn can_switch() -> bool {
+pub(crate) fn can_switch() -> bool {
     std::env::var_os("NERD_SOCKET").is_none() && std::env::var_os("NERD_STATE_DIR").is_none()
 }
 

@@ -279,7 +279,7 @@ impl ServerList {
         let note = match (self.connects, self.elsewhere) {
             (true, _) => "A server shows one session at a time. Machines in config.json are listed over ssh when you open them.",
             (false, true) => "This session shows nerd on another Mac: these are that Mac's servers. Open them from a terminal there.",
-            (false, false) => "This session's nerd is older than the server: it cannot open servers or list machines. Close it and open nerd again.",
+            (false, false) => "This window was opened before nerd was last updated, so it cannot open servers or list machines. Detach and run `nerd` again in this terminal to open it with the new build.",
         };
         let mut head: Vec<crate::panel::Spans> = wrap(note).into_iter().map(|l| vec![(0, l, muted)]).collect();
         head.push(Vec::new());

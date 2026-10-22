@@ -1410,6 +1410,61 @@ fn a_switch_marker_makes_the_client_server_2_s_in_the_same_terminal_and_process(
     let _ = std::fs::remove_dir_all(&env.dir);
 }
 
+/// After Update… the window that shows server 1 leaves and attaches again as the same process, now the installed
+/// build; the server nothing was done in is not taken for one whose last session left.
+#[test]
+fn after_an_update_a_window_that_switches_reopens_itself_and_the_server_stays() {
+    let (env, mut daemon) = own_server("upd-reopen", true, &[]);
+    let mut tty = nerd_in_tty(&env.dir, &["--resume", "1"], &[]);
+    tty.until("spaces");
+    // A pane still starting would keep the server anyway.
+    tty.press(b"echo up-$((40+2))\r");
+    tty.until("up-42");
+    let pid = tty.child.id();
+    let (ok, out) = nerd_in(&env.dir, &["--update", "1"]);
+    assert!(ok, "{out}");
+    let attached = |log: &str| log.lines().filter(|l| l.contains(" attached: ") && l.contains(&format!("client pid {pid} "))).count();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while attached(&own_log(&env)) < 2 {
+        assert!(Instant::now() < deadline, "the window did not come back: {}", own_log(&env));
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let log = own_log(&env);
+    assert!(log.contains("asked to reopen itself on this build"), "{log}");
+    assert!(log.contains(&format!("client[{pid}] left: switching to server 1\n")), "{log}");
+    assert_eq!(log.matches(&format!("client[{pid}] started in")).count(), 2, "{log}");
+    assert!(log.contains("reopens itself on this build"), "{log}");
+    assert!(daemon.0.try_wait().unwrap().is_none() && !log.contains("discarded: nothing was done"), "{log}");
+    assert!(own_folder(&env).join("untouched").exists(), "the reopen does not make it a server to keep");
+    assert!(tty.child.try_wait().unwrap().is_none());
+    drop(tty);
+    let _ = std::fs::remove_dir_all(&env.dir);
+}
+
+/// A window of a build that cannot switch keeps its socket across Update…, as before.
+#[test]
+fn after_an_update_a_window_that_cannot_switch_is_not_asked_to_reopen() {
+    let (env, _daemon) = own_server("upd-old", false, &[]);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut client = loop {
+        match UnixStream::connect(&env.socket) {
+            Ok(s) => break s,
+            Err(e) => assert!(Instant::now() < deadline, "{e}"),
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let hello = serde_json::json!({"Hello": {"cwd": env.dir, "cols": 80, "rows": 24, "connects": true}});
+    client.write_all(format!("{hello}\n").as_bytes()).unwrap();
+    own_wait(&env, &mut client, "attached: 80x24");
+    ClientMsg::Update.write_to(&mut client).unwrap();
+    let got = read_until(&mut client, b"nerd;switch:", Duration::from_secs(5));
+    let log = own_log(&env);
+    assert!(log.contains("carried over"), "{log}");
+    assert!(!has(&got, b"nerd;switch:") && !log.contains("asked to reopen"), "{log}");
+    stop_own(&env.dir, &["1"]);
+    let _ = std::fs::remove_dir_all(&env.dir);
+}
+
 #[test]
 fn remove_stopped_takes_nothing_on_no() {
     let (env, mut tty) = remove_stopped("rm-no");

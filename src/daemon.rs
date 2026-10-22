@@ -311,6 +311,8 @@ fn serve(started: &mut bool) -> std::io::Result<()> {
     };
 
     let mut first = false;
+    // The carried client's leave to reopen itself is not its last session leaving.
+    let mut refreshing = false;
     if let Some((id, fd, cols, rows, mux)) = handover.as_ref().and_then(|h| h.client) {
         nix::fcntl::fcntl(fd, nix::fcntl::FcntlArg::F_SETFD(nix::fcntl::FdFlag::FD_CLOEXEC))?;
         let stream = unsafe { UnixStream::from_raw_fd(fd) };
@@ -341,6 +343,12 @@ fn serve(started: &mut bool) -> std::io::Result<()> {
         first = true;
         let panes: usize = app.spaces.iter().flat_map(|s| s.tabs.iter()).map(|t| t.panes.len()).sum();
         info(&format!("handover: client {id} carried over, {panes} panes, graphics={}, {peer}", app.graphics));
+        // A window of a build that switches becomes `nerd --resume` of this server again, so it runs the installed build too.
+        if app.caps.connects && app.caps.switches && crate::client::can_switch() {
+            app.to_client.extend(crate::proto::switch_marker(&server, true));
+            refreshing = true;
+            info(&format!("handover: client {id} asked to reopen itself on this build"));
+        }
     }
     drop(handover);
     let exe = std::env::current_exe()?;
@@ -404,6 +412,7 @@ fn serve(started: &mut bool) -> std::io::Result<()> {
                     app.graphics = crate::proto::graphics_or_guess(app.caps.graphics);
                     // A client attached: whatever the offer started, it worked.
                     app.opening = None;
+                    refreshing = false;
                     // mux decides whether nerd offers to open a window elsewhere, so the log has to say it
                     let after = alone_since.take().map(|t| format!(", first window after {}", gap(crate::clients::now().saturating_sub(t)))).unwrap_or_default();
                     // A session from another Mac does not make this the server a bare `nerd` here comes back to,
@@ -518,7 +527,9 @@ fn serve(started: &mut bool) -> std::io::Result<()> {
                         sink.say(crate::proto::BYE);
                     }
                     sink.set(None);
-                    if left && discardable(&mut untouched, &app, &server) {
+                    if std::mem::take(&mut refreshing) {
+                        info(&format!("server {server} not discarded: client {client} reopens itself on this build"));
+                    } else if left && discardable(&mut untouched, &app, &server) {
                         return Ok(DISCARD.into());
                     }
                 }
