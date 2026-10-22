@@ -9,11 +9,14 @@ pull request, `chore(master): release X.Y.Z`. Replace `N` and `X.Y.Z` below with
    gh pr list --state open --search "chore(master): release"
    ```
 
-2. Approve its `pr` check. It waits with `action_required`, because release-please opened the pull request. Open the
-   pull request, and under its checks press the button that approves and runs the waiting workflow:
+2. Approve its `pr` check. It waits with `action_required`, because release-please opened the pull request. Approve
+   and run the newest waiting run from the terminal (the same call as the "Approve and run" button on the pull
+   request's page):
 
    ```sh
-   gh pr view N --web
+   run=$(gh run list --workflow pr --branch release-please--branches--master--components--nerd --limit 1 \
+     --json databaseId,conclusion --jq '.[] | select(.conclusion == "action_required") | .databaseId')
+   gh api -X POST "repos/nerdterm/nerd/actions/runs/${run:?no pr run waits for approval}/approve"
    ```
 
    Then wait until it is green:
