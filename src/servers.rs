@@ -38,6 +38,8 @@ pub struct Stray {
     pub exe: PathBuf,
     /// Where it lives instead, as far as its environment says.
     pub note: String,
+    /// Started under another HOME: some other home's server, never stopped from here.
+    pub other_home: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -322,8 +324,12 @@ fn daemons() -> Vec<(i32, PathBuf, Vec<String>)> {
 /// SIGTERM to stray `pid`, only while it is still a `nerd --daemon` of this user started from `exe`: checked at the
 /// click, since a pid listed a while ago may be another program by now.
 pub fn stop_stray(pid: i32, exe: &Path) -> Result<String, String> {
-    if !daemons().iter().any(|(p, e, _)| *p == pid && e == exe) {
+    let home = std::env::var("HOME").ok();
+    let Some((.., env)) = daemons().into_iter().find(|(p, e, _)| *p == pid && e == exe) else {
         return Err(format!("pid {pid} is no longer a nerd server of yours; nothing was stopped"));
+    };
+    if other_home(&env, home.as_deref()) {
+        return Err(format!("pid {pid} is a server of another home; stop it from a window of that home"));
     }
     nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), nix::sys::signal::Signal::SIGTERM).map_err(|e| format!("pid {pid} was not stopped: {e}"))?;
     crate::log::info(&format!("stray server pid {pid} ({}) sent SIGTERM", exe.display()));
@@ -339,8 +345,14 @@ fn strays(daemons: &[(i32, PathBuf, Vec<String>)], known: &[i32]) -> Vec<Stray> 
             started: crate::transport::start_time(*pid).map(|us| SystemTime::UNIX_EPOCH + Duration::from_micros(us)),
             exe: exe.clone(),
             note: note(env, std::env::var("HOME").ok().as_deref()),
+            other_home: other_home(env, std::env::var("HOME").ok().as_deref()),
         })
         .collect()
+}
+
+/// A daemon whose HOME differs from ours belongs to that home's windows: an agent's test nerd must never stop the owner's.
+fn other_home(env: &[String], home: Option<&str>) -> bool {
+    env.iter().find_map(|e| e.strip_prefix("HOME=")).is_some_and(|h| Some(h) != home)
 }
 
 /// Where a stray lives, from the environment it was started with.
@@ -474,6 +486,7 @@ mod tests {
         assert_eq!(found.iter().map(|s| s.pid).collect::<Vec<_>>(), [11, 12]);
         assert_eq!(found[1].note, "its own socket /tmp/nt/s.sock");
         assert_eq!(note(&["HOME=/other".into()], Some("/h")), "another home /other");
+        assert!(other_home(&["HOME=/other".into()], Some("/h")) && !other_home(&["HOME=/h".into()], Some("/h")) && !other_home(&[], Some("/h")));
         assert_eq!(note(&["HOME=/h".into(), "NERD_STATE_DIR=/tmp/nt".into()], Some("/h")), "its own state folder /tmp/nt");
         assert_eq!(note(&["HOME=/h".into(), "NERD_INSTANCE=7".into()], Some("/h")), "server 7, whose socket is gone");
         assert_eq!(note(&["HOME=/h".into()], Some("/h")), "no server folder leads to it");

@@ -1260,7 +1260,7 @@ mod tests {
             app.caps = crate::proto::ClientCaps { connects: true, switches: true, ..Default::default() };
             app.client_inside = true;
             let w = || crate::server_list::tests::fixture(true);
-            let stray = crate::servers::Stray { pid: 1, started: None, exe: "/x/nerd".into(), note: String::new() };
+            let stray = crate::servers::Stray { pid: 1, started: None, exe: "/x/nerd".into(), note: String::new(), other_home: false };
             for out in [
                 Out::Stop(server("3", "3", true, Some(false))),
                 Out::Update(server("3", "3", true, Some(false))),

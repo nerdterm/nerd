@@ -1129,6 +1129,9 @@ fn stop_own(home: &std::path::Path, ids: &[&str]) {
         }
         let _ = cmd.output();
     }
+    // --stop returns once the socket is gone; the daemon still writes its screen dump after that, and a test
+    // that removes its HOME at once would leave the dump's folder behind in /tmp.
+    std::thread::sleep(Duration::from_millis(300));
 }
 
 fn instance(env: &Env, id: &str) -> PathBuf {

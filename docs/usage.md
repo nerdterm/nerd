@@ -59,7 +59,7 @@ The right Option key keeps typing the layout's symbols, such as — and €. ner
 | Command | What it does |
 |---|---|
 | `nerd` | Reopen the server a session on this Mac attached to last. When another session shows it, nerd asks first: **take it over**, **new server** or **cancel**. With no such server, or from inside a pane, it starts a new one |
-| `nerd --new` | Make a new server, with its own desktop, in the current folder. Also **New server…** in **Servers…**, which moves the session to it |
+| `nerd --new` | Make a new server, with its own desktop, in the current folder. Also **New server…** in **Servers…**, which moves the session to it. A new server in which nothing was done (one pane, no split, tab, name, isolation or agent) is not kept when its session leaves, unless a program still runs in its pane: a prompt helper the shell keeps running (gitstatusd, direnv) counts as one |
 | `nerd --resume [NAME]` | Return to a server by name or number; by default the one a session on this Mac attached to last. Also **Open** in **Servers…** |
 | `nerd --rename N [NAME]` | Name a server, or clear its name. Also **Rename this server…**, and **Rename…** in **Servers…** |
 | `nerd --remove NAME` | Remove a stopped server: its layout, pane text, messages, routes, logs and saved agent session ids. config.json, plugins and the agents' own sessions stay. A running server, the legacy one and the server a pane belongs to are refused, and so is the command from inside a pane. Also **Remove…** in **Servers…** |

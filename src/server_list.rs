@@ -72,6 +72,8 @@ pub struct ServerList {
     /// None for a session that cannot open servers or list machines: one from another Mac, or an older client.
     pub machines: Vec<(RemoteEntry, Machine)>,
     connects: bool,
+    switches: bool,
+    windows: bool,
     /// From another Mac, as opposed to an older client.
     elsewhere: bool,
     view: crate::panel::View,
@@ -147,7 +149,13 @@ impl ServerList {
         let mut view = crate::panel::View::new(ROWS, false);
         view.open.insert(MAC.into());
         let machines = if connects { machines.into_iter().map(|m| (m, Machine::Closed)).collect() } else { Vec::new() };
-        Self { own, servers: None, machines, connects, elsewhere, view }
+        Self { own, servers: None, machines, connects, elsewhere, view, switches: true, windows: true }
+    }
+
+    /// What this session can do at once; without it an open asks or gives the command first, so its label gets "…".
+    pub fn caps(mut self, switches: bool, windows: bool) -> Self {
+        (self.switches, self.windows) = (switches, windows);
+        self
     }
 
     /// The servers as they answered; the chosen row stays.
@@ -201,8 +209,8 @@ impl ServerList {
         if id.starts_with("m:") {
             return vec![('\n', open(self.view.open.contains(id)), Act::Toggle)];
         }
-        if id.starts_with("p:") {
-            return vec![('s', "stop…", Act::Stop)];
+        if let Some(pid) = id.strip_prefix("p:") {
+            return if self.stray(pid).is_some_and(|s| s.other_home) { Vec::new() } else { vec![('s', "stop…", Act::Stop)] };
         }
         if id.starts_with("r:") {
             return vec![('o', "open", Act::Open)];
@@ -210,9 +218,10 @@ impl ServerList {
         let Some(s) = id.strip_prefix("s:").and_then(|i| self.server(i)) else { return Vec::new() };
         let mut out = Vec::new();
         if s.id != self.own && self.connects {
-            out.push(('o', "open", Act::Open));
+            let free = s.shown == Some(false) || !s.running;
+            out.push(('o', if free && self.switches { "open" } else { "open…" }, Act::Open));
             if s.running {
-                out.push(('w', "open in a new window", Act::OpenNew));
+                out.push(('w', if free && self.windows { "open in a new window" } else { "open in a new window…" }, Act::OpenNew));
             }
         }
         // The legacy server has no folder of its own to name, and none to remove.
@@ -526,7 +535,7 @@ pub(crate) mod tests {
     pub(crate) fn fixture(connects: bool) -> ServerList {
         let studio = RemoteEntry { name: "studio".into(), host: "me@studio.local".into() };
         let mut w = ServerList::new("1".into(), vec![studio], connects, !connects);
-        let stray = Stray { pid: 4242, started: Some(SystemTime::now() - Duration::from_secs(7200)), exe: "/Users/me/.local/bin/nerd".into(), note: "another home /tmp/nt".into() };
+        let stray = Stray { pid: 4242, started: Some(SystemTime::now() - Duration::from_secs(7200)), exe: "/Users/me/.local/bin/nerd".into(), note: "no server folder leads to it".into(), other_home: false };
         w.set(vec![server("4", "old", false, Some(false)), server("2", "work", true, Some(true)), server("1", "main", true, None), server("3", "3", true, Some(false))], vec![stray]);
         w
     }
@@ -550,6 +559,11 @@ pub(crate) mod tests {
         assert_eq!(offered(&w, "s:3"), [Open, OpenNew, Rename, Update, Stop], "running");
         assert_eq!(offered(&w, "s:4"), [Open, Rename, Remove], "stopped");
         assert_eq!(offered(&w, "p:4242"), [Stop], "stray");
+        let mut other = fixture(true);
+        let (list, mut strays) = other.servers.clone().unwrap();
+        strays[0].other_home = true;
+        other.set(list, strays);
+        assert!(offered(&other, "p:4242").is_empty(), "another home's server is never stopped from here");
         assert_eq!(offered(&w, "new"), [New]);
         assert_eq!(offered(&w, "stopped"), [RemoveAll]);
         assert_eq!(offered(&w, "m:studio"), [Toggle]);

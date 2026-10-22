@@ -6,7 +6,7 @@ impl App {
         self.dirty = true;
         let own = crate::session::instance_name();
         self.servers.ask(crate::server_list::Job::List(own.clone()));
-        Overlay::Servers(crate::server_list::ServerList::new(own, self.cfg.remote_entries(), self.caps.connects, self.caps.bye))
+        Overlay::Servers(crate::server_list::ServerList::new(own, self.cfg.remote_entries(), self.caps.connects, self.caps.bye).caps(self.caps.switches, self.caps.opens_windows))
     }
 
     /// The open Servers window, or the one waiting under a dialog it opened.
