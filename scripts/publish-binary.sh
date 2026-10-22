@@ -8,7 +8,7 @@ git fetch -q --tags origin
 # A draft release has no git tag until it is published: build its target commit.
 ref=$tag
 if ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
-    ref=$(gh release view "$tag" --json targetCommitish -q .targetCommitish)
+    ref=$(gh release view "$tag" --repo nerdterm/nerd --json targetCommitish -q .targetCommitish)
     git fetch -q origin "$ref"
 fi
 # Under target/, not the temp folders: the isolation tests need a checkout a This-folder-only pane cannot write.
@@ -32,9 +32,9 @@ name="nerd-$tag-macos-arm64.tar.gz"
 tar -czf "$work/$name" -C "$work/target/release" nerd
 # Signed with the release key, then installed by this tag's own install.sh into a scratch folder: a release its users would refuse never leaves.
 sh scripts/sign-release.sh "$work/$name" "$work/src/install.sh"
-gh release upload "$tag" "$work/$name" "$work/$name.sha256" "$work/$name.sha256.sig" --clobber
+gh release upload "$tag" --repo nerdterm/nerd "$work/$name" "$work/$name.sha256" "$work/$name.sha256.sig" --clobber
 # The bot leaves the release as a draft; this asset is what publishes it.
-gh release edit "$tag" --draft=false
+gh release edit "$tag" --repo nerdterm/nerd --draft=false
 git worktree remove --force "$work/src"
 echo "attached $name to $tag and published it"
 # nerdterm.dev is built from the latest release: rebuild it now rather than at the next daily run.

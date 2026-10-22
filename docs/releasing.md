@@ -66,8 +66,8 @@ the maintainer's Mac, at the tag.
 
 Releases are signed with an ECDSA P-256 key kept off GitHub. install.sh carries the public halves of it and of a
 backup key between `# release keys begin` and `# release keys end`. `scripts/install.test.sh` checks that the block
-holds two P-256 keys. The nerdterm/nerd-plugins workflows that run a release are to pin the same two once 0.15.0 is
-out (nerdterm/nerd-plugins#23); until then they check only its checksum.
+holds two P-256 keys. nerdterm/nerd-plugins pins the same two in `.github/nerd-release-keys.pem`, and its workflows
+install a release only after checking its signature against them.
 
 - **Making them**, once: generate a passphrase of at least 24 random characters in your password manager, then run
   `scripts/release-key.sh` from a plain terminal. It writes `~/.config/nerd-release/release.pem` and `backup.pem`,
