@@ -406,6 +406,14 @@ fn serve(started: &mut bool) -> std::io::Result<()> {
                     app.opening = None;
                     // mux decides whether nerd offers to open a window elsewhere, so the log has to say it
                     let after = alone_since.take().map(|t| format!(", first window after {}", gap(crate::clients::now().saturating_sub(t)))).unwrap_or_default();
+                    // A session from another Mac does not make this the server a bare `nerd` here comes back to,
+                    // and a server one has seen is never discarded. Stamped before the log line, so anything that
+                    // waits for "attached" already finds the stamp.
+                    if app.caps.bye {
+                        keep(&mut untouched, &server, "a session from another Mac attached");
+                    } else if let Err(e) = crate::servers::mark_attached(&server) {
+                        warn(&format!("attached stamp not written: {e}"));
+                    }
                     info(&format!(
                         "client {id} attached: {}x{} from {}, graphics={}, mux={}, bye={}, connects={}, {}{after}",
                         cols,
@@ -419,13 +427,6 @@ fn serve(started: &mut bool) -> std::io::Result<()> {
                     ));
                     if app.spaces.is_empty() {
                         app.open_space(cwd);
-                    }
-                    // A session from another Mac does not make this the server a bare `nerd` here comes back to,
-                    // and a server one has seen is never discarded.
-                    if app.caps.bye {
-                        keep(&mut untouched, &server, "a session from another Mac attached");
-                    } else if let Err(e) = crate::servers::mark_attached(&server) {
-                        warn(&format!("attached stamp not written: {e}"));
                     }
                     // Clamp: 65535x65535 cells would be a four-gigabyte buffer.
                     let (cols, rows) = (cols.clamp(1, MAX_DIM), rows.clamp(1, MAX_DIM));
