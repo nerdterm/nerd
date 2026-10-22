@@ -44,8 +44,35 @@ Every window except a context menu is drawn through `chrome::dialog`, and `chrom
   its rows, the strip, the blank row and `[Esc] close`. At most the screen less 1/16 at each side and 1/10 above
   and below; a longer list scrolls. It is centred.
 - A window with a search or a filter is sized from its whole content, so it does not move while typing.
-- The key strip is broken between keys into lines that fit the width (`chrome::hint`).
+- The key strip is broken between keys into lines that fit the width (`chrome::hint`). A row of buttons wider than
+  the window is broken the same way, close on the last line.
 - Section headers are sentence case; a rule between groups is drawn in the border colour.
+
+## Servers
+
+- Main menu, server group: Messages…, Routes map…, Rename this server…, **Servers…**, Session history…, and, inside
+  tmux or screen, Open outside tmux…. **Stop this server…** stays last in the menu, with what destroys.
+- **Servers…** opens the Servers window. A section **this Mac** lists every server of this Mac, the one this session
+  shows first (State `current`), then by when a session last attached: name and number, State (`current`, `running`,
+  `open in another session`, `stopped`), Sessions (0 or 1: a server shows one session at a time), Last used,
+  Sandbox and Folders. Under them **New server…** (a new server, and this session moves to it; this server keeps
+  running), **Remove all stopped…**, and a row per stray: a `nerd --daemon` of yours no listed server leads to.
+  Then a collapsed section per machine in `remotes`: a click opens it and lists its servers over ssh, as
+  `nerd --remote` does; a click closes it. Last, **Edit config.json…**, where machines are added.
+- A click on a row chooses it, and the buttons under the rows act on it; Enter does the first, the letter in a
+  button its own. The current server: **Rename…**, **Update…**, **Stop…** (the same as Rename this server…, Update…
+  and Stop this server…). Another running one: **Open** (this session moves to it), **Open in a new window**,
+  **Rename…**, **Update…**, **Stop…**. A stopped one: **Open** (it starts again), **Rename…**, **Remove…**. A stray:
+  **Stop…**, which checks the pid again before it sends SIGTERM. A server on a machine: **Open**, in a terminal window
+  of its own.
+- Opening a server another session shows asks first: **take it over**. **Remove…** and **Remove all stopped…** say
+  what goes (the layout, pane text, messages, routes, logs and saved agent session ids) and what stays (config.json,
+  plugins and the agents' own sessions); a folder whose server never started goes without asking. Every dialog
+  comes back to the window once answered.
+- A session from another Mac sees only the server's own Mac, with no machines, no New server… and no Open. A session
+  attached from inside a pane only reads: every action but Open on a machine's server is refused with a notice.
+- The server this session shows is named on the top row: after the wordmark over the sidebar, or, with the sidebar
+  collapsed, at the right beside the machine badge, cut short when narrow.
 
 ## Messages, isolation and accounts
 
@@ -102,8 +129,10 @@ Every window except a context menu is drawn through `chrome::dialog`, and `chrom
 
 | Word | Means |
 |---|---|
-| server | a running nerd with its spaces and panes; it has a name and can be updated, stopped and connected to |
-| session | one window's connection to a server (Session history, Detach) |
+| server | a nerd with its spaces and panes, running or stopped; it has a name and can be opened, updated, stopped and removed |
+| session | one window's connection to a server (Session history, Detach); a server shows one at a time |
+| machine | another Mac named in `remotes`, whose servers Servers… lists |
+| stray | a `nerd --daemon` of yours that no listed server leads to |
 | space | a folder with its tabs |
 | tab, pane | as they are |
 | full screen | one thing takes the whole screen: a pane, the file tree, a run |

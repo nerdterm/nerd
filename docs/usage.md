@@ -59,17 +59,18 @@ The right Option key keeps typing the layout's symbols, such as — and €. ner
 | Command | What it does |
 |---|---|
 | `nerd` | Reopen the server a session on this Mac attached to last. When another session shows it, nerd asks first: **take it over**, **new server** or **cancel**. With no such server, or from inside a pane, it starts a new one |
-| `nerd --new` | Start a new server, with its own desktop, in the current folder |
-| `nerd --resume [NAME]` | Return to a server by name or number; by default the one a session on this Mac attached to last |
-| `nerd --rename N [NAME]` | Name a server, or clear its name. Also **Rename this server…** |
-| `nerd --remove NAME` | Remove a stopped server: its layout, pane text, messages, routes, logs and saved agent session ids. config.json, plugins and the agents' own sessions stay. A running server, the legacy one and the server a pane belongs to are refused, and so is the command from inside a pane |
-| `nerd --remove --stopped` | List every stopped server, ask `y` or `n`, then remove each the same way |
-| `nerd --list` | Servers, stopped, running or in a session, with their names, when a session last attached, sandbox and spaces; then any `nerd --daemon` no listed server leads to, as a stray |
-| `nerd --stop [NAME]` | Stop a server, or all of them. Also **Stop this server…** |
-| `nerd --update [NAME]` | Switch running servers to the installed build; panes keep running. Also **Update…** |
+| `nerd --new` | Make a new server, with its own desktop, in the current folder. Also **New server…** in **Servers…**, which moves the session to it |
+| `nerd --resume [NAME]` | Return to a server by name or number; by default the one a session on this Mac attached to last. Also **Open** in **Servers…** |
+| `nerd --rename N [NAME]` | Name a server, or clear its name. Also **Rename this server…**, and **Rename…** in **Servers…** |
+| `nerd --remove NAME` | Remove a stopped server: its layout, pane text, messages, routes, logs and saved agent session ids. config.json, plugins and the agents' own sessions stay. A running server, the legacy one and the server a pane belongs to are refused, and so is the command from inside a pane. Also **Remove…** in **Servers…** |
+| `nerd --remove --stopped` | List every stopped server, ask `y` or `n`, then remove each the same way. Also **Remove all stopped…** in **Servers…** |
+| `nerd --list` | Servers, stopped, running or in a session, with their names, when a session last attached, sandbox and spaces; then any `nerd --daemon` no listed server leads to, as a stray. Also **Servers…** |
+| `nerd --stop [NAME]` | Stop a server, or all of them. Also **Stop this server…**, and **Stop…** in **Servers…**, for a stray too |
+| `nerd --update [NAME]` | Switch running servers to the installed build; panes keep running. Also **Update…**, and **Update…** in **Servers…** |
 | `nerd --check-update` | Ask GitHub for the newest release and show its changelog; from a terminal outside nerd's panes, install it after you answer `y`. Also **Check for a new release…** |
 | `nerd --disconnect [NAME]` | End every connection to a server, or to all; programs keep running. Also **Disconnect everyone…** |
-| `nerd --remote M [NAME]` | Open a server on machine `M` from `remotes` in config.json, over ssh. Also **Connect to another computer…** |
+| `nerd --remote M [NAME]` | Open a server on machine `M` from `remotes` in config.json, over ssh. Also **Servers…**: open the machine's section, then **Open** on a server |
+| `nerd --daemon` | Start a server with no window; nerd does this itself when a window needs one |
 | `nerd --install-hook` | Install the hook into every supported agent found. Also **Settings… → Agent hooks** |
 | `nerd --uninstall-hook` | Take the hook out of every agent |
 | `nerd --install` | Start nerd at login |

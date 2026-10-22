@@ -15,7 +15,7 @@ const ALLOW: &[(&str, &str, &str, &str, &str, &str)] = &[
     // release-check: curl to GitHub's latest release, on your word or daily once you allowed it.
     ("src/release.rs", "curl", "spawn", "curl_exe ()", "release-check", "/usr/bin/curl, https only, no .curlrc and no proxy; its release branch names only that curl"),
     ("src/app/release.rs", "release_exec", "broker-exec", "b --check-update", "release-check", "nerd --check-update --window checks, or installs on the window's click, outside the sandbox"),
-    // ssh: Connect to another computer.
+    // ssh: a machine in Servers…, listed and opened on your click.
     ("src/client.rs", "list_remote", "spawn", "ssh", "ssh", "lists the servers on the host you named"),
     ("src/client.rs", "spawn_relay", "spawn", "ssh", "ssh", "carries the session to the host you named"),
     // plugin-network: a plugin you approved, inside its own sandbox.
