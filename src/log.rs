@@ -15,10 +15,15 @@ pub fn sandbox_path() -> std::path::PathBuf {
 
 /// From the daemon's file, or from its log when a server started by an older build wrote no file.
 pub fn sandbox_status() -> Option<String> {
-    if let Ok(s) = std::fs::read_to_string(sandbox_path()) {
+    sandbox_status_in(&crate::session::state_dir())
+}
+
+/// `sandbox_status` of the server whose folder is `dir`.
+pub fn sandbox_status_in(dir: &std::path::Path) -> Option<String> {
+    if let Ok(s) = std::fs::read_to_string(dir.join("sandbox")) {
         return Some(escape(s.trim()).into_owned());
     }
-    let text = std::fs::read_to_string(crate::session::state_dir().join("daemon.log")).ok()?;
+    let text = std::fs::read_to_string(dir.join("daemon.log")).ok()?;
     text.lines().rev().find_map(|l| parse(l)?.text.strip_prefix("sandbox: ").map(str::to_string))
 }
 

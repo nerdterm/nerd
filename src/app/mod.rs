@@ -1094,7 +1094,7 @@ mod tests {
             assert!(app.notice.take().unwrap().contains("cannot be used"), "a bad entry never reaches the client");
             assert!(app.to_client.is_empty());
 
-            let one = |id: &str| RemoteInstance { id: id.into(), label: id.into(), running: true, spaces: 1 };
+            let one = |id: &str| RemoteInstance { id: id.into(), label: id.into(), running: true, spaces: 1, ..Default::default() };
             app.remote_listed("studio".into(), Ok(vec![one("1")]), true, false);
             assert!(!app.overlay.is_open(), "nobody asked yet");
 
@@ -2714,7 +2714,7 @@ mod tests {
         let Overlay::Picker(p, _) = app.connect_overlay() else { panic!("a picker") };
         assert_eq!(p.title, "Connect to another computer");
         app.remote_ask = Some(("studio".into(), Instant::now() + std::time::Duration::from_secs(9)));
-        app.remote_listed("studio".into(), Ok(vec![crate::proto::RemoteInstance { id: "1".into(), label: "main".into(), running: true, spaces: 1 }]), true, false);
+        app.remote_listed("studio".into(), Ok(vec![crate::proto::RemoteInstance { id: "1".into(), label: "main".into(), running: true, spaces: 1, ..Default::default() }]), true, false);
         let Overlay::Picker(p, _) = &app.overlay else { panic!("the servers on it") };
         assert_eq!(p.title, "Servers on studio");
         app.remote_ask = Some(("studio".into(), Instant::now() + std::time::Duration::from_secs(9)));

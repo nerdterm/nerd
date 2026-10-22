@@ -94,6 +94,8 @@ pub fn run(resume: Option<Option<String>>, from_window: bool) -> std::io::Result
         reattach: None,
         machine: None,
         cell_px: Some(cell),
+        if_free: false,
+        switches: false,
     };
     crate::log::info(&format!("started in {}, mux={mux}", term_program()));
     let result = hello
@@ -102,6 +104,8 @@ pub fn run(resume: Option<Option<String>>, from_window: bool) -> std::io::Result
     drop(tui);
     leave_with(result.as_ref());
     match result? {
+        // Its own kind, so the caller can offer to take the server over or make a new one.
+        Seen { refused: Some(line), .. } if line == crate::proto::TAKEN => Err(std::io::Error::new(std::io::ErrorKind::ResourceBusy, line)),
         Seen { refused: Some(line), .. } => Err(std::io::Error::other(line)),
         _ => Ok(()),
     }
@@ -1029,6 +1033,8 @@ fn attach_remote(
         reattach: Some(format!("nerd --remote {name} {}", inst.id)),
         machine: Some(name.to_string()),
         cell_px: Some(cell),
+        if_free: false,
+        switches: false,
     };
     let Relay { child, mut stdin, mut stdout, stderr } = spawn_relay(ssh, &entry.host, &inst.id)?;
     let _ = hello.write_to(&mut stdin);
@@ -1508,50 +1514,44 @@ pub fn update(name: Option<String>) -> std::io::Result<()> {
 /// `--json`: what `--remote` on another Mac reads; the legacy instance has no id to relay to.
 pub fn status(json: bool) -> std::io::Result<()> {
     crate::session::migrate_legacy();
+    let (servers, strays) = crate::servers::servers(None);
+    let secs = |t: std::time::SystemTime| t.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs());
     if json {
-        let instances = crate::session::instances()
+        let instances = servers
             .into_iter()
-            .map(|id| {
-                // SAFETY: single-threaded; server_alive() and load() read it right after.
-                unsafe { std::env::set_var("NERD_INSTANCE", &id) };
-                crate::proto::RemoteInstance {
-                    label: crate::session::instance_label(&id),
-                    running: server_alive(),
-                    spaces: crate::session::load().map_or(0, |s| s.spaces.len()),
-                    id,
-                }
+            .filter(|s| !s.id.is_empty())
+            .map(|s| crate::proto::RemoteInstance {
+                spaces: s.folders.len(),
+                shown: s.shown,
+                last_used: s.last_used.and_then(secs),
+                folders: s.folders.iter().map(|f| f.to_string_lossy().into_owned()).collect(),
+                id: s.id,
+                label: s.label,
+                running: s.running,
             })
             .collect();
         let listing = crate::proto::Listing { relay: crate::proto::RELAY_VERSION, instances };
         println!("{}", serde_json::to_string(&listing).map_err(std::io::Error::other)?);
         return Ok(());
     }
-    let mut names = crate::session::instances();
-    if legacy_alive() {
-        names.push(String::new());
-    }
-    if names.is_empty() {
+    if servers.is_empty() {
         println!("no servers; run nerd to start one");
-        return Ok(());
     }
     // "work (1)" when a name hides the id; the column fits the longest.
-    let shown = |id: &str| match crate::session::instance_label(id) {
-        label if label == id || id.is_empty() => label,
-        label => format!("{label} ({id})"),
-    };
-    let width = names.iter().map(|n| shown(n).chars().count()).max().unwrap_or(4).max(4);
-    for n in names {
-        unsafe { std::env::set_var("NERD_INSTANCE", &n) };
-        let n = shown(&n);
-        let spaces: Vec<String> = crate::session::load()
-            .map(|s| s.spaces.iter().map(|sp| listed_folder(&sp.cwd)).collect())
-            .unwrap_or_default();
-        println!(
-            "{n:<width$} {:<11} sandbox: {:<40} {}",
-            if server_alive() { "running" } else { "stopped" },
-            crate::log::sandbox_status().unwrap_or_else(|| "unknown".into()),
-            spaces.join(", ")
-        );
+    let shown = |s: &crate::servers::Server| if s.label == s.id || s.id.is_empty() { s.label.clone() } else { format!("{} ({})", s.label, s.id) };
+    let width = servers.iter().map(|s| shown(s).chars().count()).max().unwrap_or(4).max(4);
+    let when = |t: Option<std::time::SystemTime>| t.and_then(secs).map_or("never".into(), |t| crate::log::stamp(t as i64, 0)[..16].replace('T', " "));
+    for s in &servers {
+        let state = match (s.running, s.shown) {
+            (false, _) => "stopped",
+            (true, Some(true)) => "in session",
+            (true, _) => "running",
+        };
+        let folders: Vec<String> = s.folders.iter().map(|f| listed_folder(f)).collect();
+        println!("{:<width$} {state:<11} used {:<16} sandbox: {:<40} {}", shown(s), when(s.last_used), s.sandbox, folders.join(", "));
+    }
+    for s in &strays {
+        println!("stray pid {} started {} {} ({})", s.pid, when(s.started), listed_folder(&s.exe), listed_folder(Path::new(&s.note)));
     }
     Ok(())
 }
@@ -1559,10 +1559,6 @@ pub fn status(json: bool) -> std::io::Result<()> {
 /// A folder name reaches the terminal: controls become escapes, bidi and invisible characters go.
 fn listed_folder(p: &std::path::Path) -> String {
     crate::render::unspoofed(&crate::log::escape(&p.display().to_string()))
-}
-
-pub fn server_alive() -> bool {
-    UnixStream::connect(socket_path()).is_ok()
 }
 
 #[allow(dead_code)]
@@ -1656,7 +1652,7 @@ mod remote_tests {
     use crate::proto::{list_remote_marker, open_remote_marker, stopped_marker, RemoteInstance, ARMED, BYE};
 
     fn inst(id: &str, label: &str, running: bool) -> RemoteInstance {
-        RemoteInstance { id: id.into(), label: label.into(), running, spaces: 1 }
+        RemoteInstance { id: id.into(), label: label.into(), running, spaces: 1, ..Default::default() }
     }
 
     #[test]
@@ -1689,7 +1685,7 @@ mod remote_tests {
         let json = br#"{"relay":1,"instances":[{"id":"1","label":"main","running":true,"spaces":2},
             {"id":"../x","label":"a","running":true},{"id":"-oX","label":"a","running":true},
             {"id":"2","label":"a\u001b]2;x","running":false}]}"#;
-        assert_eq!(parse_listing(json, "studio").unwrap(), vec![RemoteInstance { id: "1".into(), label: "main".into(), running: true, spaces: 2 }]);
+        assert_eq!(parse_listing(json, "studio").unwrap(), vec![RemoteInstance { id: "1".into(), label: "main".into(), running: true, spaces: 2, ..Default::default() }]);
         let old = parse_listing(b"\x1b[1mLast login\x1b[0m\nnerd 0.5\n", "studio").unwrap_err();
         assert_eq!(old, "nerd on studio is older than this one, or its shell startup prints text: [1mLast login[0m");
         assert_eq!(parse_listing(b"", "studio").unwrap_err(), "nerd on studio is too old for --remote; update it there");
@@ -1883,6 +1879,8 @@ mod remote_tests {
             reattach: Some("nerd --remote studio 1".into()),
             machine: Some("studio".into()),
             cell_px: None,
+            if_free: false,
+            switches: false,
         }
     }
 

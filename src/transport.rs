@@ -24,6 +24,8 @@ pub enum Inbound {
         caps: crate::proto::ClientCaps,
         /// The client runs inside one of this server's panes.
         inside: bool,
+        /// Refused when another session shows the server.
+        if_free: bool,
     },
     Event(u64, Event),
     Remote(u64, String, Result<Vec<crate::proto::RemoteInstance>, String>, bool, bool),
@@ -35,6 +37,8 @@ pub enum Inbound {
     Update,
     /// `nerd --disconnect`: the summary goes back on `stream`.
     DisconnectAll { id: u64, stream: UnixStream },
+    /// `Probe`: the answer goes back on `stream`.
+    Probe { stream: UnixStream },
     /// A plugin proved who it is; `id` names this connection.
     PluginUp { name: String, id: u64, stream: UnixStream, events: Vec<String> },
     PluginSaid { name: String, id: u64, pane: usize, state: String },
@@ -333,10 +337,10 @@ pub fn read_client(id: u64, stream: UnixStream, tx: Inbox, greeted: bool, waitin
         }
         match first {
             Ok(Some(hello @ ClientMsg::Hello { .. })) => {
-                let (Some(caps), ClientMsg::Hello { cwd, cols, rows, host, .. }) = (crate::proto::ClientCaps::from_v1_hello(&hello), hello) else { return };
+                let (Some(caps), ClientMsg::Hello { cwd, cols, rows, host, if_free, .. }) = (crate::proto::ClientCaps::from_v1_hello(&hello), hello) else { return };
                 let program = peer_program(&out);
                 let inside = nix::sys::socket::getsockopt(&out, nix::sys::socket::sockopt::LocalPeerPid).is_ok_and(|pid| inside(pid, crate::broker::pid(), parent_pid));
-                let attach = Inbound::Attach { id, stream: out, cwd, cols, rows, host, program, caps, inside };
+                let attach = Inbound::Attach { id, stream: out, cwd, cols, rows, host, program, caps, inside, if_free };
                 if tx.send(attach).is_err() {
                     return;
                 }
@@ -353,6 +357,10 @@ pub fn read_client(id: u64, stream: UnixStream, tx: Inbox, greeted: bool, waitin
             // The stream goes along: the main loop writes the summary and closes it.
             Ok(Some(ClientMsg::DisconnectAll)) => {
                 let _ = tx.send(Inbound::DisconnectAll { id, stream: out });
+                return;
+            }
+            Ok(Some(ClientMsg::Probe)) => {
+                let _ = tx.send(Inbound::Probe { stream: out });
                 return;
             }
             Ok(Some(ClientMsg::Connect { .. })) => {
@@ -411,13 +419,13 @@ pub fn read_client(id: u64, stream: UnixStream, tx: Inbox, greeted: bool, waitin
                 let _ = tx.send(Inbound::Detach(id, format!("{how}; {}", peer.states())));
                 return;
             }
-            Ok(Some(ClientMsg::Hello { .. })) | Ok(Some(ClientMsg::DisconnectAll)) | Ok(Some(ClientMsg::Connect { .. })) | Ok(Some(ClientMsg::ReportState { .. })) => {}
+            Ok(Some(ClientMsg::Hello { .. })) | Ok(Some(ClientMsg::DisconnectAll)) | Ok(Some(ClientMsg::Probe)) | Ok(Some(ClientMsg::Connect { .. })) | Ok(Some(ClientMsg::ReportState { .. })) => {}
         }
     }
 }
 
 /// Re-entered so the client's own ?1049l on exit restores the cursor below the line, not above it.
-fn farewell_text(text: &str) -> String {
+pub(crate) fn farewell_text(text: &str) -> String {
     format!("\x1b[?1049l\r\n{text}\r\n\x1b[?1049h")
 }
 

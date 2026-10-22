@@ -308,6 +308,11 @@ fn is_hop(name: Option<&str>, args: impl FnOnce() -> Option<Vec<String>>) -> boo
 
 /// A process's arguments from the kernel (KERN_PROCARGS2); None for another user's.
 fn args(pid: i32) -> Option<Vec<String>> {
+    procargs(pid).map(|p| p.1)
+}
+
+/// A process's executable, arguments and environment at its exec, from the kernel; None for another user's.
+pub(crate) fn procargs(pid: i32) -> Option<(std::path::PathBuf, Vec<String>, Vec<String>)> {
     use nix::libc::{CTL_KERN, KERN_PROCARGS2, sysctl};
     let mut mib = [CTL_KERN, KERN_PROCARGS2, pid];
     let mut size = 0usize;
@@ -320,10 +325,14 @@ fn args(pid: i32) -> Option<Vec<String>> {
         return None;
     }
     buf.truncate(size);
-    // argc, the executable's path, NUL padding, then argc arguments.
+    // argc, the executable's path, NUL padding, then argc arguments, then the environment.
+    use std::os::unix::ffi::OsStrExt as _;
     let argc = i32::from_ne_bytes(buf[..4].try_into().ok()?).max(0) as usize;
-    let mut words = buf[4..].split(|b| *b == 0).filter(|w| !w.is_empty()).skip(1);
-    Some((0..argc).map_while(|_| words.next()).map(|w| String::from_utf8_lossy(w).into_owned()).collect())
+    let mut words = buf[4..].split(|b| *b == 0).filter(|w| !w.is_empty());
+    let exe = std::path::PathBuf::from(std::ffi::OsStr::from_bytes(words.next()?));
+    let text = |w: &[u8]| String::from_utf8_lossy(w).into_owned();
+    let argv = (0..argc).map_while(|_| words.next()).map(text).collect();
+    Some((exe, argv, words.map(text).collect()))
 }
 
 /// The processes of group `pgid`; `PROC_PGRP_ONLY` from libproc.h, which nix's libc does not name.

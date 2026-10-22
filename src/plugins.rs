@@ -1338,6 +1338,8 @@ mod tests {
                 reattach: None,
                 machine: None,
                 cell_px: None,
+                if_free: false,
+                switches: false,
             },
             ClientMsg::Event(Ev::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE))),
             ClientMsg::Appearance(true),
@@ -1346,6 +1348,7 @@ mod tests {
             ClientMsg::Shutdown,
             ClientMsg::Update,
             ClientMsg::DisconnectAll,
+            ClientMsg::Probe,
             ClientMsg::Remote { name: "m".into(), result: Ok(vec![]), window: true, ssh_failed: false },
             ClientMsg::Connect { protocol: 2, role: "plugin".into(), plugin: Some("p".into()), events: vec![] },
             ClientMsg::ReportState { pane: 1, state: "idle".into() },
@@ -1362,6 +1365,7 @@ mod tests {
                 | ClientMsg::Shutdown
                 | ClientMsg::Update
                 | ClientMsg::DisconnectAll
+                | ClientMsg::Probe
                 | ClientMsg::Remote { .. }
                 | ClientMsg::Connect { .. }
                 | ClientMsg::ReportState { .. } => lines.push(serde_json::to_string(m).unwrap()),
@@ -1371,7 +1375,7 @@ mod tests {
             let got = read_lines(lines);
             (got, std::fs::read_to_string(crate::session::state_dir().join("daemon.log")).unwrap_or_default())
         });
-        assert_eq!(log.matches("plugin p: unrecognized message").count(), 1, "ten of them, one line: {log}");
+        assert_eq!(log.matches("plugin p: unrecognized message").count(), 1, "eleven of them, one line: {log}");
         assert_eq!(got.len(), 1, "only ReportState, which a plugin may send, reached the loop");
         assert!(matches!(&got[0].1, Inbound::PluginSaid { name, id: 7, pane: 1, state } if name == "p" && state == "idle"));
     }

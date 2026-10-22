@@ -375,7 +375,15 @@ fn serve(started: &mut bool) -> std::io::Result<()> {
         let mut redraw = false;
         while let Ok(msg) = rx.try_recv() {
             match msg {
-                Inbound::Attach { id, stream, cwd, cols, rows, host, program, caps, inside } => {
+                Inbound::Attach { id, stream, cwd, cols, rows, host, program, caps, inside, if_free } => {
+                    // Here, not on the reader's thread: two `if_free` attaches cannot both find the server free.
+                    if if_free && sink.attached() && !sink.hung_up() {
+                        info(&format!("client {id} refused: it asked for a free server and client {current} shows this one, {}", Peer::of(&stream)));
+                        let _ = stream.set_write_timeout(Some(Duration::from_secs(1)));
+                        let _ = (&stream).write_all(crate::transport::farewell_text(crate::proto::TAKEN).as_bytes());
+                        let _ = stream.shutdown(std::net::Shutdown::Both);
+                        continue;
+                    }
                     app.client_inside = inside;
                     // A window that died just before this attach is not taken over: its own detach line follows.
                     if sink.hung_up() {
@@ -409,6 +417,12 @@ fn serve(started: &mut bool) -> std::io::Result<()> {
                     ));
                     if app.spaces.is_empty() {
                         app.open_space(cwd);
+                    }
+                    // A session from another Mac does not make this the server a bare `nerd` here comes back to.
+                    if !app.caps.bye
+                        && let Err(e) = crate::servers::mark_attached(&crate::session::instance_name())
+                    {
+                        warn(&format!("attached stamp not written: {e}"));
                     }
                     // Clamp: 65535x65535 cells would be a four-gigabyte buffer.
                     let (cols, rows) = (cols.clamp(1, MAX_DIM), rows.clamp(1, MAX_DIM));
@@ -536,6 +550,14 @@ fn serve(started: &mut bool) -> std::io::Result<()> {
                     let text = if ended.is_empty() { "nobody was connected\n".to_string() } else { ended.join("\n") + "\n" };
                     let _ = stream.write_all(text.as_bytes());
                     redraw = true;
+                }
+                Inbound::Probe { mut stream } => {
+                    let answer = crate::proto::ProbeAnswer { shown: sink.attached() && !sink.hung_up(), version: crate::version_line(), spaces: app.spaces.len() };
+                    let _ = stream.set_write_timeout(Some(Duration::from_secs(1)));
+                    if let Ok(line) = serde_json::to_string(&answer) {
+                        let _ = stream.write_all(format!("{line}\n").as_bytes());
+                    }
+                    let _ = stream.shutdown(std::net::Shutdown::Both);
                 }
             }
         }

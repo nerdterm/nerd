@@ -21,6 +21,7 @@ enum ClientMsg {
     Shutdown,
     Update,
     DisconnectAll,
+    Probe,
     Connect { protocol: u32, role: String, plugin: Option<String>, events: Vec<String> },
 }
 
@@ -624,7 +625,8 @@ fn a_folder_name_cannot_forge_or_reorder_a_list_line() {
     let (_, list) = nerd_in(&env.dir, &["--list"]);
     assert!(list.contains("sandbox: enabled\\u{1b}[2J\\u{202e}y"), "the folder is listed, escaped, the bidi mark shown: {list:?}");
     assert!(!list.trim_end().chars().any(|c| c == '\u{202E}' || (c.is_control() && c != '\n')), "{list:?}");
-    assert_eq!(list.lines().count(), 1, "{list:?}");
+    // The servers of other homes that run on this Mac (other tests', the person's own) are listed as strays after it.
+    assert_eq!(list.lines().filter(|l| !l.starts_with("stray pid ")).count(), 1, "{list:?}");
     let _ = std::fs::remove_dir_all(&env.dir);
 }
 
@@ -735,6 +737,64 @@ fn only_a_remote_client_hears_the_markers_and_its_way_back() {
     let rest = read_until(&mut remote, b"\x00", Duration::from_secs(10));
     assert!(wait_exit(&mut daemon.0, Duration::from_secs(10)).success());
     assert!(has(&rest, b"\x1b_nerd;stopped:--stop\x1b\\") && !has(&rest, BYE), "{}", String::from_utf8_lossy(&rest));
+    let _ = std::fs::remove_dir_all(&env.dir);
+}
+
+/// `Probe` as `nerd --list` sends it: the one line the server answers before it closes.
+fn probe(env: &Env) -> serde_json::Value {
+    let mut s = UnixStream::connect(&env.socket).unwrap();
+    s.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    ClientMsg::Probe.write_to(&mut s).unwrap();
+    let mut text = String::new();
+    s.read_to_string(&mut text).unwrap();
+    assert_eq!(text.lines().count(), 1, "one line, then EOF: {text:?}");
+    serde_json::from_str(&text).unwrap()
+}
+
+#[test]
+fn an_attach_that_asks_for_a_free_server_is_refused_while_a_session_shows_it() {
+    let env = setup_env("if-free");
+    let stamp = env.dir.join("instances/1/attached");
+    std::fs::create_dir_all(stamp.parent().unwrap()).unwrap();
+    let _daemon = spawn_daemon_in(&env, env!("CARGO_BIN_EXE_nerd").as_ref(), "xterm-256color", true, &[], &[("NERD_INSTANCE", "1".into())]);
+    let p = probe(&env);
+    assert_eq!((&p["shown"], p["version"].as_str().is_some_and(|v| v.starts_with("nerd "))), (&serde_json::json!(false), true), "{p}");
+    assert!(!stamp.exists(), "a start and a probe are not a use");
+
+    let mut first = connect(&env, 80, 24);
+    assert!(wait_for(&mut first, "spaces", Duration::from_secs(5)), "no frame: {}", daemon_log(&env));
+    assert!(stamp.exists(), "an attach from this Mac is stamped");
+    std::fs::remove_file(&stamp).unwrap();
+    let p = probe(&env);
+    assert_eq!((&p["shown"], &p["spaces"]), (&serde_json::json!(true), &serde_json::json!(1)), "{p}");
+
+    let mut second = UnixStream::connect(&env.socket).unwrap();
+    let hello = serde_json::json!({"Hello": {"cwd": env.dir, "cols": 80, "rows": 24, "if_free": true}});
+    second.write_all(format!("{hello}\n").as_bytes()).unwrap();
+    let rest = read_until(&mut second, b"\x00", Duration::from_secs(5));
+    assert_eq!(String::from_utf8_lossy(&rest), "\x1b[?1049l\r\nrefused: this server is open in another session\r\n\x1b[?1049h", "the refusal and EOF, no frame");
+    assert!(daemon_log(&env).contains("refused: it asked for a free server and client "), "{}", daemon_log(&env));
+    assert!(!stamp.exists(), "a refused attach is not a use");
+
+    // The first session stays: it still types and sees what it typed.
+    for c in "echo still-here".chars() {
+        send_key(&mut first, c);
+    }
+    send_enter(&mut first);
+    assert!(wait_for(&mut first, "still-here", Duration::from_secs(5)), "the first session lost the screen: {}", daemon_log(&env));
+    assert_eq!(probe(&env)["shown"], true);
+
+    // Once the session leaves, the same ask attaches.
+    ClientMsg::Detach.write_to(&mut first).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while probe(&env)["shown"] == true {
+        assert!(Instant::now() < deadline, "still shown after a detach: {}", daemon_log(&env));
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let mut third = UnixStream::connect(&env.socket).unwrap();
+    third.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    third.write_all(format!("{hello}\n").as_bytes()).unwrap();
+    assert!(wait_for(&mut third, "spaces", Duration::from_secs(5)), "a free server refused: {}", daemon_log(&env));
     let _ = std::fs::remove_dir_all(&env.dir);
 }
 

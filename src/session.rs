@@ -296,6 +296,8 @@ pub fn instances() -> Vec<String> {
             rd.flatten()
                 .filter(|e| e.path().is_dir())
                 .map(|e| e.file_name().to_string_lossy().into_owned())
+                // `.gone-N` is a server being removed.
+                .filter(|n| !n.starts_with('.'))
                 .collect()
         })
         .unwrap_or_default();
@@ -303,20 +305,24 @@ pub fn instances() -> Vec<String> {
     names
 }
 
-/// Name for a fresh instance: one past the largest number in use.
+/// Name for a fresh instance, one past the largest number in use, reserved by making its folder:
+/// two `nerd` started at once get two numbers.
 pub fn new_instance_name() -> String {
-    (instances().iter().filter_map(|n| n.parse::<u32>().ok()).max().unwrap_or(0) + 1).to_string()
+    use std::os::unix::fs::DirBuilderExt as _;
+    let mut n = instances().iter().filter_map(|n| n.parse::<u32>().ok()).max().unwrap_or(0) + 1;
+    let _ = std::fs::create_dir_all(instances_dir());
+    loop {
+        match std::fs::DirBuilder::new().mode(0o700).create(instances_dir().join(n.to_string())) {
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => n += 1,
+            // Unreserved, as before: the server makes the folder when it starts.
+            _ => return n.to_string(),
+        }
+    }
 }
 
-/// The instance touched last, by snapshot time: what `--resume` without a name means.
+/// The instance a session attached to last: what `--resume` without a name means.
 pub fn last_instance() -> Option<String> {
-    instances()
-        .into_iter()
-        .max_by_key(|n| {
-            std::fs::metadata(instances_dir().join(n).join("session.json"))
-                .and_then(|m| m.modified())
-                .ok()
-        })
+    instances().into_iter().filter_map(|n| Some((crate::servers::used(&n)?, n))).max().map(|(_, n)| n)
 }
 
 /// One-time migration: pre-instance layout in the state root becomes instance 1.
@@ -410,7 +416,7 @@ fn backup_path() -> PathBuf {
     state_dir().join("session.json.bak")
 }
 
-fn read_snapshot(path: &Path) -> Option<WorkspaceSnapshot> {
+pub(crate) fn read_snapshot(path: &Path) -> Option<WorkspaceSnapshot> {
     let bytes = std::fs::read(path).ok()?;
     serde_json::from_slice(&bytes).ok()
 }
@@ -418,6 +424,11 @@ fn read_snapshot(path: &Path) -> Option<WorkspaceSnapshot> {
 /// Loads the snapshot, falling back to .bak if missing or unparsable.
 pub fn load() -> Option<WorkspaceSnapshot> {
     read_snapshot(&state_path()).or_else(|| read_snapshot(&backup_path()))
+}
+
+/// `load` of the server whose folder is `dir`.
+pub fn load_from(dir: &Path) -> Option<WorkspaceSnapshot> {
+    read_snapshot(&dir.join("session.json")).or_else(|| read_snapshot(&dir.join("session.json.bak")))
 }
 
 /// Folders of every space in every instance's saved session, plus the state root's own (the
@@ -429,8 +440,7 @@ pub fn recent_spaces() -> Vec<PathBuf> {
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
     for dir in dirs {
-        let snap = read_snapshot(&dir.join("session.json")).or_else(|| read_snapshot(&dir.join("session.json.bak")));
-        for sp in snap.into_iter().flat_map(|s| s.spaces) {
+        for sp in load_from(&dir).into_iter().flat_map(|s| s.spaces) {
             if sp.cwd.is_dir() && seen.insert(sp.cwd.clone()) {
                 out.push(sp.cwd);
             }
@@ -546,6 +556,7 @@ pub(crate) mod tests {
                 reattach: Some("nerd --remote studio 1".into()),
                 machine: Some("studio".into()),
                 cell_px: 0,
+                switches: false,
             },
             clients: Vec::new(),
             next_id: 1,
@@ -979,6 +990,7 @@ pub(crate) mod tests {
                 reattach: Some("nerd --remote studio 1".into()),
                 machine: Some("studio".into()),
                 cell_px: 35,
+                switches: true,
             },
             clients: vec![record],
             next_id: 3,
@@ -1026,6 +1038,7 @@ pub(crate) mod tests {
         assert!(h.caps.opens_windows);
         assert_eq!(h.caps.cell_px, 35, "the row height survives a handover");
         assert_eq!(h.broker_pid, 4321, "the broker pid survives a handover");
+        assert!(h.caps.switches, "a client that switches servers still does after an update");
     }
 
     #[test]

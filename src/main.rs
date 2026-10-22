@@ -54,6 +54,7 @@ mod sandbox;
 mod search;
 mod select;
 mod session;
+mod servers;
 mod settings;
 mod signals;
 mod sidebar;
