@@ -379,7 +379,7 @@ impl App {
     /// Applies what the workers finished since the last turn; true when something shown changed.
     pub fn take_results(&mut self) -> bool {
         let found: Vec<_> = self.probe.take().flatten().collect();
-        self.apply_foregrounds(found) | self.take_git() | self.take_preview() | self.take_transcript()
+        self.apply_foregrounds(found) | self.take_git() | self.take_preview() | self.take_transcript() | self.take_servers()
     }
 
     /// A read of the open run's transcript; one for a run since closed is dropped.

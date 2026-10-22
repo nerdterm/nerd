@@ -16,21 +16,79 @@ use crate::session::socket_path;
 
 const SPAWN_WAIT: Duration = Duration::from_secs(5);
 
-/// Sets `NERD_INSTANCE` so every state path below, and the daemon we may spawn, resolve to it.
-fn select_instance(resume: Option<Option<String>>) -> std::io::Result<String> {
-    let name = match resume {
-        None => crate::session::new_instance_name(),
+/// Which server a client opens.
+pub enum Open {
+    /// A bare `nerd`: the server a session last attached to, asking first when another session shows it.
+    Last,
+    New,
+    Resume(Option<String>),
+    /// A server by id or name as another session of this Mac opens it: asking first when a session shows it.
+    Free(String),
+}
+
+/// How the Hello asks: refused while another session shows the server; `reopened` has the server say which it is.
+#[derive(Clone, Copy)]
+struct Ask {
+    if_free: bool,
+    reopened: bool,
+}
+
+const PLAIN: Ask = Ask { if_free: false, reopened: false };
+
+/// A new server, marked: without the mark it is only ever kept.
+fn fresh_instance() -> String {
+    let id = crate::session::new_instance_name();
+    let _ = crate::servers::mark_untouched(&id);
+    id
+}
+
+/// Sets `NERD_INSTANCE` so every state path below, and the daemon we may spawn, resolve to it; `None` is a cancel.
+fn select_instance(open: Open) -> std::io::Result<Option<(String, Ask)>> {
+    let (name, ask) = match open {
+        // An agent in a pane would land on the person's own desktop.
+        Open::Last if std::env::var_os("NERD_PANE").is_some() => (fresh_instance(), PLAIN),
+        Open::Last => match crate::session::last_instance() {
+            None => (fresh_instance(), PLAIN),
+            Some(last) => match unless_shown(last, true)? {
+                Some(chosen) => chosen,
+                None => return Ok(None),
+            },
+        },
+        Open::Free(n) => match unless_shown(crate::session::resolve(&n).ok_or_else(|| unknown_instance(&n))?, false)? {
+            Some(chosen) => chosen,
+            None => return Ok(None),
+        },
+        Open::New => (fresh_instance(), PLAIN),
         // By id or by name; an unknown one no longer makes an empty desktop.
-        Some(Some(n)) => crate::session::resolve(&n).ok_or_else(|| unknown_instance(&n))?,
-        Some(None) => crate::session::last_instance()
-            .ok_or_else(|| std::io::Error::other("no servers to resume; run nerd to start one"))?,
+        Open::Resume(Some(n)) => (crate::session::resolve(&n).ok_or_else(|| unknown_instance(&n))?, PLAIN),
+        Open::Resume(None) => (
+            crate::session::last_instance().ok_or_else(|| std::io::Error::other("no servers to resume; run nerd to start one"))?,
+            PLAIN,
+        ),
     };
     // Single-threaded at this point, so the Rust 2024 unsafety of set_var is theoretical.
     unsafe { std::env::set_var("NERD_INSTANCE", &name) };
-    Ok(name)
+    Ok(Some((name, ask)))
 }
 
-pub fn run(resume: Option<Option<String>>, from_window: bool) -> std::io::Result<()> {
+/// Server `id` with `if_free` when no session shows it, else as the question answers; `None` is a cancel.
+fn unless_shown(id: String, reopened: bool) -> std::io::Result<Option<(String, Ask)>> {
+    use crate::servers::Probe;
+    Ok(Some(match crate::servers::probe(&id, crate::servers::PROBE_LIMIT) {
+        // One this client starts is of this build, so it reads `if_free` too.
+        Probe::NotRunning | Probe::Free => (id, Ask { if_free: true, reopened }),
+        // An older server would take `if_free` for a plain attach: asked here instead.
+        Probe::Shown | Probe::Unknown => match ask_taken(&id)? {
+            Taken::Over => (id, Ask { if_free: false, reopened }),
+            Taken::New => (fresh_instance(), PLAIN),
+            Taken::Cancel => return Ok(None),
+        },
+    }))
+}
+
+const CANCELLED: &str = "cancelled: the server is open in another session; nothing was started";
+
+pub fn run(open: Open, from_window: bool) -> std::io::Result<()> {
     // Each way out before the session still leaves its `left:` line.
     let early = |e: std::io::Error| {
         leave_with(Err(&e));
@@ -38,7 +96,7 @@ pub fn run(resume: Option<Option<String>>, from_window: bool) -> std::io::Result
     };
     // A typo in a name says more than a missing terminal; an old single-instance layout is moved first.
     crate::session::migrate_legacy();
-    if let Some(Some(n)) = &resume
+    if let Open::Resume(Some(n)) | Open::Free(n) = &open
         && crate::session::resolve(n).is_none()
     {
         return Err(early(unknown_instance(n)));
@@ -51,22 +109,100 @@ pub fn run(resume: Option<Option<String>>, from_window: bool) -> std::io::Result
     }
     // A failed refresh leaves the old hook working; it is not a reason to refuse to start.
     let _ = crate::hook::refresh();
-    let name = select_instance(resume).map_err(early)?;
+    let Some((name, mut ask)) = select_instance(open).map_err(early)? else {
+        leave(crate::log::Level::Info, CANCELLED);
+        return Ok(());
+    };
     guard();
-    let mut stream = connect_or_spawn().map_err(early)?;
-    let cwd = std::env::current_dir().unwrap_or_default();
-    let (cols, rows) = crossterm::terminal::size().map_err(early)?;
+    loop {
+        let result = attach(&name, ask, from_window);
+        if let Ok(Seen { switch: Some((id, over)), .. }) = &result {
+            return Err(early(switch_in_place(id, *over)));
+        }
+        // A session took the server between the probe and this attach.
+        if let Ok(Seen { refused: Some(line), .. }) = &result
+            && line == crate::proto::TAKEN
+        {
+            match ask_taken(&name).map_err(early)? {
+                Taken::Over => {
+                    ask.if_free = false;
+                    continue;
+                }
+                Taken::New => return Err(early(new_in_place(from_window))),
+                Taken::Cancel => {
+                    leave(crate::log::Level::Info, CANCELLED);
+                    return Ok(());
+                }
+            }
+        }
+        leave_with(result.as_ref());
+        return match result? {
+            Seen { refused: Some(line), .. } => Err(std::io::Error::other(line)),
+            _ => Ok(()),
+        };
+    }
+}
 
-    let tui = Tui::up(crate::config::load_or_init().mouse).map_err(early)?;
+/// `nerd --new` in this process's place: `NERD_INSTANCE` cannot change now that threads run.
+fn new_in_place(from_window: bool) -> std::io::Error {
+    use std::os::unix::process::CommandExt as _;
+    let exe = match std::env::current_exe() {
+        Ok(e) => e,
+        Err(e) => return e,
+    };
+    leave(crate::log::Level::Info, "the server is open in another session; starting a new one");
+    let mut cmd = crate::spawn::cmd(exe);
+    cmd.arg("--new").env_remove("NERD_INSTANCE");
+    if from_window {
+        cmd.arg("--from-window");
+    }
+    cmd.exec()
+}
+
+/// `nerd --resume <id>` in this process's place, as the server asked: the same terminal, the same pid.
+fn switch_in_place(id: &str, over: bool) -> std::io::Error {
+    use std::os::unix::process::CommandExt as _;
+    let exe = match std::env::current_exe() {
+        Ok(e) => e,
+        Err(e) => return e,
+    };
+    leave(crate::log::Level::Info, &format!("switching to server {id}"));
+    let mut cmd = crate::spawn::cmd(exe);
+    cmd.args(["--resume", id, "--from-window"]).env_remove("NERD_INSTANCE");
+    if !over {
+        cmd.arg("--if-free");
+    }
+    let e = cmd.exec();
+    crate::log::error(&format!("switch to server {id} failed: {e}"));
+    e
+}
+
+/// Another server of this Mac is reached by the same command line only when no variable names this one.
+pub(crate) fn can_switch() -> bool {
+    std::env::var_os("NERD_SOCKET").is_none() && std::env::var_os("NERD_STATE_DIR").is_none()
+}
+
+/// One attach to server `name`: the Hello, then the session until it ends.
+fn attach(name: &str, ask: Ask, from_window: bool) -> std::io::Result<Seen> {
+    let mut stream = connect_or_spawn()?;
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let (cols, rows) = crossterm::terminal::size()?;
+
+    let tui = Tui::up(crate::config::load_or_init().mouse)?;
     let mut out = std::io::stdout();
     // tmux/screen swallow Kitty graphics anyway, and turn the query itself into a pane title.
     let mux = in_multiplexer();
     // `tmux` and `ps` are asked with their output captured, so nothing of theirs reaches the screen.
     let terminal = if mux { terminal_app() } else { None };
+    // `ps` up the process tree, while the graphics query waits for its answer.
+    let windows = {
+        let terminal = terminal.clone();
+        std::thread::spawn(move || window_app(&terminal, mux).is_some())
+    };
     // After the alternate screen: a terminal that prints the unknown query leaves it there, not in scrollback.
     let graphics = !mux && query_graphics();
     // After the query: tmux would otherwise leave the query's text as the window name.
-    let _ = out.write_all(format!("\x1b]2;nerd {}\x07", crate::render::unspoofed(&crate::session::instance_label(&name))).as_bytes());
+    let _ = out.write_all(format!("\x1b]2;nerd {}\x07", crate::render::unspoofed(&crate::session::instance_label(name))).as_bytes());
     let _ = out.flush();
 
     let dark = appearance_dark();
@@ -86,7 +222,7 @@ pub fn run(resume: Option<Option<String>>, from_window: bool) -> std::io::Result
         graphics: Some(graphics),
         terminal: terminal.clone(),
         opened_by_nerd: from_window,
-        opens_windows: terminal.is_some(),
+        opens_windows: windows.join().unwrap_or(false),
         dark,
         host: hostname(),
         bye: false,
@@ -94,17 +230,16 @@ pub fn run(resume: Option<Option<String>>, from_window: bool) -> std::io::Result
         reattach: None,
         machine: None,
         cell_px: Some(cell),
+        if_free: ask.if_free,
+        switches: can_switch(),
+        reopened: ask.reopened,
     };
     crate::log::info(&format!("started in {}, mux={mux}", term_program()));
     let result = hello
         .write_to(&mut stream)
         .and_then(|()| session(BufReader::new(stream.try_clone()?), stream, Vec::new(), terminal, mux, dark, &appearance, ssh_path(), true, cell));
     drop(tui);
-    leave_with(result.as_ref());
-    match result? {
-        Seen { refused: Some(line), .. } => Err(std::io::Error::other(line)),
-        _ => Ok(()),
-    }
+    result
 }
 
 fn term_program() -> String {
@@ -480,10 +615,13 @@ struct Seen {
     stopped: Option<String>,
     /// The server's `refused:` line, sent instead of a first frame.
     refused: Option<String>,
+    /// The server of this Mac to become, and whether to take it over; the pump stops at it.
+    switch: Option<(String, bool)>,
 }
 
 /// Copies the stream to `out` until it ends; `first` arrived before the terminal was ready for it.
-fn pump(first: Vec<u8>, mut reader: impl Read, out: &mut impl Write, mut ask: impl FnMut(&Requests)) -> Seen {
+/// `switches`: a `switch` request ends it, once what came before is on the screen.
+fn pump(first: Vec<u8>, mut reader: impl Read, out: &mut impl Write, switches: bool, mut ask: impl FnMut(&Requests)) -> Seen {
     let mut seen = Seen::default();
     let mut carry = Vec::new();
     let mut data = first;
@@ -510,6 +648,12 @@ fn pump(first: Vec<u8>, mut reader: impl Read, out: &mut impl Write, mut ask: im
                 return seen;
             }
             ask(&r);
+            if let Some((id, over)) = r.switch.filter(|_| switches)
+                && let Some(id) = own_server(&id)
+            {
+                seen.switch = Some((id, over));
+                return seen;
+            }
         }
         data = match reader.read(&mut buf) {
             Ok(0) | Err(_) => return seen,
@@ -532,12 +676,13 @@ fn session(
     mut cell: u16,
 ) -> std::io::Result<Seen> {
     let instance = crate::session::instance_name();
+    let switches = connects && can_switch();
     // Answers from ssh threads go out through the one writer the input loop owns.
     let (tx, rx) = std::sync::mpsc::channel::<ClientMsg>();
     let fetched: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, Vec<String>>>> = Default::default();
     let pump = std::thread::Builder::new().name("screen".into()).spawn(move || {
         let mut out = Screen;
-        pump(first, reader, &mut out, |r| {
+        pump(first, reader, &mut out, switches, |r| {
             if r.reload {
                 reload_ghostty();
             }
@@ -552,6 +697,15 @@ fn session(
             }
             for (name, id) in connect {
                 open_remote_window(name, id.as_deref(), &terminal, mux, &fetched);
+            }
+            for (id, over) in r.open_server.iter().filter(|_| switches) {
+                if let (Some(id), Some(app)) = (own_server(id), window_app(&terminal, mux)) {
+                    let mut args = vec!["--resume", id.as_str()];
+                    if !over {
+                        args.push("--if-free");
+                    }
+                    open_window(&app, &args);
+                }
             }
         })
     })?;
@@ -611,6 +765,11 @@ fn session(
 /// A remote client serves no connect requests: that server would reach this Mac's other machines.
 fn connect_asks(r: &Requests, connects: bool) -> (&[String], &[(String, Option<String>)]) {
     if connects { (&r.list, &r.connect) } else { (&[], &[]) }
+}
+
+/// The id of server `query` of this Mac, by id or name; never the legacy one, which has no id to resume.
+fn own_server(query: &str) -> Option<String> {
+    crate::session::resolve(query).filter(|id| crate::session::valid_id(id))
 }
 
 /// The window app this client can open a terminal in: its tmux's, or the one it runs in.
@@ -1029,6 +1188,9 @@ fn attach_remote(
         reattach: Some(format!("nerd --remote {name} {}", inst.id)),
         machine: Some(name.to_string()),
         cell_px: Some(cell),
+        if_free: false,
+        switches: false,
+        reopened: false,
     };
     let Relay { child, mut stdin, mut stdout, stderr } = spawn_relay(ssh, &entry.host, &inst.id)?;
     let _ = hello.write_to(&mut stdin);
@@ -1054,31 +1216,43 @@ fn attach_remote(
     Ok((seen, exit, said))
 }
 
-/// Where the reconnect screen starts, from the top-left corner.
-const RECONNECT_TOP: u16 = 1;
-const RECONNECT_LEFT: u16 = 2;
+/// Where a screen before any session starts, from the top-left corner.
+const SCREEN_TOP: u16 = 1;
+const SCREEN_LEFT: u16 = 2;
 /// Worded and spaced like a dialog's buttons.
 const RECONNECT: &str = " [Enter] reconnect ";
 const CLOSE: &str = " [Esc] close ";
+const TAKE_OVER: &str = " [t] take it over ";
+const NEW_SERVER: &str = " [n] new server ";
+const CANCEL: &str = " [Esc] cancel ";
 
-/// The reconnect screen's lines, then its Reconnect and Close buttons; the lines are cut so the buttons fit in `rows`.
-fn reconnect_layout(name: &str, secs: u64, failed: Option<&str>, rows: u16) -> (Vec<String>, ratatui::layout::Rect, ratatui::layout::Rect) {
-    use ratatui::layout::Rect;
+fn reconnect_lines(name: &str, secs: u64, failed: Option<&str>) -> Vec<String> {
     let mut lines = vec![format!("nerd: the link to {name} dropped {secs} s ago. The panes keep running there.")];
     if let Some(e) = failed {
         lines.push(String::new());
         lines.extend(e.lines().map(printable));
     }
+    lines
+}
+
+/// A screen's lines, cut so the row of buttons under them fits in `rows`, and where each button is.
+fn screen_layout(mut lines: Vec<String>, buttons: &[&str], rows: u16) -> (Vec<String>, Vec<ratatui::layout::Rect>) {
     let room = usize::from(rows.saturating_sub(4)).max(2);
     if lines.len() > room {
         lines.truncate(room - 1);
         lines.push("\u{2026}".into());
     }
-    let row = RECONNECT_TOP + lines.len() as u16 + 1;
-    let width = |s: &str| s.chars().count() as u16;
-    let reconnect = Rect::new(RECONNECT_LEFT, row, width(RECONNECT), 1);
-    let close = Rect::new(reconnect.right() + 1, row, width(CLOSE), 1);
-    (lines, reconnect, close)
+    let row = SCREEN_TOP + lines.len() as u16 + 1;
+    let mut x = SCREEN_LEFT;
+    let rects = buttons
+        .iter()
+        .map(|b| {
+            let r = ratatui::layout::Rect::new(x, row, b.chars().count() as u16, 1);
+            x = r.right() + 1;
+            r
+        })
+        .collect();
+    (lines, rects)
 }
 
 /// ratatui's colour as crossterm writes it; the theme's colours are all RGB.
@@ -1091,61 +1265,90 @@ fn crossterm_color(c: ratatui::style::Color) -> crossterm::style::Color {
 
 /// Waits for Reconnect (click or Enter) or Close (click, Esc or Ctrl-C) on the alternate screen; true is Reconnect.
 fn reconnect_screen(name: &str, since: Instant, failed: Option<&str>, cfg: &crate::config::Config, appearance: &Appearance) -> std::io::Result<bool> {
+    use crossterm::event::KeyCode;
+    let lines = || reconnect_lines(name, since.elapsed().as_secs(), failed);
+    Ok(choose(lines, &[(RECONNECT, KeyCode::Enter), (CLOSE, KeyCode::Esc)], cfg, appearance)? == 0)
+}
+
+#[derive(Clone, Copy)]
+enum Taken {
+    Over,
+    New,
+    Cancel,
+}
+
+/// Asked before a bare `nerd` takes its server from the session that shows it.
+fn ask_taken(id: &str) -> std::io::Result<Taken> {
+    use crossterm::event::KeyCode;
+    let line = format!("Server {} is open in another session.", printable(&crate::session::instance_label(id)));
+    // No poller: this runs before `NERD_INSTANCE` is set, while no thread may run.
+    let appearance = Appearance::new(std::sync::atomic::AtomicU8::new(encode(appearance_dark())));
+    let buttons = [(TAKE_OVER, KeyCode::Char('t')), (NEW_SERVER, KeyCode::Char('n')), (CANCEL, KeyCode::Esc)];
+    let pick = choose(|| vec![line.clone()], &buttons, &crate::config::load_or_init(), &appearance)?;
+    Ok([Taken::Over, Taken::New, Taken::Cancel][pick])
+}
+
+/// A screen before any session: `lines`, then buttons pressed by a click or their key. Control + C presses the
+/// one keyed Esc. Returns the button's index.
+fn choose(lines: impl Fn() -> Vec<String>, buttons: &[(&str, crossterm::event::KeyCode)], cfg: &crate::config::Config, appearance: &Appearance) -> std::io::Result<usize> {
     // The buttons answer the mouse whatever config.json says about the panes.
     let tui = Tui::up(true)?;
     let mut out = std::io::stdout();
-    let chosen = reconnect_wait(&mut out, name, since, failed, cfg, appearance);
+    let chosen = choose_wait(&mut out, lines, buttons, cfg, appearance);
     let _ = execute!(out, crossterm::cursor::Show);
     drop(tui);
-    // Motion reports still queued would otherwise reach ssh's password prompt.
+    // Motion reports still queued would otherwise reach ssh's password prompt or the session.
     let _ = nix::sys::termios::tcflush(std::io::stdin(), nix::sys::termios::FlushArg::TCIFLUSH);
     chosen
 }
 
-fn reconnect_wait(out: &mut std::io::Stdout, name: &str, since: Instant, failed: Option<&str>, cfg: &crate::config::Config, appearance: &Appearance) -> std::io::Result<bool> {
+fn choose_wait(
+    out: &mut std::io::Stdout,
+    lines: impl Fn() -> Vec<String>,
+    buttons: &[(&str, crossterm::event::KeyCode)],
+    cfg: &crate::config::Config,
+    appearance: &Appearance,
+) -> std::io::Result<usize> {
     use crossterm::cursor::{Hide, MoveTo};
     use crossterm::event::{KeyCode, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind};
     use crossterm::style::{Attribute, Print, SetAttribute, SetBackgroundColor, SetForegroundColor};
     use crossterm::terminal::{Clear, ClearType};
+    let labels: Vec<&str> = buttons.iter().map(|b| b.0).collect();
+    let esc = buttons.iter().position(|b| b.1 == KeyCode::Esc);
     let mut shown = None;
     loop {
-        let secs = since.elapsed().as_secs();
         let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
-        let (lines, reconnect, close) = reconnect_layout(name, secs, failed, rows);
-        if shown != Some(secs) {
-            shown = Some(secs);
+        let (text, rects) = screen_layout(lines(), &labels, rows);
+        if shown.as_ref() != Some(&text) {
             let dark = match appearance.load(std::sync::atomic::Ordering::Relaxed) {
                 UNKNOWN => None,
                 v => Some(v == DARK),
             };
             let (theme, _) = crate::render::pick_theme(cfg, dark);
-            let (ground, text) = (crossterm_color(theme.ground), crossterm_color(theme.text));
+            let (ground, fg) = (crossterm_color(theme.ground), crossterm_color(theme.text));
             // The terminal's own background takes nerd's ground, as the server does; tui_down gives it back.
             if let ratatui::style::Color::Rgb(r, g, b) = theme.ground {
                 write!(out, "\x1b]11;#{r:02x}{g:02x}{b:02x}\x07")?;
             }
-            let width = usize::from(cols.saturating_sub(RECONNECT_LEFT));
-            crossterm::queue!(out, Hide, SetBackgroundColor(ground), Clear(ClearType::All), SetForegroundColor(text))?;
-            for (i, line) in lines.iter().enumerate() {
+            let width = usize::from(cols.saturating_sub(SCREEN_LEFT));
+            crossterm::queue!(out, Hide, SetBackgroundColor(ground), Clear(ClearType::All), SetForegroundColor(fg))?;
+            for (i, line) in text.iter().enumerate() {
                 let line: String = line.chars().take(width).collect();
-                crossterm::queue!(out, MoveTo(RECONNECT_LEFT, RECONNECT_TOP + i as u16), Print(line))?;
+                crossterm::queue!(out, MoveTo(SCREEN_LEFT, SCREEN_TOP + i as u16), Print(line))?;
             }
-            // As a dialog draws them: the one Enter picks in the accent bar, the other plain.
-            let key = crossterm_color(theme.border_focus);
-            crossterm::queue!(
-                out,
-                MoveTo(reconnect.x, reconnect.y),
-                SetForegroundColor(ground),
-                SetBackgroundColor(key),
-                SetAttribute(Attribute::Bold),
-                Print(RECONNECT),
-                SetAttribute(Attribute::NormalIntensity),
-                SetBackgroundColor(ground),
-                MoveTo(close.x, close.y),
-                SetForegroundColor(text),
-                Print(CLOSE),
-            )?;
+            // As a dialog draws them: the one Enter picks in the accent bar, the others plain.
+            for ((label, key), r) in buttons.iter().zip(&rects) {
+                crossterm::queue!(out, MoveTo(r.x, r.y))?;
+                if *key == KeyCode::Enter {
+                    let accent = crossterm_color(theme.border_focus);
+                    crossterm::queue!(out, SetForegroundColor(ground), SetBackgroundColor(accent), SetAttribute(Attribute::Bold), Print(label))?;
+                    crossterm::queue!(out, SetAttribute(Attribute::NormalIntensity), SetBackgroundColor(ground), SetForegroundColor(fg))?;
+                } else {
+                    crossterm::queue!(out, Print(label))?;
+                }
+            }
             out.flush()?;
+            shown = Some(text);
         }
         if crate::signals::caught() != 0 {
             return Err(std::io::ErrorKind::Interrupted.into());
@@ -1154,20 +1357,21 @@ fn reconnect_wait(out: &mut std::io::Stdout, name: &str, since: Instant, failed:
             continue;
         }
         match crossterm::event::read()? {
-            Event::Key(k) if k.kind == KeyEventKind::Press => match k.code {
-                KeyCode::Enter => return Ok(true),
-                KeyCode::Esc => return Ok(false),
-                KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => return Ok(false),
-                _ => {}
-            },
+            Event::Key(k) if k.kind == KeyEventKind::Press => {
+                if let Some(i) = buttons.iter().position(|b| b.1 == k.code) {
+                    return Ok(i);
+                }
+                if k.code == KeyCode::Char('c') && k.modifiers.contains(KeyModifiers::CONTROL)
+                    && let Some(i) = esc
+                {
+                    return Ok(i);
+                }
+            }
             // On release: a press would leave its release to reach ssh's prompt in cooked mode.
             Event::Mouse(m) if m.kind == MouseEventKind::Up(MouseButton::Left) => {
                 let at = ratatui::layout::Position::new(m.column, m.row);
-                if reconnect.contains(at) {
-                    return Ok(true);
-                }
-                if close.contains(at) {
-                    return Ok(false);
+                if let Some(i) = rects.iter().position(|r| r.contains(at)) {
+                    return Ok(i);
                 }
             }
             Event::Resize(..) => shown = None,
@@ -1297,14 +1501,17 @@ pub fn rename(instance: Option<String>, name: Option<String>) -> std::io::Result
         return Err(std::io::Error::other("usage: nerd --rename <server> [name]; without a name the name is cleared"));
     };
     let id = crate::session::resolve(&query).ok_or_else(|| unknown_instance(&query))?;
-    let name = name.unwrap_or_default();
-    crate::session::set_name(&id, &name).map_err(std::io::Error::other)?;
-    if name.is_empty() {
-        println!("{id}: name cleared");
-    } else {
-        println!("{id} is now {name}: nerd --resume {name}");
-    }
+    println!("{}", crate::servers::rename(&id, &name.unwrap_or_default()).map_err(std::io::Error::other)?);
     Ok(())
+}
+
+/// Where the command line reaches server `id`: `NERD_SOCKET` or `NERD_STATE_DIR` name one server for every id.
+fn socket_for(id: &str) -> PathBuf {
+    if std::env::var_os("NERD_SOCKET").is_some() || std::env::var_os("NERD_STATE_DIR").is_some() {
+        socket_path()
+    } else {
+        crate::servers::socket_of(id)
+    }
 }
 
 /// Panes close; the snapshot stays, so `--resume` brings the desktop back.
@@ -1326,36 +1533,7 @@ pub fn stop(name: Option<String>) -> std::io::Result<()> {
         return Ok(());
     }
     for n in names {
-        let label = crate::session::instance_label(&n);
-        unsafe { std::env::set_var("NERD_INSTANCE", &n) };
-        let path = socket_path();
-        let n = label;
-        let mut s = match crate::transport::connect_own(&path) {
-            Ok(s) => s,
-            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
-                println!("{n}: {e}");
-                continue;
-            }
-            Err(_) => {
-                println!("{n}: not running");
-                continue;
-            }
-        };
-        let _ = s.set_read_timeout(Some(Duration::from_secs(1)));
-        ClientMsg::Shutdown.write_to(&mut s)?;
-        if let Some(line) = refusal(&s) {
-            return Err(std::io::Error::other(line));
-        }
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while path.exists() && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        if path.exists() {
-            println!("{n}: did not respond within 5 s");
-        } else {
-            let again = if n == "legacy" { "nerd".to_string() } else { format!("nerd --resume {n}") };
-            println!("{n}: stopped, resume with {again}");
-        }
+        println!("{}", crate::servers::stop(&n, &socket_for(&n)).map_err(std::io::Error::other)?);
     }
     Ok(())
 }
@@ -1380,9 +1558,8 @@ pub fn disconnect(name: Option<String>) -> std::io::Result<()> {
     }
     let mut any = false;
     for n in names {
-        unsafe { std::env::set_var("NERD_INSTANCE", &n) };
         let label = crate::session::instance_label(&n);
-        let s = match crate::transport::connect_own(&socket_path()) {
+        let s = match crate::transport::connect_own(&socket_for(&n)) {
             Ok(s) => s,
             Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
                 println!("{label}: {e}");
@@ -1446,7 +1623,7 @@ fn ask_to_disconnect(mut s: UnixStream) -> Result<(Vec<String>, bool), Option<St
 }
 
 /// The server's `refused:` line; an accepted request closes the socket at once, and the read timeout set before the request bounds the wait.
-fn refusal(s: &UnixStream) -> Option<String> {
+pub(crate) fn refusal(s: &UnixStream) -> Option<String> {
     use std::io::BufRead as _;
     let mut line = String::new();
     BufReader::new(s).read_line(&mut line).ok()?;
@@ -1455,12 +1632,7 @@ fn refusal(s: &UnixStream) -> Option<String> {
 
 /// The no-name forms act on every instance: from inside a pane they need a name, or `NERD_SOCKET`/`NERD_STATE_DIR` as the target.
 fn every_instance(flag: &str) -> std::io::Result<()> {
-    let targeted = std::env::var_os("NERD_SOCKET").is_some() || std::env::var_os("NERD_STATE_DIR").is_some();
-    if targeted {
-        return Ok(());
-    }
-    let Some(procs) = crate::detect::procs() else { return Ok(()) };
-    if !crate::detect::under_broker(&procs, std::process::id() as i32) || crate::msock::pane_rights() {
+    if in_pane() != Some(true) {
         return Ok(());
     }
     crate::log::warn(&format!("refused nerd {flag} with no name, inside a pane"));
@@ -1471,9 +1643,73 @@ fn every_instance(flag: &str) -> std::io::Result<()> {
     )))
 }
 
+/// Run below a nerd broker without **Programs in panes may stop or update nerd**, and with no test server named
+/// by `NERD_SOCKET` or `NERD_STATE_DIR`; `None` when the process table cannot be read.
+fn in_pane() -> Option<bool> {
+    if std::env::var_os("NERD_SOCKET").is_some() || std::env::var_os("NERD_STATE_DIR").is_some() {
+        return Some(false);
+    }
+    let procs = crate::detect::procs()?;
+    Some(crate::detect::under_broker(&procs, std::process::id() as i32) && !crate::msock::pane_rights())
+}
+
+/// `--remove N`, or `--remove --stopped` after asking: a stopped server's folder, never one a server runs from.
+pub fn remove(what: Option<String>) -> std::io::Result<()> {
+    use std::io::IsTerminal as _;
+    crate::session::migrate_legacy();
+    // Unknown counts as a pane: what goes does not come back.
+    if in_pane() != Some(false) {
+        crate::log::warn("refused nerd --remove inside a pane");
+        return Err(std::io::Error::other("refused: remove from inside a pane"));
+    }
+    let own = std::env::var("NERD_INSTANCE").ok().filter(|n| !n.is_empty());
+    let Some(what) = what else {
+        return Err(std::io::Error::other("usage: nerd --remove <server>, or nerd --remove --stopped for every stopped one"));
+    };
+    if what != "--stopped" {
+        let id = crate::session::resolve(&what).ok_or_else(|| unknown_instance(&what))?;
+        println!("{}", crate::servers::remove(&id, own.as_deref()).map_err(std::io::Error::other)?);
+        return Ok(());
+    }
+    let (list, _) = crate::servers::servers(own.as_deref());
+    let stopped: Vec<_> = list.into_iter().filter(|s| !s.running && !s.id.is_empty()).collect();
+    if stopped.is_empty() {
+        println!("no stopped servers");
+        return Ok(());
+    }
+    for s in &stopped {
+        let folders: Vec<String> = s.folders.iter().map(|f| listed_folder(f)).collect();
+        println!("{} ({}): {}", s.label, s.id, if folders.is_empty() { "no spaces".into() } else { folders.join(", ") });
+    }
+    let q = format!("Remove these {} stopped servers, each with {}? {}.", stopped.len(), crate::servers::GOES, crate::servers::STAYS);
+    if !std::io::stdin().is_terminal() {
+        println!("{q} No terminal to answer in: nothing removed.");
+        return Ok(());
+    }
+    print!("{q} [y/N] ");
+    let _ = std::io::stdout().flush();
+    if !crate::install::answered_yes(std::io::stdin().lock())? {
+        println!("nothing removed");
+        return Ok(());
+    }
+    let mut kept = 0;
+    for s in stopped {
+        match crate::servers::remove(&s.id, own.as_deref()) {
+            Ok(line) => println!("{line}"),
+            Err(line) => {
+                kept += 1;
+                println!("{line}");
+            }
+        }
+    }
+    if kept > 0 {
+        return Err(std::io::Error::other(format!("{kept} not removed")));
+    }
+    Ok(())
+}
+
 fn legacy_alive() -> bool {
-    unsafe { std::env::set_var("NERD_INSTANCE", "") };
-    UnixStream::connect(socket_path()).is_ok()
+    UnixStream::connect(socket_for("")).is_ok()
 }
 
 /// Panes and screens survive the swap.
@@ -1487,20 +1723,7 @@ pub fn update(name: Option<String>) -> std::io::Result<()> {
         }
     };
     for n in names {
-        unsafe { std::env::set_var("NERD_INSTANCE", &n) };
-        let label = crate::session::instance_label(&n);
-        match crate::transport::connect_own(&socket_path()) {
-            Ok(mut s) => {
-                let _ = s.set_read_timeout(Some(Duration::from_secs(1)));
-                ClientMsg::Update.write_to(&mut s)?;
-                if let Some(line) = refusal(&s) {
-                    return Err(std::io::Error::other(line));
-                }
-                println!("{label}: updating in place");
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => println!("{label}: {e}"),
-            Err(_) => println!("{label}: not running"),
-        }
+        println!("{}", crate::servers::update(&n, &socket_for(&n)).map_err(std::io::Error::other)?);
     }
     Ok(())
 }
@@ -1508,50 +1731,44 @@ pub fn update(name: Option<String>) -> std::io::Result<()> {
 /// `--json`: what `--remote` on another Mac reads; the legacy instance has no id to relay to.
 pub fn status(json: bool) -> std::io::Result<()> {
     crate::session::migrate_legacy();
+    let (servers, strays) = crate::servers::servers(None);
+    let secs = |t: std::time::SystemTime| t.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs());
     if json {
-        let instances = crate::session::instances()
+        let instances = servers
             .into_iter()
-            .map(|id| {
-                // SAFETY: single-threaded; server_alive() and load() read it right after.
-                unsafe { std::env::set_var("NERD_INSTANCE", &id) };
-                crate::proto::RemoteInstance {
-                    label: crate::session::instance_label(&id),
-                    running: server_alive(),
-                    spaces: crate::session::load().map_or(0, |s| s.spaces.len()),
-                    id,
-                }
+            .filter(|s| !s.id.is_empty())
+            .map(|s| crate::proto::RemoteInstance {
+                spaces: s.folders.len(),
+                shown: s.shown,
+                last_used: s.last_used.and_then(secs),
+                folders: s.folders.iter().map(|f| f.to_string_lossy().into_owned()).collect(),
+                id: s.id,
+                label: s.label,
+                running: s.running,
             })
             .collect();
         let listing = crate::proto::Listing { relay: crate::proto::RELAY_VERSION, instances };
         println!("{}", serde_json::to_string(&listing).map_err(std::io::Error::other)?);
         return Ok(());
     }
-    let mut names = crate::session::instances();
-    if legacy_alive() {
-        names.push(String::new());
-    }
-    if names.is_empty() {
+    if servers.is_empty() {
         println!("no servers; run nerd to start one");
-        return Ok(());
     }
     // "work (1)" when a name hides the id; the column fits the longest.
-    let shown = |id: &str| match crate::session::instance_label(id) {
-        label if label == id || id.is_empty() => label,
-        label => format!("{label} ({id})"),
-    };
-    let width = names.iter().map(|n| shown(n).chars().count()).max().unwrap_or(4).max(4);
-    for n in names {
-        unsafe { std::env::set_var("NERD_INSTANCE", &n) };
-        let n = shown(&n);
-        let spaces: Vec<String> = crate::session::load()
-            .map(|s| s.spaces.iter().map(|sp| listed_folder(&sp.cwd)).collect())
-            .unwrap_or_default();
-        println!(
-            "{n:<width$} {:<11} sandbox: {:<40} {}",
-            if server_alive() { "running" } else { "stopped" },
-            crate::log::sandbox_status().unwrap_or_else(|| "unknown".into()),
-            spaces.join(", ")
-        );
+    let shown = |s: &crate::servers::Server| if s.label == s.id || s.id.is_empty() { s.label.clone() } else { format!("{} ({})", s.label, s.id) };
+    let width = servers.iter().map(|s| shown(s).chars().count()).max().unwrap_or(4).max(4);
+    let when = |t: Option<std::time::SystemTime>| t.and_then(secs).map_or("never".into(), |t| crate::log::stamp(t as i64, 0)[..16].replace('T', " "));
+    for s in &servers {
+        let state = match (s.running, s.shown) {
+            (false, _) => "stopped",
+            (true, Some(true)) => "in session",
+            (true, _) => "running",
+        };
+        let folders: Vec<String> = s.folders.iter().map(|f| listed_folder(f)).collect();
+        println!("{:<width$} {state:<11} used {:<16} sandbox: {:<40} {}", shown(s), when(s.last_used), s.sandbox, folders.join(", "));
+    }
+    for s in &strays {
+        println!("stray pid {} started {} {} ({})", s.pid, when(s.started), listed_folder(&s.exe), listed_folder(Path::new(&s.note)));
     }
     Ok(())
 }
@@ -1559,10 +1776,6 @@ pub fn status(json: bool) -> std::io::Result<()> {
 /// A folder name reaches the terminal: controls become escapes, bidi and invisible characters go.
 fn listed_folder(p: &std::path::Path) -> String {
     crate::render::unspoofed(&crate::log::escape(&p.display().to_string()))
-}
-
-pub fn server_alive() -> bool {
-    UnixStream::connect(socket_path()).is_ok()
 }
 
 #[allow(dead_code)]
@@ -1656,7 +1869,7 @@ mod remote_tests {
     use crate::proto::{list_remote_marker, open_remote_marker, stopped_marker, RemoteInstance, ARMED, BYE};
 
     fn inst(id: &str, label: &str, running: bool) -> RemoteInstance {
-        RemoteInstance { id: id.into(), label: label.into(), running, spaces: 1 }
+        RemoteInstance { id: id.into(), label: label.into(), running, spaces: 1, ..Default::default() }
     }
 
     #[test]
@@ -1689,7 +1902,7 @@ mod remote_tests {
         let json = br#"{"relay":1,"instances":[{"id":"1","label":"main","running":true,"spaces":2},
             {"id":"../x","label":"a","running":true},{"id":"-oX","label":"a","running":true},
             {"id":"2","label":"a\u001b]2;x","running":false}]}"#;
-        assert_eq!(parse_listing(json, "studio").unwrap(), vec![RemoteInstance { id: "1".into(), label: "main".into(), running: true, spaces: 2 }]);
+        assert_eq!(parse_listing(json, "studio").unwrap(), vec![RemoteInstance { id: "1".into(), label: "main".into(), running: true, spaces: 2, ..Default::default() }]);
         let old = parse_listing(b"\x1b[1mLast login\x1b[0m\nnerd 0.5\n", "studio").unwrap_err();
         assert_eq!(old, "nerd on studio is older than this one, or its shell startup prints text: [1mLast login[0m");
         assert_eq!(parse_listing(b"", "studio").unwrap_err(), "nerd on studio is too old for --remote; update it there");
@@ -1723,7 +1936,11 @@ mod remote_tests {
     #[test]
     fn the_reconnect_screen_counts_and_its_buttons_are_where_they_are_drawn() {
         use ratatui::layout::Position;
-        let (lines, reconnect, close) = reconnect_layout("studio", 12, None, 24);
+        let layout = |secs, failed, rows| {
+            let (lines, b) = screen_layout(reconnect_lines("studio", secs, failed), &[RECONNECT, CLOSE], rows);
+            (lines, b[0], b[1])
+        };
+        let (lines, reconnect, close) = layout(12, None, 24);
         assert_eq!(lines, ["nerd: the link to studio dropped 12 s ago. The panes keep running there."]);
         assert_eq!((reconnect.y, reconnect.width, close.width), (3, RECONNECT.len() as u16, CLOSE.len() as u16));
         assert_eq!(reconnect.right() + 1, close.x, "one cell between them, as in a dialog");
@@ -1734,18 +1951,27 @@ mod remote_tests {
         assert!(!reconnect.contains(Position::new(reconnect.x, 2)), "the row above is not a button");
 
         // A failure's own words sit above the buttons, which move down under them.
-        let (lines, again, _) = reconnect_layout("studio", 70, Some("ssh to studio failed\n  second"), 24);
+        let (lines, again, _) = layout(70, Some("ssh to studio failed\n  second"), 24);
         assert_eq!(lines[0], "nerd: the link to studio dropped 70 s ago. The panes keep running there.");
         assert_eq!(&lines[1..], ["", "ssh to studio failed", "  second"]);
-        assert_eq!(again.y, RECONNECT_TOP + 4 + 1);
+        assert_eq!(again.y, SCREEN_TOP + 4 + 1);
 
         // A long failure is cut, so the buttons stay on screen.
         let long: String = (0..40).map(|i| format!("line {i}\n")).collect();
         for rows in [6, 12, 24] {
-            let (lines, reconnect, close) = reconnect_layout("studio", 1, Some(&long), rows);
+            let (lines, reconnect, close) = layout(1, Some(&long), rows);
             assert_eq!(lines.last().map(String::as_str), Some("\u{2026}"), "{rows} rows: the cut is shown");
             assert!(reconnect.y < rows && close.y == reconnect.y, "{rows} rows: buttons at {} are on screen", reconnect.y);
         }
+    }
+
+    #[test]
+    fn the_question_s_three_buttons_sit_in_one_row_under_it() {
+        let (lines, b) = screen_layout(vec!["Server work is open in another session.".into()], &[TAKE_OVER, NEW_SERVER, CANCEL], 24);
+        assert_eq!(lines.len(), 1);
+        assert_eq!((b[0].x, b[0].y), (SCREEN_LEFT, SCREEN_TOP + 2));
+        assert!(b.windows(2).all(|w| w[0].right() + 1 == w[1].x && w[0].y == w[1].y), "{b:?}");
+        assert_eq!(b.iter().map(|r| r.width).collect::<Vec<_>>(), [TAKE_OVER, NEW_SERVER, CANCEL].map(|l| l.len() as u16));
     }
 
     /// This test binary hard-linked as `sshd-session` once per build: macOS checks each new path it launches, up to 10 s under load.
@@ -1852,7 +2078,7 @@ mod remote_tests {
             // As the real client: a relay that fails at once may close the pipe before Hello.
             let _ = hello().write_to(&mut stdin);
             let mut screen = Vec::new();
-            let seen = pump(Vec::new(), stdout, &mut screen, |_| {});
+            let seen = pump(Vec::new(), stdout, &mut screen, false, |_| {});
             drop(stdin);
             let (exit, said) = finish(child, stderr);
             (seen, screen, exit, said)
@@ -1883,6 +2109,9 @@ mod remote_tests {
             reattach: Some("nerd --remote studio 1".into()),
             machine: Some("studio".into()),
             cell_px: None,
+            if_free: false,
+            switches: false,
+            reopened: false,
         }
     }
 
@@ -2006,7 +2235,7 @@ mod remote_tests {
         first.truncate(n);
         // What the input loop writes for every event it reads, a click included.
         ClientMsg::Event(Event::Mouse(click)).write_to(&mut stdin).unwrap();
-        let seen = pump(first, stdout, &mut Vec::new(), |_| {});
+        let seen = pump(first, stdout, &mut Vec::new(), false, |_| {});
         drop(stdin);
         let (exit, said) = finish(child, stderr);
         server.join().unwrap();
@@ -2151,10 +2380,27 @@ mod remote_tests {
     #[test]
     fn a_refused_attach_is_kept_off_the_screen_for_the_caller_to_say() {
         let mut screen = Vec::new();
-        let seen = super::pump(b"\x1b[?1049l\r\nrefused: attach from inside a pane\r\n\x1b[?1049h".to_vec(), std::io::empty(), &mut screen, |_| {});
+        let seen = super::pump(b"\x1b[?1049l\r\nrefused: attach from inside a pane\r\n\x1b[?1049h".to_vec(), std::io::empty(), &mut screen, false, |_| {});
         assert_eq!(seen.refused.as_deref(), Some("refused: attach from inside a pane"));
         assert!(screen.is_empty() && !seen.bytes);
-        let seen = super::pump(b"frame refused: nothing".to_vec(), std::io::empty(), &mut Vec::new(), |_| {});
+        let seen = super::pump(b"frame refused: nothing".to_vec(), std::io::empty(), &mut Vec::new(), false, |_| {});
         assert!(seen.refused.is_none());
+    }
+
+    #[test]
+    fn a_switch_to_a_known_server_ends_the_pump_of_a_client_that_switches() {
+        crate::session::tests::with_temp_state_dir("pump-switch", || {
+            std::fs::create_dir_all(crate::session::instances_dir().join("2")).unwrap();
+            let first = [b"frame".to_vec(), crate::proto::switch_marker("2", true)].concat();
+            let mut screen = Vec::new();
+            let seen = super::pump(first.clone(), &b"later"[..], &mut screen, true, |_| {});
+            assert_eq!((seen.switch, screen.as_slice()), (Some(("2".to_string(), true)), b"frame".as_slice()), "nothing is read after it");
+            let mut screen = Vec::new();
+            let seen = super::pump(first, &b"later"[..], &mut screen, false, |_| {});
+            assert_eq!((seen.switch, screen.as_slice()), (None, b"framelater".as_slice()), "a remote session ignores it");
+            for bad in ["", "9", "-x"] {
+                assert_eq!(super::pump(crate::proto::switch_marker(bad, false), std::io::empty(), &mut Vec::new(), true, |_| {}).switch, None, "{bad:?}");
+            }
+        });
     }
 }

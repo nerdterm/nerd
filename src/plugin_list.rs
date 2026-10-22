@@ -76,7 +76,7 @@ pub fn short(source: &str) -> String {
 }
 
 /// How long ago, in the largest whole unit.
-fn ago(t: std::time::SystemTime) -> String {
+pub(crate) fn ago(t: std::time::SystemTime) -> String {
     let s = t.elapsed().map(|d| d.as_secs()).unwrap_or(0);
     match s {
         0..120 => "just now".into(),
@@ -358,7 +358,7 @@ impl PluginList {
             .collect();
         let full = (widest, rows.len());
         let buttons = selected.and_then(|i| rows.get(i)).map(|r| labels(self.actions(&r.id))).unwrap_or_default();
-        crate::panel::Content { head, rows, body, body_h, full, buttons }
+        crate::panel::Content { head, rows, body, body_h, full, buttons, ..Default::default() }
     }
 
     /// What the row with this id offers, first the one Enter does: a key, its words, and the act.

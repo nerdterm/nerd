@@ -43,6 +43,10 @@ pub(crate) fn one_space() -> App {
 
 /// The top row of a whole frame.
 pub(crate) fn top_row(app: &mut App, w: u16) -> String {
+    // A test run from a nerd pane inherits its NERD_INSTANCE: the row names only a server the test sets.
+    if crate::session::tests::INSTANCE.with_borrow(Option::is_none) {
+        crate::session::tests::INSTANCE.set(Some(String::new()));
+    }
     let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, 12)).unwrap();
     term.draw(|f| {
         crate::ui::frame(f, app);
@@ -571,4 +575,71 @@ fn golden_session_history_as_master_drew_it() {
         out += &format!("== {tag} {:?} {:?}\n{}", drawn.rows, drawn.close, dump(&buf, screen));
     }
     crate::hook::tests::golden("ui/sessions.txt", &out);
+}
+
+#[test]
+fn golden_servers_window() {
+    use crate::server_list::{tests::fixture, Machine};
+    let theme = crate::render::Theme::dark();
+    let mut out = String::new();
+    let listed = || -> crate::server_list::ServerList {
+        let mut w = fixture(true);
+        w.choose("m:studio");
+        w.key(crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Enter), Rect::new(0, 0, 120, 40));
+        let lab = crate::proto::RemoteInstance { id: "7".into(), label: "lab".into(), running: true, spaces: 1, shown: Some(false), folders: vec!["/Users/me/lab".into()], ..Default::default() };
+        w.listed("studio", Machine::Listed(vec![lab], true));
+        w.choose("r:studio:7");
+        w
+    };
+    type Case = (&'static str, u16, u16, fn() -> crate::server_list::ServerList);
+    let cases: [Case; 4] = [
+        ("80x24 shown elsewhere", 80, 24, || fixture(true)),
+        ("120x40 shown elsewhere", 120, 40, || fixture(true)),
+        ("120x40 a machine listed", 120, 40, listed),
+        ("80x24 from another Mac", 80, 24, || fixture(false)),
+    ];
+    for (tag, w, h, make) in cases {
+        let screen = Rect::new(0, 0, w, h);
+        let mut win = make();
+        if !tag.contains("listed") {
+            win.choose("s:2");
+        }
+        let mut buf = Buffer::empty(screen);
+        let drawn = win.draw(&mut buf, screen, &theme);
+        out += &format!("== {tag} {:?} {:?}\n{}", drawn.buttons, drawn.close, dump(&buf, screen));
+    }
+    crate::hook::tests::golden("ui/servers.txt", &out);
+}
+
+#[test]
+fn golden_the_current_server_on_the_top_row() {
+    crate::session::tests::with_temp_state_dir("server-badge", || {
+        type Case = (&'static str, u16, &'static str, fn(&mut App));
+        let cases: [Case; 7] = [
+            ("sidebar", 120, "work", |_| {}),
+            ("rail", 120, "work", |a| a.sidebar = false),
+            ("rail and machine", 120, "work", |a| {
+                a.sidebar = false;
+                a.caps.machine = Some("studio".into());
+            }),
+            ("sidebar, a long name cut", 120, "a-server-name-of-thirty-two-ch", |_| {}),
+            ("rail, a long name cut", 120, "a-server-name-of-thirty-two-ch", |a| a.sidebar = false),
+            ("number only", 120, "", |_| {}),
+            ("narrow, the machine kept", 40, "work", |a| {
+                a.sidebar = false;
+                a.caps.machine = Some("a-machine-with-a-long-name".into());
+            }),
+        ];
+        let mut out = String::new();
+        crate::session::tests::INSTANCE.set(Some("7".into()));
+        std::fs::create_dir_all(crate::session::instances_dir().join("7")).unwrap();
+        for (tag, w, name, set) in cases {
+            crate::session::set_name("7", name).unwrap();
+            let mut app = one_space();
+            set(&mut app);
+            out += &format!("== {tag}\n{}", top_row(&mut app, w));
+        }
+        crate::session::tests::INSTANCE.set(None);
+        crate::hook::tests::golden("ui/server-badge.txt", &out);
+    });
 }

@@ -40,7 +40,7 @@ fn the_list_for_another_mac_is_versioned_json() {
     let out = nerd(&home, &["--list", "--json"]);
     assert!(out.status.success());
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(v, serde_json::json!({"relay": 1, "instances": [{"id": "1", "label": "1", "running": false, "spaces": 0}]}));
+    assert_eq!(v, serde_json::json!({"relay": 1, "instances": [{"id": "1", "label": "1", "running": false, "spaces": 0, "shown": false}]}));
 
     let _ = std::fs::remove_dir_all(&home);
 }

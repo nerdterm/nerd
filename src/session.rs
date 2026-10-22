@@ -150,7 +150,7 @@ pub struct WorkspaceSnapshot {
     pub active_space: usize,
 }
 
-/// Each instance gets its own subfolder, so a plain `nerd` in a second window is a second desktop.
+/// Each instance gets its own subfolder, so `nerd --new` in a second window is a second desktop.
 pub fn state_dir() -> PathBuf {
     if std::env::var_os("NERD_STATE_DIR").is_some() {
         return crate::paths::state_root();
@@ -286,7 +286,9 @@ pub fn set_name(id: &str, name: &str) -> Result<(), String> {
     if let Some(other) = instances().into_iter().find(|o| o != id && instance_label(o) == name) {
         return Err(format!("server {other} is already called {name}"));
     }
-    crate::paths::write_private(&name_path(id), "tmp", format!("{name}\n").as_bytes()).map_err(|e| e.to_string())
+    crate::paths::write_private(&name_path(id), "tmp", format!("{name}\n").as_bytes()).map_err(|e| e.to_string())?;
+    crate::servers::clear_untouched(id);
+    Ok(())
 }
 
 /// Known instances, numeric names first in numeric order.
@@ -296,6 +298,8 @@ pub fn instances() -> Vec<String> {
             rd.flatten()
                 .filter(|e| e.path().is_dir())
                 .map(|e| e.file_name().to_string_lossy().into_owned())
+                // `.gone-N` is a server being removed.
+                .filter(|n| !n.starts_with('.'))
                 .collect()
         })
         .unwrap_or_default();
@@ -303,20 +307,24 @@ pub fn instances() -> Vec<String> {
     names
 }
 
-/// Name for a fresh instance: one past the largest number in use.
+/// Name for a fresh instance, one past the largest number in use, reserved by making its folder:
+/// two `nerd` started at once get two numbers.
 pub fn new_instance_name() -> String {
-    (instances().iter().filter_map(|n| n.parse::<u32>().ok()).max().unwrap_or(0) + 1).to_string()
+    use std::os::unix::fs::DirBuilderExt as _;
+    let mut n = instances().iter().filter_map(|n| n.parse::<u32>().ok()).max().unwrap_or(0) + 1;
+    let _ = std::fs::create_dir_all(instances_dir());
+    loop {
+        match std::fs::DirBuilder::new().mode(0o700).create(instances_dir().join(n.to_string())) {
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => n += 1,
+            // Unreserved, as before: the server makes the folder when it starts.
+            _ => return n.to_string(),
+        }
+    }
 }
 
-/// The instance touched last, by snapshot time: what `--resume` without a name means.
+/// The instance a session attached to last: what `--resume` without a name means.
 pub fn last_instance() -> Option<String> {
-    instances()
-        .into_iter()
-        .max_by_key(|n| {
-            std::fs::metadata(instances_dir().join(n).join("session.json"))
-                .and_then(|m| m.modified())
-                .ok()
-        })
+    instances().into_iter().filter_map(|n| Some((crate::servers::used(&n)?, n))).max().map(|(_, n)| n)
 }
 
 /// One-time migration: pre-instance layout in the state root becomes instance 1.
@@ -410,7 +418,7 @@ fn backup_path() -> PathBuf {
     state_dir().join("session.json.bak")
 }
 
-fn read_snapshot(path: &Path) -> Option<WorkspaceSnapshot> {
+pub(crate) fn read_snapshot(path: &Path) -> Option<WorkspaceSnapshot> {
     let bytes = std::fs::read(path).ok()?;
     serde_json::from_slice(&bytes).ok()
 }
@@ -418,6 +426,11 @@ fn read_snapshot(path: &Path) -> Option<WorkspaceSnapshot> {
 /// Loads the snapshot, falling back to .bak if missing or unparsable.
 pub fn load() -> Option<WorkspaceSnapshot> {
     read_snapshot(&state_path()).or_else(|| read_snapshot(&backup_path()))
+}
+
+/// `load` of the server whose folder is `dir`.
+pub fn load_from(dir: &Path) -> Option<WorkspaceSnapshot> {
+    read_snapshot(&dir.join("session.json")).or_else(|| read_snapshot(&dir.join("session.json.bak")))
 }
 
 /// Folders of every space in every instance's saved session, plus the state root's own (the
@@ -429,8 +442,7 @@ pub fn recent_spaces() -> Vec<PathBuf> {
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
     for dir in dirs {
-        let snap = read_snapshot(&dir.join("session.json")).or_else(|| read_snapshot(&dir.join("session.json.bak")));
-        for sp in snap.into_iter().flat_map(|s| s.spaces) {
+        for sp in load_from(&dir).into_iter().flat_map(|s| s.spaces) {
             if sp.cwd.is_dir() && seen.insert(sp.cwd.clone()) {
                 out.push(sp.cwd);
             }
@@ -446,6 +458,8 @@ enum SaveMsg {
     Snapshot(WorkspaceSnapshot),
     /// Write what is owed now, then answer.
     Flush(std::sync::mpsc::Sender<()>),
+    /// Drop what is owed and end: nothing is written after the answer.
+    Stop(std::sync::mpsc::Sender<()>),
 }
 
 /// Hands snapshots to the one thread that writes `session.json`: two writers would share its temp file.
@@ -478,6 +492,14 @@ impl Saver {
         let (ack, done) = std::sync::mpsc::channel();
         self.tx.send(SaveMsg::Flush(ack)).is_ok() && done.recv_timeout(Duration::from_secs(5)).is_ok()
     }
+
+    /// Ends the saver with what it holds unwritten; false while it may still write (stuck for 5 s).
+    pub fn stop(&mut self) -> bool {
+        let (ack, done) = std::sync::mpsc::channel();
+        let _ = self.tx.send(SaveMsg::Stop(ack));
+        // A saver already gone drops the sender: it writes nothing either.
+        !matches!(done.recv_timeout(Duration::from_secs(5)), Err(std::sync::mpsc::RecvTimeoutError::Timeout))
+    }
 }
 
 /// The saver thread: a snapshot the file already holds is not written again, and a failed write is tried again every interval.
@@ -496,6 +518,10 @@ fn save_loop(rx: std::sync::mpsc::Receiver<SaveMsg>) {
                 None
             }
             Ok(SaveMsg::Flush(ack)) => Some(ack),
+            Ok(SaveMsg::Stop(ack)) => {
+                let _ = ack.send(());
+                return;
+            }
             Err(RecvTimeoutError::Timeout) => None,
             Err(RecvTimeoutError::Disconnected) => return,
         };
@@ -546,6 +572,7 @@ pub(crate) mod tests {
                 reattach: Some("nerd --remote studio 1".into()),
                 machine: Some("studio".into()),
                 cell_px: 0,
+                switches: false,
             },
             clients: Vec::new(),
             next_id: 1,
@@ -773,6 +800,24 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_stopped_saver_drops_what_it_owes_and_writes_nothing_more() {
+        with_temp_state_dir("stop", || {
+            let mut saver = Saver::new();
+            std::fs::create_dir_all(state_dir()).unwrap();
+            let blocker = state_path().with_extension("tmp");
+            std::fs::create_dir(&blocker).unwrap();
+            saver.request(sample_snapshot());
+            saver.flush();
+            assert!(saver.stop());
+            std::fs::remove_dir(&blocker).unwrap();
+            saver.request(sample_snapshot());
+            std::thread::sleep(SAVE_INTERVAL * 3);
+            assert!(load().is_none(), "the failed write was owed and is not tried again, nor the next one");
+            assert!(saver.stop(), "a saver already gone writes nothing either");
+        });
+    }
+
+    #[test]
     fn a_save_rotates_the_last_one_into_bak_and_leaves_no_temp_file() {
         use std::os::unix::fs::PermissionsExt;
         let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
@@ -979,6 +1024,7 @@ pub(crate) mod tests {
                 reattach: Some("nerd --remote studio 1".into()),
                 machine: Some("studio".into()),
                 cell_px: 35,
+                switches: true,
             },
             clients: vec![record],
             next_id: 3,
@@ -1026,6 +1072,7 @@ pub(crate) mod tests {
         assert!(h.caps.opens_windows);
         assert_eq!(h.caps.cell_px, 35, "the row height survives a handover");
         assert_eq!(h.broker_pid, 4321, "the broker pid survives a handover");
+        assert!(h.caps.switches, "a client that switches servers still does after an update");
     }
 
     #[test]

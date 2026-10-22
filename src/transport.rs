@@ -24,6 +24,10 @@ pub enum Inbound {
         caps: crate::proto::ClientCaps,
         /// The client runs inside one of this server's panes.
         inside: bool,
+        /// Refused when another session shows the server.
+        if_free: bool,
+        /// Says which server a bare `nerd` came back to.
+        reopened: bool,
     },
     Event(u64, Event),
     Remote(u64, String, Result<Vec<crate::proto::RemoteInstance>, String>, bool, bool),
@@ -35,6 +39,8 @@ pub enum Inbound {
     Update,
     /// `nerd --disconnect`: the summary goes back on `stream`.
     DisconnectAll { id: u64, stream: UnixStream },
+    /// `Probe`: the answer goes back on `stream`.
+    Probe { stream: UnixStream },
     /// A plugin proved who it is; `id` names this connection.
     PluginUp { name: String, id: u64, stream: UnixStream, events: Vec<String> },
     PluginSaid { name: String, id: u64, pane: usize, state: String },
@@ -304,6 +310,9 @@ pub fn allow_from_panes() -> bool {
     crate::policy::current().allow_from_panes
 }
 
+/// How a `Detach` begins when the socket failed rather than closed: the session was lost, it did not leave.
+pub const READ_ERROR: &str = "socket error";
+
 /// `greeted`: the client already said Hello to the previous build (handover). `allow`: `allow_from_panes`.
 pub fn read_client(id: u64, stream: UnixStream, tx: Inbox, greeted: bool, waiting: Waiting, allow: fn() -> bool) {
     let Ok(out) = stream.try_clone() else {
@@ -333,10 +342,10 @@ pub fn read_client(id: u64, stream: UnixStream, tx: Inbox, greeted: bool, waitin
         }
         match first {
             Ok(Some(hello @ ClientMsg::Hello { .. })) => {
-                let (Some(caps), ClientMsg::Hello { cwd, cols, rows, host, .. }) = (crate::proto::ClientCaps::from_v1_hello(&hello), hello) else { return };
+                let (Some(caps), ClientMsg::Hello { cwd, cols, rows, host, if_free, reopened, .. }) = (crate::proto::ClientCaps::from_v1_hello(&hello), hello) else { return };
                 let program = peer_program(&out);
                 let inside = nix::sys::socket::getsockopt(&out, nix::sys::socket::sockopt::LocalPeerPid).is_ok_and(|pid| inside(pid, crate::broker::pid(), parent_pid));
-                let attach = Inbound::Attach { id, stream: out, cwd, cols, rows, host, program, caps, inside };
+                let attach = Inbound::Attach { id, stream: out, cwd, cols, rows, host, program, caps, inside, if_free, reopened };
                 if tx.send(attach).is_err() {
                     return;
                 }
@@ -353,6 +362,10 @@ pub fn read_client(id: u64, stream: UnixStream, tx: Inbox, greeted: bool, waitin
             // The stream goes along: the main loop writes the summary and closes it.
             Ok(Some(ClientMsg::DisconnectAll)) => {
                 let _ = tx.send(Inbound::DisconnectAll { id, stream: out });
+                return;
+            }
+            Ok(Some(ClientMsg::Probe)) => {
+                let _ = tx.send(Inbound::Probe { stream: out });
                 return;
             }
             Ok(Some(ClientMsg::Connect { .. })) => {
@@ -406,18 +419,18 @@ pub fn read_client(id: u64, stream: UnixStream, tx: Inbox, greeted: bool, waitin
                 let how = match end {
                     Ok(Some(_)) => "asked to detach".to_string(),
                     Ok(None) => "socket closed (EOF)".to_string(),
-                    Err(e) => format!("socket error: {e}"),
+                    Err(e) => format!("{READ_ERROR}: {e}"),
                 };
                 let _ = tx.send(Inbound::Detach(id, format!("{how}; {}", peer.states())));
                 return;
             }
-            Ok(Some(ClientMsg::Hello { .. })) | Ok(Some(ClientMsg::DisconnectAll)) | Ok(Some(ClientMsg::Connect { .. })) | Ok(Some(ClientMsg::ReportState { .. })) => {}
+            Ok(Some(ClientMsg::Hello { .. })) | Ok(Some(ClientMsg::DisconnectAll)) | Ok(Some(ClientMsg::Probe)) | Ok(Some(ClientMsg::Connect { .. })) | Ok(Some(ClientMsg::ReportState { .. })) => {}
         }
     }
 }
 
 /// Re-entered so the client's own ?1049l on exit restores the cursor below the line, not above it.
-fn farewell_text(text: &str) -> String {
+pub(crate) fn farewell_text(text: &str) -> String {
     format!("\x1b[?1049l\r\n{text}\r\n\x1b[?1049h")
 }
 

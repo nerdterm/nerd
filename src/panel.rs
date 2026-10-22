@@ -37,6 +37,8 @@ pub struct Content {
     pub full: (usize, usize),
     /// Buttons for the chosen row, `[Key] outcome`, on the bottom line before `[Esc] close`.
     pub buttons: Vec<String>,
+    /// Lines kept for the buttons whatever is selected; more are taken when they do not fit.
+    pub button_lines: usize,
 }
 
 /// Where a frame put its rows, by index into `Content::rows`, and its close button.
@@ -79,6 +81,26 @@ pub fn bottom_w(buttons: &[String]) -> usize {
     buttons.iter().map(|b| crate::slots::cells(b) + 1).sum::<usize>() + crate::chrome::CLOSE.chars().count()
 }
 
+/// The buttons and close in lines of at most `w` cells, one cell apart: each line's indices, close as `buttons.len()`.
+pub fn button_lines(buttons: &[String], w: usize) -> Vec<Vec<usize>> {
+    let cells = |i: usize| buttons.get(i).map_or(crate::chrome::CLOSE.chars().count(), |b| crate::slots::cells(b));
+    let mut lines: Vec<Vec<usize>> = Vec::new();
+    let mut x = 0;
+    for i in 0..=buttons.len() {
+        match lines.last_mut() {
+            Some(line) if x + 1 + cells(i) <= w => {
+                line.push(i);
+                x += 1 + cells(i);
+            }
+            _ => {
+                lines.push(vec![i]);
+                x = cells(i);
+            }
+        }
+    }
+    lines
+}
+
 fn span_w(l: &Spans) -> usize {
     l.iter().map(|(x, t, _)| x + crate::slots::cells(t)).max().unwrap_or(0)
 }
@@ -112,8 +134,10 @@ impl View {
     /// The dialog, fitted to its widest line and the whole content, and how many rows fit in it.
     fn geometry(&self, screen: Rect, c: &Content) -> (Rect, usize) {
         let widest = c.head.iter().chain(c.body.iter()).map(span_w).chain(c.rows.iter().map(|r| span_w(&r.spans))).chain([c.full.0, bottom_w(&c.buttons)]).max().unwrap_or(0) as u16;
-        // head, rows, blank, body
-        let fixed = (c.head.len() + 1 + c.body_h) as u16;
+        let w = crate::chrome::fit(screen, widest, 0).width.saturating_sub(2 * crate::chrome::DIALOG_FRAME.horizontal) as usize;
+        let more = button_lines(&c.buttons, w).len().max(c.button_lines).saturating_sub(1);
+        // head, rows, blank, body, the button lines over close's
+        let fixed = (c.head.len() + 1 + c.body_h + more) as u16;
         let room = crate::chrome::limits(screen).1.saturating_sub(fixed + 4).max(1);
         let visible = (c.rows.len().max(c.full.1).min(self.rows) as u16).min(room);
         (crate::chrome::fit(screen, widest, fixed + visible), visible as usize)
@@ -131,8 +155,9 @@ impl View {
         if w == 0 || content.height == 0 {
             return drawn;
         }
-        // The button sits on the last line; nothing else may reach it.
-        let bottom = content.bottom() - 1;
+        // The buttons sit on the last lines; nothing else may reach them.
+        let lines = button_lines(&c.buttons, w);
+        let bottom = content.bottom().saturating_sub(lines.len().max(c.button_lines).max(1) as u16).max(content.y);
         let put = |buf: &mut Buffer, y: u16, spans: &Spans| {
             for (x, text, style) in spans {
                 if *x < w {
@@ -176,21 +201,24 @@ impl View {
             let at = format!("lines {}–{} of {}", from + 1, from + shown, c.body.len());
             put(buf, y, &vec![(0, at, Style::default().bg(theme.ground).fg(theme.faint))]);
         }
-        // The buttons, then close, centred together: `[Key] outcome` each, one cell apart.
+        // The buttons, then close, centred together line by line: `[Key] outcome` each, one cell apart.
         let text = Style::default().bg(theme.ground).fg(theme.text);
-        let mut x = content.x + (w as u16).saturating_sub(bottom_w(&c.buttons) as u16) / 2;
-        for label in &c.buttons {
-            let len = crate::slots::cells(label) as u16;
-            if x + len > content.right() {
-                break;
+        let label = |i: usize| c.buttons.get(i).map_or(crate::chrome::CLOSE, String::as_str);
+        for (n, line) in lines.iter().enumerate() {
+            let y = content.bottom().saturating_sub((lines.len() - n) as u16);
+            if y < content.y {
+                continue;
             }
-            buf.set_string(x, bottom, label, text);
-            drawn.buttons.push(Rect::new(x, bottom, len, 1));
-            x += len + 1;
+            let lw = line.iter().map(|&i| crate::slots::cells(label(i)) + 1).sum::<usize>().saturating_sub(1);
+            let mut x = content.x + (w as u16).saturating_sub(lw as u16) / 2;
+            for &i in line {
+                let len = (crate::slots::cells(label(i)) as u16).min(content.right().saturating_sub(x));
+                buf.set_stringn(x, y, label(i), len as usize, text);
+                let at = Rect::new(x, y, len, 1);
+                if i == c.buttons.len() { drawn.close = at } else { drawn.buttons.push(at) }
+                x += len + 1;
+            }
         }
-        let len = (crate::chrome::CLOSE.chars().count() as u16).min(content.right().saturating_sub(x));
-        buf.set_stringn(x, bottom, crate::chrome::CLOSE, len as usize, text);
-        drawn.close = Rect::new(x, bottom, len, 1);
         drawn
     }
 
@@ -382,7 +410,7 @@ pub fn content(d: Option<&Data>, v: &View, w: usize, theme: &Theme) -> Content {
         let room = full.saturating_sub(crate::slots::cells(&count) + 1);
         head.push(vec![(0, format!("/{}", v.query), ground.fg(theme.text)), (room + 1, count, ground.fg(theme.faint))]);
     }
-    Content { head, rows, body_h: body.len() + usize::from(!body.is_empty()), body, full: (full, all), buttons: Vec::new() }
+    Content { head, rows, body_h: body.len() + usize::from(!body.is_empty()), body, full: (full, all), ..Default::default() }
 }
 
 /// Items at any depth.

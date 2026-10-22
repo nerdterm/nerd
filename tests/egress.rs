@@ -15,7 +15,7 @@ const ALLOW: &[(&str, &str, &str, &str, &str, &str)] = &[
     // release-check: curl to GitHub's latest release, on your word or daily once you allowed it.
     ("src/release.rs", "curl", "spawn", "curl_exe ()", "release-check", "/usr/bin/curl, https only, no .curlrc and no proxy; its release branch names only that curl"),
     ("src/app/release.rs", "release_exec", "broker-exec", "b --check-update", "release-check", "nerd --check-update --window checks, or installs on the window's click, outside the sandbox"),
-    // ssh: Connect to another computer.
+    // ssh: a machine in Servers…, listed and opened on your click.
     ("src/client.rs", "list_remote", "spawn", "ssh", "ssh", "lists the servers on the host you named"),
     ("src/client.rs", "spawn_relay", "spawn", "ssh", "ssh", "carries the session to the host you named"),
     // plugin-network: a plugin you approved, inside its own sandbox.
@@ -79,6 +79,8 @@ const ALLOW: &[(&str, &str, &str, &str, &str, &str)] = &[
     ("src/presets.rs", "pref_now", "spawn", "\"/usr/bin/defaults\"", "local", "reads iTerm2's margins and default profile before its preset changes them"),
     ("src/presets.rs", "pref_set", "spawn", "\"/usr/bin/defaults\"", "local", "sets iTerm2's margins and default profile for its preset, and puts them back on undo"),
     ("src/client.rs", "connect_or_spawn", "spawn", "exe --daemon", "local", "starts nerd's server"),
+    ("src/client.rs", "new_in_place", "spawn", "exe --new", "local", "becomes nerd --new when a session took the last server first and you chose a new one"),
+    ("src/client.rs", "switch_in_place", "spawn", "exe --resume", "local", "becomes nerd --resume N in the same terminal when you open another server of this Mac in this session"),
     ("src/daemon.rs", "start", "spawn", "& exe --version", "local", "asks the installed build its version"),
     ("src/daemon.rs", "handover_exec", "command", "std :: env :: current_exe ()", "local", "update in place: the new build takes over the open panes and sockets"),
     ("src/git.rs", "run_git", "spawn", "\"git\"", "local", "the file tree's git, without lazy fetch, fsmonitor or filters"),

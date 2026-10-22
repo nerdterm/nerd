@@ -54,6 +54,8 @@ mod sandbox;
 mod search;
 mod select;
 mod session;
+mod servers;
+mod server_list;
 mod settings;
 mod signals;
 mod sidebar;
@@ -74,9 +76,9 @@ fn from_window(args: &[String]) -> bool {
     args.iter().any(|a| a == "--from-window")
 }
 
-/// The instance `--resume` was given, if any: the flag is not a name.
+/// The instance `--resume` was given, if any: a flag is not a name.
 fn resume_name(args: &[String]) -> Option<String> {
-    args.get(1).filter(|a| *a != "--from-window").cloned()
+    args.get(1).filter(|a| !a.starts_with("--")).cloned()
 }
 
 /// Commands that print and exit end quietly on a closed pipe (`nerd --list | head -1`), as Unix
@@ -84,7 +86,7 @@ fn resume_name(args: &[String]) -> Option<String> {
 /// The daemon, broker and interactive client keep ignoring it: a closed socket must not kill them.
 fn quiet_on_closed_pipe(first: Option<&str>) {
     // --remote writes into ssh's stdin, and a dead ssh must end in a message, not a silent kill.
-    if matches!(first, None | Some("--daemon") | Some("--broker") | Some("--exec-broker") | Some("--resume") | Some("--remote")) {
+    if matches!(first, None | Some("--daemon") | Some("--broker") | Some("--exec-broker") | Some("--resume") | Some("--new") | Some("--remote")) {
         return;
     }
     // SAFETY: restoring the default disposition installs no handler.
@@ -139,13 +141,23 @@ fn run() -> std::io::Result<()> {
         Some("--update") => return client::update(args.get(1).cloned()),
         Some("--check-update") => return release::main(&args[1..]),
         Some("--disconnect") => return client::disconnect(args.get(1).cloned()),
+        Some("--remove") => return client::remove(args.get(1).cloned()),
         Some("--rename") if args.len() > 3 => {
             return Err(std::io::Error::other("usage: nerd --rename <server> [name]; a name is one word"));
         }
         Some("--rename") => return client::rename(args.get(1).cloned(), args.get(2).cloned()),
         Some("--resume") => {
             log::set_role("client");
-            return client::run(Some(resume_name(&args)), from_window);
+            // Internal: `--if-free` is how a session that opens another server of this Mac asks before taking it.
+            let open = match resume_name(&args) {
+                Some(n) if args.iter().any(|a| a == "--if-free") => client::Open::Free(n),
+                n => client::Open::Resume(n),
+            };
+            return client::run(open, from_window);
+        }
+        Some("--new") => {
+            log::set_role("client");
+            return client::run(client::Open::New, from_window);
         }
         Some("--install") => return install_autostart(),
         Some("--preset") => return presets::main(&args[1..]),
@@ -219,7 +231,7 @@ fn run() -> std::io::Result<()> {
         _ => {}
     }
     log::set_role("client");
-    client::run(None, from_window)
+    client::run(client::Open::Last, from_window)
 }
 
 /// Format: `nerd 0.2.0 (f4db629, 2026-09-16 15:03)`, `+` after the commit if the tree was dirty at build time.
@@ -237,8 +249,10 @@ fn help(autostart: &str, hook: &str) -> String {
     format!(
         "nerd: a multiplexer for agents\n\
          \n\
-         Running with no arguments opens a new server with its own desktop.\n\
+         Running with no arguments reopens the server a session last attached to, asking first when another\n\
+         session shows it; with none, or from inside a pane, it starts a new server with its own desktop.\n\
          \n\
+           --new             start a new server with its own desktop\n\
            --resume [NAME]   resume a server by name or number (the last used without one)\n\
            --rename N [NAME] name a server, or clear its name\n\
            --list            servers: running or stopped, sandbox, spaces\n\
@@ -246,6 +260,8 @@ fn help(autostart: &str, hook: &str) -> String {
            --update [NAME]   swap running servers for the installed build; panes survive\n\
            --check-update    ask GitHub for a newer release; from a terminal, install it after asking\n\
            --stop [NAME]     stop one server, or all of them\n\
+           --remove NAME     remove a stopped server: its layout, pane text, messages and logs\n\
+           --remove --stopped  remove every stopped server, after listing them and asking\n\
            --disconnect [NAME]  end every connection to a server, or to all; programs keep running\n\
            --daemon          start the server (usually automatic)\n\
            --install         install autostart (LaunchAgent){}\n\

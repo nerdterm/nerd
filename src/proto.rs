@@ -54,6 +54,15 @@ pub enum ClientMsg {
         /// and left off the wire then, which keeps the v1 hello as it was.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cell_px: Option<u16>,
+        /// Refuse this attach when another session shows the server; an older server ignores it, so it goes only to one that answered `Probe`.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        if_free: bool,
+        /// This client can switch itself to another server of this Mac when asked.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        switches: bool,
+        /// A bare `nerd` came back to the server it last attached to; the server says so once.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        reopened: bool,
     },
     Event(crossterm::event::Event),
     /// The macOS appearance changed while attached: dark or not.
@@ -65,6 +74,8 @@ pub enum ClientMsg {
     Update,
     /// Ends every connection, the screen's included; sent without Hello, answered with `ok`, the ended ones, then EOF.
     DisconnectAll,
+    /// Sent without Hello: answered with one `ProbeAnswer` line, then EOF; an older server just closes.
+    Probe,
     /// The answer to `list-remote`: that machine's instances or why not, and whether this client can open a window.
     Remote {
         name: String,
@@ -208,14 +219,35 @@ pub struct Listing {
 
 pub const RELAY_VERSION: u32 = 1;
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub struct RemoteInstance {
     pub id: String,
     pub label: String,
     pub running: bool,
     #[serde(default)]
     pub spaces: usize,
+    /// A session shows it; `None` from an older nerd, or from a running server that did not say.
+    /// Left off the wire when unknown, as are the two below, which keeps the v1 `Remote` as it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shown: Option<bool>,
+    /// When a session last attached, in seconds since the epoch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_used: Option<u64>,
+    /// Its spaces' folders, as that Mac spells them; text from another machine, escaped before it is shown.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub folders: Vec<String>,
 }
+
+/// A server's answer to `Probe`.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct ProbeAnswer {
+    pub shown: bool,
+    pub version: String,
+    pub spaces: usize,
+}
+
+/// The `refused:` line an `if_free` Hello gets when another session shows the server.
+pub const TAKEN: &str = "refused: this server is open in another session";
 
 /// Parsed once from the Hello; a handover carries it flat under the v1 names, so either build reads the other's.
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
@@ -247,12 +279,14 @@ pub struct ClientCaps {
     pub machine: Option<String>,
     /// A row's height in device pixels; 0 when unknown.
     pub cell_px: u16,
+    /// It switches itself to another server when asked.
+    pub switches: bool,
 }
 
 impl ClientCaps {
     /// `None` for any message but Hello. The way back and the machine name reach the screen, so they are checked here.
     pub fn from_v1_hello(msg: &ClientMsg) -> Option<Self> {
-        let ClientMsg::Hello { mux, screen, graphics, terminal, opened_by_nerd, opens_windows, dark, bye, connects, reattach, machine, cell_px, .. } = msg else {
+        let ClientMsg::Hello { mux, screen, graphics, terminal, opened_by_nerd, opens_windows, dark, bye, connects, reattach, machine, cell_px, switches, .. } = msg else {
             return None;
         };
         Some(Self {
@@ -269,6 +303,7 @@ impl ClientCaps {
             // The same check as a machine name in config.json: it goes into the window title.
             machine: machine.clone().filter(|m| crate::config::RemoteEntry { name: m.clone(), host: "h".into() }.check().is_ok()),
             cell_px: cell_px.unwrap_or(0),
+            switches: *switches,
         })
     }
 }
@@ -332,6 +367,17 @@ pub fn open_remote_marker(name: &str, id: Option<&str>) -> Vec<u8> {
     marker(&format!("open-remote:{name}{}", id.map(|i| format!(":{i}")).unwrap_or_default()))
 }
 
+/// Asks a client of this Mac to become `nerd --resume <id>` in the same terminal; `over` takes the server from the
+/// session that shows it, without it the new client asks first.
+pub fn switch_marker(id: &str, over: bool) -> Vec<u8> {
+    marker(&format!("switch:{id}{}", if over { ":over" } else { "" }))
+}
+
+/// The same in a new terminal window, the client's own.
+pub fn open_server_marker(id: &str, over: bool) -> Vec<u8> {
+    marker(&format!("open-server:{id}{}", if over { ":over" } else { "" }))
+}
+
 /// What the daemon asked of the client in one read, and what the terminal should see.
 #[derive(Default, Debug, PartialEq)]
 pub struct Requests {
@@ -343,6 +389,9 @@ pub struct Requests {
     pub stopped: Option<String>,
     pub list: Vec<String>,
     pub connect: Vec<(String, Option<String>)>,
+    /// A server of this Mac and whether to take it over: the first one asked wins.
+    pub switch: Option<(String, bool)>,
+    pub open_server: Vec<(String, bool)>,
 }
 
 impl Requests {
@@ -361,8 +410,20 @@ impl Requests {
                 Some((name, id)) => (name.to_string(), Some(id.to_string())),
                 None => (rest.to_string(), None),
             }),
+            Some(("switch", rest)) => {
+                self.switch.get_or_insert_with(|| over(rest));
+            }
+            Some(("open-server", rest)) => self.open_server.push(over(rest)),
             _ => {}
         }
+    }
+}
+
+/// `N` or `N:over`.
+fn over(rest: &str) -> (String, bool) {
+    match rest.strip_suffix(":over") {
+        Some(id) => (id.to_string(), true),
+        None => (rest.to_string(), false),
     }
 }
 
@@ -405,7 +466,7 @@ mod tests {
     fn screen_rides_the_hello_only_when_it_is_true() {
         let hello = |screen| ClientMsg::Hello {
             cwd: "/tmp".into(), cols: 80, rows: 24, mux: true, screen, graphics: None, terminal: None, opened_by_nerd: false, opens_windows: false,
-            dark: None, host: None, bye: false, connects: false, reattach: None, machine: None, cell_px: None,
+            dark: None, host: None, bye: false, connects: false, reattach: None, machine: None, cell_px: None, if_free: false, switches: false, reopened: false,
         };
         let json = |m: &ClientMsg| serde_json::to_string(m).unwrap();
         assert!(!json(&hello(false)).contains("screen"), "the v1 hello is unchanged for tmux");
@@ -435,6 +496,9 @@ mod tests {
             reattach: Some("nerd --remote studio 1".into()),
             machine: Some("studio".into()),
             cell_px: Some(35),
+            if_free: false,
+            switches: false,
+            reopened: false,
         }
             .write_to(&mut buf)
             .unwrap();
@@ -443,7 +507,7 @@ mod tests {
             .unwrap();
         ClientMsg::Appearance(false).write_to(&mut buf).unwrap();
         ClientMsg::Detach.write_to(&mut buf).unwrap();
-        let one = RemoteInstance { id: "1".into(), label: "main".into(), running: true, spaces: 2 };
+        let one = RemoteInstance { id: "1".into(), label: "main".into(), running: true, spaces: 2, ..Default::default() };
         ClientMsg::Remote { name: "studio".into(), result: Ok(vec![one.clone()]), window: true, ssh_failed: false }.write_to(&mut buf).unwrap();
 
         let mut r = std::io::Cursor::new(buf);
@@ -499,6 +563,7 @@ mod tests {
                 reattach: Some("nerd --remote studio 1".into()),
                 machine: Some("studio".into()),
                 cell_px: 35,
+                switches: false,
             }
         );
         let old = r#"{"Hello":{"cwd":"/tmp","cols":80,"rows":24,"reattach":"a\u001bb","machine":"no spaces allowed"}}"#;
@@ -543,6 +608,44 @@ mod tests {
         }
     }
 
+    /// What this build adds for Servers…: an older server closes on `Probe` and ignores the three Hello fields.
+    #[test]
+    fn the_probe_and_the_attach_asks_are_pinned() {
+        for line in [r#""Probe""#, r#"{"Hello":{"cwd":"/tmp","cols":80,"rows":24,"mux":false,"graphics":null,"terminal":null,"opened_by_nerd":false,"opens_windows":false,"dark":null,"host":null,"bye":false,"connects":true,"reattach":null,"machine":null,"if_free":true,"switches":true,"reopened":true}}"#] {
+            let msg: ClientMsg = serde_json::from_str(line).unwrap_or_else(|e| panic!("{line}: {e}"));
+            assert_eq!(serde_json::to_string(&msg).unwrap(), line);
+        }
+        let ClientMsg::Hello { if_free, switches, reopened, .. } = serde_json::from_str(r#"{"Hello":{"cwd":"/tmp","cols":80,"rows":24}}"#).unwrap() else { panic!() };
+        assert!(!if_free && !switches && !reopened, "an older client asks for none");
+        let a = ProbeAnswer { shown: true, version: "nerd 0.16.0 (abc1234, 2026-10-22 12:00)".into(), spaces: 2 };
+        assert_eq!(serde_json::to_string(&a).unwrap(), r#"{"shown":true,"version":"nerd 0.16.0 (abc1234, 2026-10-22 12:00)","spaces":2}"#);
+    }
+
+    #[test]
+    fn a_listing_reads_across_builds_both_ways() {
+        let old = r#"{"relay":1,"instances":[{"id":"1","label":"main","running":true,"spaces":2}]}"#;
+        let l: Listing = serde_json::from_str(old).unwrap();
+        assert_eq!(l.instances[0], RemoteInstance { id: "1".into(), label: "main".into(), running: true, spaces: 2, shown: None, last_used: None, folders: vec![] });
+        #[derive(Deserialize, Debug, PartialEq)]
+        struct OldInstance {
+            id: String,
+            label: String,
+            running: bool,
+            #[serde(default)]
+            spaces: usize,
+        }
+        #[derive(Deserialize)]
+        struct OldListing {
+            relay: u32,
+            instances: Vec<OldInstance>,
+        }
+        let new = Listing { relay: RELAY_VERSION, instances: vec![RemoteInstance { id: "2".into(), label: "work".into(), running: true, spaces: 1, shown: Some(true), last_used: Some(1_790_000_000), folders: vec!["/Users/me/proj".into()] }] };
+        let json = serde_json::to_string(&new).unwrap();
+        let back: OldListing = serde_json::from_str(&json).unwrap();
+        assert_eq!((back.relay, &back.instances[0]), (1, &OldInstance { id: "2".into(), label: "work".into(), running: true, spaces: 1 }));
+        assert_eq!(serde_json::from_str::<Listing>(&json).unwrap().instances, new.instances);
+    }
+
     #[test]
     fn the_markers_are_pinned() {
         assert_eq!(OPEN_WINDOW, b"\x1b_nerd;open-window\x1b\\");
@@ -553,6 +656,19 @@ mod tests {
         assert_eq!(list_remote_marker("studio"), b"\x1b_nerd;list-remote:studio\x1b\\");
         assert_eq!(open_remote_marker("studio", Some("1")), b"\x1b_nerd;open-remote:studio:1\x1b\\");
         assert_eq!(open_remote_marker("studio", None), b"\x1b_nerd;open-remote:studio\x1b\\");
+        assert_eq!(switch_marker("2", false), b"\x1b_nerd;switch:2\x1b\\");
+        assert_eq!(switch_marker("2", true), b"\x1b_nerd;switch:2:over\x1b\\");
+        assert_eq!(open_server_marker("work", false), b"\x1b_nerd;open-server:work\x1b\\");
+        assert_eq!(open_server_marker("work", true), b"\x1b_nerd;open-server:work:over\x1b\\");
+    }
+
+    #[test]
+    fn server_markers_carry_the_id_and_the_take_over() {
+        let data = [switch_marker("2", true), b"frame".to_vec(), switch_marker("3", false), open_server_marker("4", false), open_server_marker("5", true)].concat();
+        let r = take_requests(&data, &mut Vec::new());
+        assert_eq!(r.out.as_slice(), b"frame".as_ref());
+        assert_eq!(r.switch, Some(("2".to_string(), true)), "the first switch asked");
+        assert_eq!(r.open_server, vec![("4".to_string(), false), ("5".to_string(), true)]);
     }
 
     /// The broker outlives an Update, so the daemon on either side of it speaks this to the same broker.
@@ -583,10 +699,12 @@ mod tests {
 
     #[test]
     fn socket_path_honours_override() {
-        // SAFETY: no other thread in this process touches the environment.
-        unsafe { std::env::set_var("NERD_SOCKET", "/tmp/x.sock") };
-        assert_eq!(crate::session::socket_path(), PathBuf::from("/tmp/x.sock"));
-        unsafe { std::env::remove_var("NERD_SOCKET") };
+        // Under the environment lock: servers' tests set NERD_SOCKET too.
+        crate::session::tests::with_temp_state_dir("socket-override", || {
+            unsafe { std::env::set_var("NERD_SOCKET", "/tmp/x.sock") };
+            assert_eq!(crate::session::socket_path(), PathBuf::from("/tmp/x.sock"));
+            unsafe { std::env::remove_var("NERD_SOCKET") };
+        });
     }
 }
 

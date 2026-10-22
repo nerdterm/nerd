@@ -283,6 +283,10 @@ impl App {
                 let out = w.key(k, self.screen, &self.view.dialog.panel);
                 self.plugins_outcome(w, out)
             }
+            Overlay::Servers(mut w) => {
+                let out = w.key(k, self.screen);
+                self.servers_outcome(w, out)
+            }
             Overlay::Messages(mut w) => {
                 let out = w.key(k, &self.mail_view());
                 self.messages_outcome(w, out)
@@ -983,8 +987,11 @@ impl App {
         }
     }
 
-    /// What shows once a dialog is answered: the Plugins window when a remove was asked from it.
+    /// What shows once a dialog is answered: the Servers or Plugins window it was asked from.
     fn answered(&mut self) -> Overlay {
+        if let Some(w) = self.servers_back.take() {
+            return Overlay::Servers(w);
+        }
         match self.plugins_back.take() {
             Some(name) => self.plugins_overlay_at(&name),
             None => Overlay::None,
@@ -1063,6 +1070,10 @@ impl App {
             Overlay::Plugins(mut w) => {
                 let out = w.mouse(ev, screen, &self.view.dialog.panel);
                 self.plugins_outcome(w, out)
+            }
+            Overlay::Servers(mut w) => {
+                let out = w.mouse(ev, screen, &self.view.dialog.panel);
+                self.servers_outcome(w, out)
             }
             Overlay::Messages(mut w) => {
                 let out = w.mouse(ev, &self.view.dialog.messages);

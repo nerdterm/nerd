@@ -31,7 +31,7 @@ Settings live in `~/Library/Application Support/nerd/config.json`. **Settings…
 | `prefix` | `"ctrl_b"` | nerd's key, as in tmux: `ctrl_b`, `ctrl_a` or `off`. A stored `off` becomes `ctrl_b` once, on the first start of the build that made it the default |
 | `tmux` | `"ask"` | Started inside tmux: `ask` to open a window outside it, `new_window` without asking, or `stay` |
 | `notify` | `{"sound": true, "bell": false}` | When an agent outside the focused pane needs you: play a sound, ring the terminal bell. nerd sends no macOS notifications |
-| `remotes` | none | Machines for **Connect to another computer…** and `nerd --remote`: `[{"name": "studio", "host": "me@studio.local"}]`, a name of 1 to 16 letters, digits, `.`, `_` or `-`, with ssh keys set up for the host |
+| `remotes` | none | Machines for **Servers…**, each a section listed over ssh when you open it, and `nerd --remote`: `[{"name": "studio", "host": "me@studio.local"}]`, a name of 1 to 16 letters, digits, `.`, `_` or `-`, with ssh keys set up for the host |
 | `plugins` | none | Settings for each plugin, by its name; kept as written |
 
 Check for new releases (**Settings…**, off or daily) is not in config.json: it is kept per Mac in `update-check` beside it, written only from nerd's own window on that Mac (a window inside a pane cannot change it, though a program running as you could write the file itself). With no file nerd asks once. Installing a release is asked for the same way, only from nerd's own window on that Mac, though a program running as you could ask for the install itself: it would get only the newest release, checked against nerd's release key: nothing it could not already do as you.

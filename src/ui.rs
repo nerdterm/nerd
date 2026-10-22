@@ -148,18 +148,42 @@ fn draw_menu(buf: &mut Buffer, x: u16, y: u16, marked: bool, theme: &crate::rend
     Rect::new(left, y, x + 1 - left, 1)
 }
 
-/// `@ <machine>` at the top row's right edge, in `warn` (Session history's colour for "from elsewhere"),
-/// never left of `from`; cut short when narrow. Returns the cells it covers.
-fn machine_badge(buf: &mut Buffer, machine: Option<&str>, from: u16, right: u16, y: u16, theme: &crate::render::Theme) -> Option<Rect> {
-    let text = format!("@ {}", machine?);
+/// The current server's name or number, cut to `max` cells; none for the legacy server, which has neither.
+fn server_label(max: usize) -> Option<String> {
+    let id = crate::session::instance_name();
+    if id.is_empty() || max == 0 {
+        return None;
+    }
+    let l = crate::session::instance_label(&id);
+    Some(if l.chars().count() <= max { l } else { format!("{}…", l.chars().take(max - 1).collect::<String>()) })
+}
+
+/// The server's name, then `@ <machine>` in `warn` (Session history's colour for "from elsewhere"), at the top
+/// row's right edge, never left of `from`; cut short when narrow. Returns the cells it covers.
+fn machine_badge(buf: &mut Buffer, machine: Option<&str>, server: Option<&str>, from: u16, right: u16, y: u16, theme: &crate::render::Theme) -> Option<Rect> {
+    let at = machine.map(|m| (format!("@ {m}"), Style::default().fg(theme.warn)));
+    let mut parts: Vec<(String, Style)> = server.map(|s| (s.to_string(), Style::default().fg(theme.muted))).into_iter().chain(at).collect();
     let end = right.saturating_sub(TEXT_INSET);
-    let w = (text.chars().count() as u16).min(end.saturating_sub(from));
+    let width = |parts: &[(String, Style)]| parts.iter().map(|(t, _)| t.chars().count() + 1).sum::<usize>().checked_sub(1);
+    // Too narrow for both: the machine says more, so the server's name gives way.
+    if parts.len() > 1 && width(&parts)? > end.saturating_sub(from) as usize {
+        parts.remove(0);
+    }
+    let text_w = width(&parts)?;
+    let w = (text_w as u16).min(end.saturating_sub(from));
     if w == 0 {
         return None;
     }
-    let x = end - w;
-    buf.set_stringn(x, y, &text, w as usize, Style::default().fg(theme.warn));
-    Some(Rect::new(x, y, w, 1))
+    let (mut x, mut left) = (end - w, w as usize);
+    for (i, (text, style)) in parts.iter().enumerate() {
+        if i > 0 {
+            (x, left) = (x + 1, left.saturating_sub(1));
+        }
+        let n = text.chars().count().min(left);
+        buf.set_stringn(x, y, text, n, *style);
+        (x, left) = (x + n as u16, left - n);
+    }
+    Some(Rect::new(end - w, y, w, 1))
 }
 
 /// The loop's frame: pane geometry needs `&mut App` (history), so it is settled before the view is lifted out.
@@ -205,7 +229,8 @@ pub fn draw(f: &mut Frame, app: &App, view: &mut ViewState, geometry: &[crate::a
         // words line up with the words under them, not with the frame lines, which sit mid-cell:
         // nerd with the sidebar's marks, menu with its right-hand labels. Where the terminal draws
         // images, nerd is the logo's wordmark; elsewhere, the word.
-        if app.graphics && !app.caps.mux && w > LOGO_COLS + TEXT_INSET + 4 {
+        let logo = app.graphics && !app.caps.mux && w > LOGO_COLS + TEXT_INSET + 4;
+        if logo {
             fx.screen.extend(place_logo(app, view, Some((side.x + TEXT_INSET, top.y))));
         } else {
             fx.screen.extend(place_logo(app, view, None));
@@ -214,6 +239,11 @@ pub fn draw(f: &mut Frame, app: &App, view: &mut ViewState, geometry: &[crate::a
         let menu = Rect::new(side.right().saturating_sub(TEXT_INSET + 1), top.y, 1, 1);
         let marked = menu_marked(app);
         let button = draw_menu(f.buffer_mut(), menu.x, menu.y, marked, &theme);
+        // The server this session shows, after the wordmark and a cell short of the menu.
+        let at = side.x + TEXT_INSET + if logo { LOGO_COLS } else { 4 } + 1;
+        if let Some(l) = server_label(button.x.saturating_sub(at + 1) as usize) {
+            f.buffer_mut().set_string(at, top.y, l, Style::default().fg(theme.muted));
+        }
         let (waiting, mail, spaces) = sidebar_data(app);
         let hits = crate::sidebar::draw(f.buffer_mut(), side, &waiting, &mail, &spaces, app.focus == crate::app::Focus::Sidebar, &theme);
         view.hits.sidebar_rows = hits.panes;
@@ -291,7 +321,9 @@ pub fn draw(f: &mut Frame, app: &App, view: &mut ViewState, geometry: &[crate::a
         .map(|sp| sp.tabs.iter().enumerate().map(|(i, t)| tab_item(app, i, t, i == sp.active_tab)).collect())
         .unwrap_or_default();
 
-    let badge = machine_badge(f.buffer_mut(), app.caps.machine.as_deref(), right.x, full.right(), top.y, &theme);
+    // Without the sidebar the server's name joins the machine badge, cut short so the tabs keep their room.
+    let server = if a.sidebar.is_none() { server_label(16) } else { None };
+    let badge = machine_badge(f.buffer_mut(), app.caps.machine.as_deref(), server.as_deref(), right.x, full.right(), top.y, &theme);
     // The tabs, and with them the + button, stop a cell short of the badge.
     let tabs_w = badge.map_or(right.width, |b| right.width.min(b.x.saturating_sub(right.x + 1)));
     let tabs_area = Rect { x: right.x, y: top.y, width: tabs_w, height: 1 };
@@ -462,6 +494,7 @@ pub fn draw(f: &mut Frame, app: &App, view: &mut ViewState, geometry: &[crate::a
         crate::app::Overlay::Keys(h) => h.draw(f.buffer_mut(), full, &theme),
         crate::app::Overlay::Sessions(w) => view.dialog.panel = w.draw(f.buffer_mut(), full, &theme),
         crate::app::Overlay::Plugins(w) => view.dialog.panel = w.draw(f.buffer_mut(), full, &theme),
+        crate::app::Overlay::Servers(w) => view.dialog.panel = w.draw(f.buffer_mut(), full, &theme),
         crate::app::Overlay::Panel(p) => view.dialog.panel = p.draw(f.buffer_mut(), full, &theme, app.plugins.slots.panel(&p.src, &p.id)),
         crate::app::Overlay::Messages(w) => {
             let named = app.named_panes();
