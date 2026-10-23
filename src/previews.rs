@@ -369,6 +369,12 @@ mod tests {
     }
 
     #[test]
+    fn a_line_of_emoji_stays_within_the_caps() {
+        let (lines, cut) = finish(json(&format!("{{\"k\":\"{}\"}}", "\u{2764}\u{FE0F}".repeat(400))).unwrap());
+        assert!(cut && lines.iter().all(|l| l.iter().map(|s| cells(&s.text)).sum::<usize>() <= LINE_CELLS));
+    }
+
+    #[test]
     fn markdown_is_rendered_into_styled_lines() {
         let m = markdown("# Title\n#tag\n- one\n  * two\n12. twelve\n> quote `c`\n---\n```\n# not a heading\n```\nSee [site](https://x.y) and `code` **now**, *this* and _that_ but not snake_case or a * b.\n", 20);
         assert_eq!(

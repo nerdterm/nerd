@@ -60,6 +60,8 @@ pub enum SegmentHit {
     Battery,
     /// nerd's clock: the time, or the date and the time.
     Clock,
+    /// The Search button: opens the Search window.
+    Search,
 }
 
 impl Hits {

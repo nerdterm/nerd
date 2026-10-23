@@ -116,6 +116,13 @@ impl SpacePicker {
         Outcome::None
     }
 
+    /// A pasted line, at the end as typing would put it.
+    pub fn paste(&mut self, s: &str) {
+        self.value.push_str(s);
+        self.tab_cycle = None;
+        self.recompute();
+    }
+
     /// `rows`: where the last frame's `draw` put them.
     pub fn mouse(&mut self, ev: crossterm::event::MouseEvent, screen: Rect, rows: &[Rect]) -> Outcome {
         use crossterm::event::MouseEventKind::*;

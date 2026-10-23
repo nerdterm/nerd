@@ -141,6 +141,41 @@ fn golden_top_row_as_master_drew_it() {
     crate::hook::tests::golden("ui/top.txt", &out);
 }
 
+#[test]
+fn golden_search_window() {
+    use crate::find::Group;
+    crate::session::tests::with_temp_state_dir("golden-search", || {
+        let mut app = one_space();
+        for (id, state) in [(1, AgentState::Working), (2, AgentState::Blocked)] {
+            let p = agent_pane(&app, id, state, 0);
+            app.spaces[0].tabs[id - 1].panes.insert(id, p);
+        }
+        let Overlay::Find(mut f) = app.run_action(Action::SearchAll, &MenuCtx::Global) else { panic!("Search opens") };
+        let screen = Rect::new(0, 0, 100, 30);
+        let mut out = String::new();
+        let mut shot = |tag: &str, f: &crate::find::Find| {
+            let mut buf = Buffer::empty(screen);
+            f.draw(&mut buf, screen, &crate::render::Theme::dark());
+            out += &format!("== {tag}\n{}", dump(&buf, screen));
+        };
+        shot("all, nothing typed: nothing listed", &f);
+        f.set_tab(Some(Group::Panes));
+        shot("panes with their chips", &f);
+        f.chip = crate::find::Chip::Working;
+        f.set_tab(Some(Group::Panes));
+        shot("the working chip lists its panes", &f);
+        f.chip = crate::find::Chip::All;
+        f.set_tab(None);
+        f.paste("split");
+        shot("commands on All", &f);
+        f.query.clear();
+        f.set_tab(Some(Group::Settings));
+        f.paste("wrap");
+        shot("a setting and its value", &f);
+        crate::hook::tests::golden("ui/search.txt", &out);
+    });
+}
+
 /// An agent pane with no process behind it, in `state`, with `subs` subagents running.
 pub(crate) fn agent_pane(app: &App, id: PaneId, state: AgentState, subs: usize) -> Pane {
     use std::os::fd::IntoRawFd;
@@ -262,17 +297,17 @@ fn the_battery_stands_before_the_clock_a_dot_apart() {
     app.battery = Some(crate::battery::Charge { percent: 46, power: crate::battery::Power::Battery, low_power: false, minutes: None, watts: None });
     let row = top_row(&mut app, 120);
     let line = row.lines().next().unwrap();
-    assert!(line.ends_with("alpha-a · alpha-b · zeta · 46% · 09:05  "), "{line:?}");
+    assert!(line.ends_with("alpha-a · alpha-b · zeta · 46% · 09:05   Search  "), "{line:?}");
     app.battery = Some(crate::battery::Charge { percent: 71, power: crate::battery::Power::Charging, low_power: true, minutes: None, watts: None });
     app.clock.clear();
     let row = top_row(&mut app, 120);
-    assert!(row.lines().next().unwrap().ends_with("zeta · \u{3df} 71% L  "), "no clock: the battery ends the row, the bolt first, L for Low Power Mode last");
+    assert!(row.lines().next().unwrap().ends_with("zeta · \u{3df} 71% L   Search  "), "no clock: the battery ends the row, the bolt first, L for Low Power Mode last");
     app.cfg.battery = crate::config::Battery::Time;
     app.battery = Some(crate::battery::Charge { percent: 46, power: crate::battery::Power::Battery, low_power: false, minutes: Some(250), watts: None });
     app.clock = "09:05".into();
     let row = top_row(&mut app, 120);
     let line = row.lines().next().unwrap();
-    assert!(line.ends_with("zeta · 4:10 · 09:05  "), "time to empty instead of the percent: {line:?}");
+    assert!(line.ends_with("zeta · 4:10 · 09:05   Search  "), "time to empty instead of the percent: {line:?}");
     let x = line[..line.find("4:10").unwrap()].chars().count() as u16;
     assert!(app.view.hits.segments.iter().any(|(r, h)| *h == crate::mouse::SegmentHit::Battery && r.x == x && r.width == 4), "a click on it switches");
     app.battery_hover = Some(std::time::Instant::now());
@@ -318,11 +353,25 @@ fn a_click_on_the_clock_adds_the_date_and_keeps_the_choice() {
 }
 
 #[test]
+fn the_search_button_outlasts_the_plugins_segments_and_a_click_opens_search() {
+    let mut app = with_segments();
+    let wide = top_row(&mut app, 120);
+    assert!(wide.lines().next().unwrap().contains("alpha-a") && wide.lines().next().unwrap().contains("Search"), "room for all: {wide}");
+    let narrow = top_row(&mut app, 40);
+    let line = narrow.lines().next().unwrap();
+    assert!(line.contains("Search") && !line.contains("alpha"), "the plugins' segments give way first: {line:?}");
+    let (x, y) = app.view.hits.segments.iter().find(|(_, h)| *h == crate::mouse::SegmentHit::Search).map(|(r, _)| (r.x, r.y)).expect("a Search hit");
+    let click = crossterm::event::MouseEvent { kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left), column: x, row: y, modifiers: crossterm::event::KeyModifiers::NONE };
+    app.mouse(click, Rect::new(0, 0, 40, 12));
+    assert!(matches!(app.overlay, crate::app::Overlay::Find(_)), "a click opens Search");
+}
+
+#[test]
 fn a_short_row_keeps_the_time_of_a_dated_clock() {
     let mut app = with_segments();
     app.clock = "Sun 4. 10.  09:05".into();
     let row = top_row(&mut app, 120);
-    assert!(row.lines().next().unwrap().ends_with("zeta · Sun 4. 10.  09:05  "), "room for all: {row}");
+    assert!(row.lines().next().unwrap().ends_with("zeta · Sun 4. 10.  09:05   Search  "), "room for all: {row}");
     let line = top_row(&mut app, 32).lines().next().unwrap().to_string();
     assert!(line.trim_end().ends_with("09:05") && !line.contains("Sun"), "short: the time alone: {line:?}");
     assert!(app.view.hits.segments.iter().any(|(_, h)| *h == crate::mouse::SegmentHit::Clock), "and still a click back");
@@ -335,9 +384,9 @@ fn golden_top_row_with_segments_in_the_free_gap() {
     let row = top_row(&mut app, 120);
     out += &format!("== all\n{row}");
     let line = row.lines().next().unwrap();
-    assert!(line.ends_with("alpha-a · alpha-b · zeta · 09:05  "), "plugins by name, then the clock, right-aligned: {line:?}");
+    assert!(line.ends_with("alpha-a · alpha-b · zeta · 09:05   Search  "), "plugins by name, then the clock, right-aligned: {line:?}");
     assert!(line.contains("  1 ▕  logs ▕  +") && !line.contains("need"), "nothing of nerd's own but the clock: {line:?}");
-    let hits: Vec<_> = app.view.hits.segments.iter().filter(|(_, h)| *h != crate::mouse::SegmentHit::Clock).cloned().collect();
+    let hits: Vec<_> = app.view.hits.segments.iter().filter(|(_, h)| !matches!(h, crate::mouse::SegmentHit::Clock | crate::mouse::SegmentHit::Search)).cloned().collect();
     assert_eq!(hits.len(), 1, "only the one with a command, besides the clock");
     assert_eq!(hits[0].1, crate::mouse::SegmentHit::Command("alpha".into(), "go".into()));
     let x = |s: &str| line[..line.find(s).unwrap()].chars().count() as u16;
@@ -348,7 +397,7 @@ fn golden_top_row_with_segments_in_the_free_gap() {
     out += &format!("== narrow\n{row}");
     let line = row.lines().next().unwrap();
     assert!(line.contains("  1 ▕  logs ▕  + ") && line.trim_end().ends_with("09:05") && !line.contains("alpha"), "{line:?}");
-    assert!(app.view.hits.segments.iter().all(|(_, h)| *h == crate::mouse::SegmentHit::Clock), "no plugin's click left, only the clock's");
+    assert!(app.view.hits.segments.iter().all(|(_, h)| matches!(h, crate::mouse::SegmentHit::Clock | crate::mouse::SegmentHit::Search)), "no plugin's click left, only the clock's and Search");
 
     // A notice is a card over the panes now: the top row keeps its segments and their clicks.
     app.notice = Some("config failed to save: disk full".into());
@@ -356,13 +405,13 @@ fn golden_top_row_with_segments_in_the_free_gap() {
     out += &format!("== notice\n{row}");
     let line = row.lines().next().unwrap();
     assert!(!line.contains("disk full") && line.contains("alpha-a · alpha-b · zeta · 09:05"), "{line:?}");
-    assert_eq!(app.view.hits.segments.len(), 2, "the segment with a command and the clock are still clicked");
+    assert_eq!(app.view.hits.segments.len(), 3, "the segment with a command, the clock and Search are still clicked");
 
     app.notice = None;
     app.caps.machine = Some("studio".into());
     let row = top_row(&mut app, 120);
     out += &format!("== machine\n{row}");
-    assert!(row.lines().next().unwrap().ends_with("zeta · 09:05 @ studio  "), "{row}");
+    assert!(row.lines().next().unwrap().ends_with("zeta · 09:05   Search @ studio  "), "{row}");
     crate::hook::tests::golden("ui/top-segments.txt", &out);
 }
 

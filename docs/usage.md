@@ -24,7 +24,7 @@ With a terminal that sends Option as Alt, `⌥` and the same key does the same i
 | `⌥`+`M` | Main menu |
 | `⌥`+`/` | Search the pane and its history; again to close |
 | `⌥`+`T` | Show or hide the file tree |
-| `⌥`+`N` | Navigator |
+| `⌥`+`O` | Search panes, commands, settings, plugins, files, help and pane text in one window |
 | `⌥`+`,` | Settings |
 | `⌥`+`C` | New tab |
 | `⌥`+`W` | Close the pane, asking first |

@@ -20,6 +20,7 @@ pub const CFG_BROKEN: &str = "config.json does not parse; nerd keeps the last go
 
 mod commands;
 mod deliver;
+mod find;
 mod input;
 mod lifecycle;
 mod mail;
@@ -293,6 +294,7 @@ pub struct DialogView {
     pub messages: crate::messages::Drawn<crate::messages::Click>,
     /// The Isolation and Accounts windows.
     pub isolation: crate::messages::Drawn<crate::isolation_ui::Click>,
+    pub find: crate::find::Drawn,
 }
 
 impl App {
@@ -2187,7 +2189,7 @@ mod tests {
             let windows = vec![
                 ("Settings", app.run_action(Action::Settings, &MenuCtx::Global), "Settings"),
                 ("Keys", app.run_action(Action::Keybinds, &MenuCtx::Global), "Keys and mouse"),
-                ("Navigator", app.run_action(Action::Navigator, &MenuCtx::Global), "Navigator"),
+                ("Search", app.run_action(Action::SearchAll, &MenuCtx::Global), "Search"),
                 ("New space", app.run_action(Action::NewSpace, &MenuCtx::Global), "New space"),
                 ("Export logs", app.run_action(Action::Report, &MenuCtx::Global), "Export logs"),
                 ("Session history", app.run_action(Action::Sessions, &MenuCtx::Global), "Session history"),
@@ -2215,6 +2217,418 @@ mod tests {
         });
     }
 
+    fn find(app: &App) -> &crate::find::Find {
+        match &app.overlay {
+            Overlay::Find(f) => f,
+            _ => panic!("Search is open"),
+        }
+    }
+
+    /// Opens Search and types `q` into it.
+    fn search_for(app: &mut App, q: &str) {
+        app.overlay = app.run_action(Action::SearchAll, &MenuCtx::Global);
+        letter(app, q);
+    }
+
+    #[test]
+    fn search_lists_every_main_menu_item_once_with_its_key_and_reads_plugins_and_help_only_when_asked() {
+        crate::session::tests::with_temp_state_dir("search-commands", || {
+            let mut app = with_one_space();
+            app.spaces[0].cwd = crate::paths::state_root();
+            app.overlay = app.run_action(Action::SearchAll, &MenuCtx::Global);
+            let f = find(&app);
+            assert!(!f.lazy && !f.files && f.of(crate::find::Group::Plugins).is_empty() && f.of(crate::find::Group::Help).is_empty(), "opening reads no plugin, doc or folder");
+            let commands = f.of(crate::find::Group::Commands);
+            let Overlay::Menu(menu, _) = app.global_menu((1, 1)) else { panic!("a menu") };
+            assert!(!commands.iter().any(|h| h.target == crate::find::Target::Command(Action::SearchAll, crate::find::Ctx::Global)), "Search… is not among its own results");
+            for item in menu.items.iter().filter(|i| !i.label.is_empty() && i.action != Action::SearchAll) {
+                let found: Vec<_> = commands.iter().filter(|h| h.name == item.label).collect();
+                assert_eq!(found.len(), 1, "{} once", item.label);
+                assert_eq!((found[0].value.as_str(), found[0].place.as_str()), (item.key.as_str(), "Main menu"), "{}", item.label);
+            }
+            assert!(commands.iter().any(|h| h.name == "Rename tab…" && h.place == "Tab 1") && commands.iter().any(|h| h.name == "Rename space…"), "the shown tab's and space's menus too");
+            let isolation: Vec<&str> = commands.iter().filter(|h| h.name == "Isolation for new panes…").map(|h| h.place.as_str()).collect();
+            assert!(isolation.len() == 2 && isolation[0].starts_with("Space ") && isolation[1].starts_with("Tab "), "the space's and the tab's each, with its own place: {isolation:?}");
+            letter(&mut app, "x");
+            let f = find(&app);
+            assert!(f.lazy && !f.files && !f.of(crate::find::Group::Help).is_empty(), "the first letter reads plugins and help, and walks no folder");
+            letter(&mut app, "y");
+            assert!(find(&app).files, "the second walks it");
+        });
+    }
+
+    #[test]
+    fn a_switch_found_by_search_changes_in_its_row_and_config_json_follows_unless_it_is_broken() {
+        crate::config::tests::with_temp_home(|| {
+            let path = crate::paths::config_path();
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let mut app = with_one_space();
+            let was = app.cfg.preview_wrap;
+            search_for(&mut app, "wrap long");
+            press(&mut app, KeyCode::Enter);
+            assert_eq!(app.cfg.preview_wrap, !was);
+            assert!(std::fs::read_to_string(&path).unwrap().contains(&format!("\"preview_wrap\": {}", !was)));
+            let row = find(&app).of(crate::find::Group::Settings).into_iter().find(|h| h.name == "Wrap long lines").map(|h| h.value.clone());
+            assert_eq!(row.as_deref(), Some(if was { "off" } else { "on" }), "Search stays with the row's new value");
+
+            std::fs::write(&path, "{ not json").unwrap();
+            app.mark_cfg_broken();
+            press(&mut app, KeyCode::Enter);
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), "{ not json", "a broken file is never written");
+            assert_eq!(app.cfg.preview_wrap, was, "the Enter reached the switch: it toggled back in memory");
+            press(&mut app, KeyCode::Enter);
+            assert_eq!(app.cfg.preview_wrap, !was, "and off again");
+        });
+    }
+
+    #[test]
+    fn a_plugin_turned_off_and_on_through_search_outside_a_pane_shows_its_new_value() {
+        with_policy("search-plugin-toggle", || {
+            let mut app = with_one_space();
+            crate::install::place(crate::install::stage_add(&plugin_repo("plug").to_string_lossy(), None, true).unwrap()).unwrap();
+            search_for(&mut app, "plug");
+            for _ in 0..4 {
+                press(&mut app, KeyCode::Tab);
+            }
+            assert_eq!(find(&app).tab, Some(crate::find::Group::Plugins));
+            let value = |app: &App| find(app).of(crate::find::Group::Plugins).into_iter().find(|h| h.name == "plug").map(|h| h.value.clone()).unwrap_or_default();
+            assert!(value(&app).starts_with("on"), "{}", value(&app));
+            press(&mut app, KeyCode::Enter);
+            assert!(crate::install::read_off().unwrap().contains_key("plug") && value(&app).starts_with("off"), "{}", value(&app));
+            press(&mut app, KeyCode::Enter);
+            assert!(crate::install::read_off().unwrap().is_empty() && value(&app).starts_with("on"), "{}", value(&app));
+        });
+    }
+
+    #[test]
+    fn a_trust_setting_found_by_search_only_opens_settings_on_its_row() {
+        with_policy("search-messaging", || {
+            let mut app = with_one_space();
+            let before = crate::policy::current();
+            search_for(&mut app, "messaging");
+            press(&mut app, KeyCode::Enter);
+            let Overlay::Settings(s) = &app.overlay else { panic!("Settings opens") };
+            assert_eq!(s.chosen(), "Messaging");
+            assert_eq!(*crate::policy::current(), *before, "nothing changed");
+        });
+    }
+
+    #[test]
+    fn a_pane_command_after_its_pane_closed_is_refused_and_acts_on_no_other_pane() {
+        with_policy("search-stale", || {
+            let mut app = named();
+            search_for(&mut app, "split right");
+            let found = find(&app).of(crate::find::Group::Commands).into_iter().any(|h| h.name == "Split right" && h.place == "Pane planner");
+            assert!(found);
+            app.spaces[0].tabs[0].panes.retain(|id, _| *id != 1);
+            let before: Vec<Vec<PaneId>> = app.spaces.iter().flat_map(|s| s.tabs.iter().map(|t| t.layout.pane_ids())).collect();
+            press(&mut app, KeyCode::Enter);
+            assert_eq!(find(&app).note, Some((true, "Pane planner is closed".to_string())));
+            assert!(app.notice.is_none(), "no card under the window");
+            assert!(screen(&mut app).contains("Pane planner is closed"), "said in the window");
+            letter(&mut app, " ");
+            assert!(find(&app).note.is_none(), "until the query changes");
+            let after: Vec<Vec<PaneId>> = app.spaces.iter().flat_map(|s| s.tabs.iter().map(|t| t.layout.pane_ids())).collect();
+            assert_eq!(after, before, "nothing split");
+
+            app.overlay = Overlay::None;
+            search_for(&mut app, "coder");
+            press(&mut app, KeyCode::Enter);
+            assert_eq!((app.active, app.spaces[0].active_tab, app.tab().map(|t| t.layout.focused())), (0, 1, Some(4)), "a pane is gone to");
+            assert!(!app.overlay.is_open());
+        });
+    }
+
+    #[test]
+    fn a_multi_word_text_query_opens_the_pane_search_on_the_first_word_the_line_has() {
+        with_policy("search-text-words", || {
+            let mut app = named();
+            app.pane_mut(3).unwrap().term.feed(b"one\r\nthe needle is here\r\ntwo\r\n");
+            search_for(&mut app, "here needle");
+            for _ in 0..7 {
+                press(&mut app, KeyCode::Tab);
+            }
+            press(&mut app, KeyCode::Enter);
+            press(&mut app, KeyCode::Enter);
+            let (id, s) = app.search.as_ref().expect("the pane search opens");
+            assert_eq!((*id, s.query.as_str(), s.current().map(|m| m.row)), (3, "here", Some(1)));
+        });
+    }
+
+    #[test]
+    fn a_text_search_that_reaches_the_cap_says_so() {
+        with_policy("search-text-cap", || {
+            let mut app = named();
+            app.pane_mut(3).unwrap().term = crate::term::Term::new(80, 24, 2000);
+            app.pane_mut(3).unwrap().term.feed("x\r\n".repeat(1100).as_bytes());
+            search_for(&mut app, "x");
+            for _ in 0..7 {
+                press(&mut app, KeyCode::Tab);
+            }
+            press(&mut app, KeyCode::Enter);
+            assert_eq!(find(&app).of(crate::find::Group::Text).len(), 1000);
+            assert_eq!(find(&app).text_note.as_deref(), Some("First 1000 lines; type more to narrow."));
+        });
+    }
+
+    #[test]
+    fn pane_text_is_found_on_demand_and_its_line_opens_in_the_pane_search() {
+        with_policy("search-text", || {
+            let mut app = named();
+            app.pane_mut(3).unwrap().term.feed(b"one\r\nthe needle is here\r\ntwo\r\n");
+            search_for(&mut app, "needle");
+            assert!(find(&app).of(crate::find::Group::Text).is_empty(), "nothing is read per key");
+            let shown = screen(&mut app);
+            let (x, y) = find_on_screen(&shown, "Search pane text for \"needle\"").unwrap_or_else(|| panic!("{shown}"));
+            mouse_at(&mut app, crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left), (x, y));
+            let lines: Vec<String> = find(&app).of(crate::find::Group::Text).iter().map(|h| format!("{} / {}", h.name, h.place)).collect();
+            assert_eq!(lines, ["the needle is here / reader"]);
+            press(&mut app, KeyCode::Enter);
+            assert_eq!(app.active, 1, "its pane is shown");
+            let (id, s) = app.search.as_ref().expect("the pane search opens");
+            assert_eq!((*id, s.query.as_str(), s.current().map(|m| m.row)), (3, "needle", Some(1)));
+        });
+    }
+
+    #[test]
+    fn a_text_line_is_still_found_after_its_pane_printed_more() {
+        with_policy("search-text-moved", || {
+            let mut app = named();
+            let fill = "f\r\n".repeat(30);
+            app.pane_mut(3).unwrap().term.feed(format!("a needle early\r\n{fill}the needle is here\r\ntwo\r\n").as_bytes());
+            search_for(&mut app, "needle");
+            for _ in 0..7 {
+                press(&mut app, KeyCode::Tab);
+            }
+            press(&mut app, KeyCode::Enter);
+            press(&mut app, KeyCode::Down);
+            let row = find(&app).of(crate::find::Group::Text).iter().find_map(|h| match &h.target {
+                crate::find::Target::Line(3, row, ..) if h.name == "the needle is here" => Some(*row),
+                _ => None,
+            });
+            app.pane_mut(3).unwrap().term.feed("x\r\n".repeat(5).as_bytes());
+            press(&mut app, KeyCode::Enter);
+            let (id, s) = app.search.as_ref().expect("the pane search opens");
+            assert_eq!((*id, s.current().map(|m| m.row)), (3, row.map(|r| r - 5)), "the line it moved to, not the oldest match");
+        });
+    }
+
+    #[test]
+    fn a_text_line_is_found_by_its_own_text_when_a_neighbour_moved_nearer() {
+        with_policy("search-text-neighbour", || {
+            let mut app = named();
+            let fill = "f\r\n".repeat(30);
+            app.pane_mut(3).unwrap().term.feed(format!("{fill}error A first\r\nerror B second\r\n").as_bytes());
+            search_for(&mut app, "error");
+            for _ in 0..7 {
+                press(&mut app, KeyCode::Tab);
+            }
+            press(&mut app, KeyCode::Enter);
+            let row = find(&app).of(crate::find::Group::Text).iter().find_map(|h| match &h.target {
+                crate::find::Target::Line(3, row, ..) if h.name == "error A first" => Some(*row),
+                _ => None,
+            });
+            app.pane_mut(3).unwrap().term.feed("x\r\n".repeat(5).as_bytes());
+            press(&mut app, KeyCode::Enter);
+            let (_, s) = app.search.as_ref().expect("the pane search opens");
+            assert_eq!(s.current().map(|m| m.row), row.map(|r| r - 5), "A, not B, which is nearer the old row now");
+        });
+    }
+
+    #[test]
+    fn a_paste_goes_into_the_pane_search_or_the_tree_filter_that_has_the_keys() {
+        crate::session::tests::with_temp_state_dir("paste-fields", || {
+            let dir = crate::paths::state_root().join("proj");
+            std::fs::create_dir_all(&dir).unwrap();
+            let mut app = named();
+            app.search = Some((1, crate::search::Search::new()));
+            app.paste("needle\rrm -r ~/x\r");
+            assert_eq!(app.search.as_ref().map(|(_, s)| s.query.as_str()), Some("needle"), "the pane search's field");
+            app.search = None;
+            app.spaces[0].cwd = dir.clone();
+            app.toggle_tree();
+            screen(&mut app);
+            assert_eq!(app.focus, Focus::Tree);
+            app.paste("main.rs\nmore");
+            assert_eq!(app.tree.as_ref().map(|t| t.query()), Some("main.rs"), "the tree's filter");
+            app.focus = Focus::Sidebar;
+            app.paste("dropped");
+            assert_eq!(app.tree.as_ref().map(|t| t.query()), Some("main.rs"), "the sidebar takes none");
+        });
+    }
+
+    #[test]
+    fn a_tab_or_space_command_from_search_acts_on_the_one_it_was_listed_for() {
+        with_policy("search-ctx", || {
+            let mut app = named();
+            search_for(&mut app, "rename tab");
+            app.active = 1;
+            press(&mut app, KeyCode::Enter);
+            assert!(matches!(&app.overlay, Overlay::Prompt(_, Ask::RenameTab(0))) && app.active == 0, "the tab of the space it was listed in");
+            app.overlay = Overlay::None;
+            search_for(&mut app, "rename space");
+            app.active = 1;
+            press(&mut app, KeyCode::Enter);
+            assert!(matches!(&app.overlay, Overlay::Prompt(_, Ask::RenameSpace(0))));
+        });
+    }
+
+    #[test]
+    fn a_file_found_by_search_is_shown_in_the_tree() {
+        crate::session::tests::with_temp_state_dir("search-files", || {
+            let dir = crate::paths::state_root().join("proj");
+            std::fs::create_dir_all(dir.join("src")).unwrap();
+            std::fs::write(dir.join("src/needle.rs"), "").unwrap();
+            let mut app = with_one_space();
+            app.spaces[0].cwd = dir.clone();
+            search_for(&mut app, "needle");
+            press(&mut app, KeyCode::Enter);
+            assert!(!app.overlay.is_open());
+            assert_eq!(app.focus, Focus::Tree);
+            let want = std::fs::canonicalize(dir.join("src/needle.rs")).unwrap();
+            assert_eq!(app.tree.as_ref().and_then(|t| t.selected_path()), Some(want.as_path()));
+
+            std::fs::write(dir.join("other.rs"), "").unwrap();
+            app.focus = Focus::Panes;
+            search_for(&mut app, "other");
+            press(&mut app, KeyCode::Enter);
+            let want = std::fs::canonicalize(dir.join("other.rs")).unwrap();
+            assert_eq!((app.focus, app.tree.as_ref().and_then(|t| t.selected_path())), (Focus::Tree, Some(want.as_path())), "the tree already open");
+        });
+    }
+
+    #[test]
+    fn from_a_space_at_home_search_walks_no_folder_macos_guards_and_says_so() {
+        crate::config::tests::with_temp_home(|| {
+            let home = std::fs::canonicalize(crate::paths::home().unwrap()).unwrap();
+            std::fs::create_dir_all(home.join("Documents")).unwrap();
+            std::fs::write(home.join("Documents/needle-secret.txt"), "").unwrap();
+            std::fs::write(home.join("needle-notes.txt"), "").unwrap();
+            let mut app = with_one_space();
+            app.spaces[0].cwd = home.clone();
+            search_for(&mut app, "needle");
+            let files: Vec<String> = find(&app).of(crate::find::Group::Files).iter().map(|h| h.name.clone()).collect();
+            assert_eq!(files, ["needle-notes.txt"]);
+            let note = find(&app).files_note.clone().unwrap_or_default();
+            assert!(note.contains("Documents") && note.contains("are not searched"), "{note:?}");
+            for _ in 0..5 {
+                press(&mut app, KeyCode::Tab);
+            }
+            assert_eq!(find(&app).tab, Some(crate::find::Group::Files));
+            let shown = screen(&mut app);
+            for line in crate::menu::wrap(&note, 62) {
+                assert!(shown.contains(line.trim()), "the Files tab shows all of the note, wrapped: {line:?} in {shown}");
+            }
+        });
+    }
+
+    #[test]
+    fn a_line_longer_than_what_a_row_keeps_is_listed_for_a_word_past_the_cut() {
+        with_policy("search-text-long", || {
+            let mut app = named();
+            app.pane_mut(3).unwrap().term = crate::term::Term::new(300, 24, 100);
+            app.pane_mut(3).unwrap().term.feed(format!("{} иголка\r\n", "я".repeat(270)).as_bytes());
+            search_for(&mut app, "иголка");
+            for _ in 0..7 {
+                press(&mut app, KeyCode::Tab);
+            }
+            press(&mut app, KeyCode::Enter);
+            let shown = screen(&mut app);
+            assert!(shown.contains("яяя") && shown.contains("reader") && !shown.contains("No pane has this text"), "{shown}");
+        });
+    }
+
+    #[test]
+    fn a_huge_pane_line_or_name_listed_by_search_draws_a_frame_fast() {
+        with_policy("search-huge", || {
+            let mut app = named();
+            let marks = "\u{301}".repeat(64_000);
+            app.pane_mut(3).unwrap().term = crate::term::Term::new(80, 24, 100);
+            app.pane_mut(3).unwrap().term.feed(format!("a{marks} needle tail\r\n").as_bytes());
+            app.pane_mut(4).unwrap().label = Some(format!("needle{marks}"));
+            search_for(&mut app, "needle");
+            for _ in 0..7 {
+                press(&mut app, KeyCode::Tab);
+            }
+            press(&mut app, KeyCode::Enter);
+            assert!(!find(&app).of(crate::find::Group::Text).is_empty(), "the line is found");
+            let t = Instant::now();
+            let shown = screen(&mut app);
+            assert!(t.elapsed() < Duration::from_millis(200), "the Text tab: {:?}", t.elapsed());
+            assert!(shown.contains("reader") && !shown.contains("No pane has this text"), "and listed, its word past the cut: {shown}");
+            press(&mut app, KeyCode::Tab);
+            press(&mut app, KeyCode::Tab);
+            assert_eq!(find(&app).tab, Some(crate::find::Group::Panes));
+            let t = Instant::now();
+            let shown = screen(&mut app);
+            assert!(t.elapsed() < Duration::from_millis(200) && shown.contains("needle"), "the pane of that name: {:?}", t.elapsed());
+            press(&mut app, KeyCode::Enter);
+            assert_eq!(app.tab().map(|t| t.layout.focused()), Some(4), "and it is still gone to");
+        });
+    }
+
+    #[test]
+    fn from_a_folder_above_home_search_still_walks_no_folder_macos_guards() {
+        let root = std::fs::canonicalize(crate::paths::test_dir("above-home")).unwrap();
+        let home = root.join("Users/me");
+        std::fs::create_dir_all(home.join("Documents")).unwrap();
+        std::fs::write(home.join("Documents/needle-secret.txt"), "").unwrap();
+        std::fs::write(home.join("needle-notes.txt"), "").unwrap();
+        let old = crate::paths::TEST_HOME.with(|h| h.replace(Some(home.clone())));
+        let mut app = with_one_space();
+        app.spaces[0].cwd = root.clone();
+        search_for(&mut app, "needle");
+        let files: Vec<String> = find(&app).of(crate::find::Group::Files).iter().map(|h| format!("{}/{}", h.place, h.name)).collect();
+        let note = find(&app).files_note.clone();
+        crate::paths::TEST_HOME.with(|h| h.replace(old));
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(files, ["Users/me/needle-notes.txt"]);
+        assert!(note.is_some_and(|n| n.contains("are not searched")));
+    }
+
+    #[test]
+    fn agent_hooks_are_not_changed_from_a_window_inside_a_pane() {
+        crate::session::tests::with_temp_state_dir("inside-hooks", || {
+            let home = crate::paths::home().unwrap();
+            let gemini = home.join(".gemini");
+            let _ = std::fs::remove_dir_all(&gemini);
+            std::fs::create_dir_all(&gemini).unwrap();
+            let mut app = with_one_space();
+            app.client_inside = true;
+            app.overlay = Overlay::Settings(crate::settings::Settings::new(&app.cfg));
+            press(&mut app, KeyCode::Up);
+            press(&mut app, KeyCode::Up);
+            press(&mut app, KeyCode::Enter);
+            assert!(matches!(app.overlay, Overlay::Settings(_)) && screen(&mut app).contains("Not from a window inside a pane"), "the row says why");
+            for confirm in [app.install_hook_overlay(), app.remove_hook_overlay()] {
+                app.overlay = confirm;
+                press(&mut app, KeyCode::Enter);
+                assert_eq!(app.notice.take().as_deref(), Some(INSIDE_REFUSED));
+            }
+            assert!(!gemini.join("settings.json").exists(), "nothing written");
+            let _ = std::fs::remove_dir_all(&gemini);
+        });
+    }
+
+    #[test]
+    fn a_help_page_from_another_mac_names_its_address_and_opens_nothing() {
+        crate::session::tests::with_temp_state_dir("search-help", || {
+            let mut app = with_one_space();
+            app.caps.bye = true;
+            search_for(&mut app, "leaves");
+            let shown = screen(&mut app);
+            let (x, y) = find_on_screen(&shown, "Privacy and security › What leaves nerd").unwrap_or_else(|| panic!("{shown}"));
+            mouse_at(&mut app, crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left), (x, y));
+            let shown = screen(&mut app);
+            assert!(shown.contains("[o] open on nerdterm.dev") && shown.contains("[Esc] back"), "{shown}");
+            letter(&mut app, "o");
+            assert_eq!(find(&app).note, Some((false, "this window is on another Mac; the page is https://nerdterm.dev/security/#what-leaves-nerd".to_string())), "information, not an error");
+            assert!(screen(&mut app).contains("https://nerdterm.dev/security/#what-leaves-nerd"), "said in the window");
+            press(&mut app, KeyCode::Esc);
+            assert!(matches!(app.overlay, Overlay::Find(_)), "Esc goes back to the results");
+        });
+    }
+
     /// Runs `f` with policy.json in a state folder of its own, the policy reset around it.
     fn with_policy(tag: &str, f: impl FnOnce()) {
         let _l = crate::policy::TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -2237,8 +2651,10 @@ mod tests {
         let main = Tab { name: Some("main".into()), layout, panes: HashMap::from([(1, pane(&app, 1, Some("planner"))), (2, pane(&app, 2, None))]), isolation_new: None };
         let two = Tab { name: Some("two".into()), layout: Layout::new(4), panes: HashMap::from([(4, pane(&app, 4, Some("coder")))]), isolation_new: None };
         let research = Tab { name: None, layout: Layout::new(3), panes: HashMap::from([(3, pane(&app, 3, Some("reader")))]), isolation_new: None };
-        app.spaces.push(Space { name: Some("work".into()), cwd: "/".into(), tabs: vec![main, two], active_tab: 0, isolation_new: None });
-        app.spaces.push(Space { name: Some("research".into()), cwd: "/".into(), tabs: vec![research], active_tab: 0, isolation_new: None });
+        // A folder that is not there: Search walks nothing for these spaces, not the real `/`.
+        let cwd = std::env::temp_dir().join("nerd-test-no-such-folder");
+        app.spaces.push(Space { name: Some("work".into()), cwd: cwd.clone(), tabs: vec![main, two], active_tab: 0, isolation_new: None });
+        app.spaces.push(Space { name: Some("research".into()), cwd, tabs: vec![research], active_tab: 0, isolation_new: None });
         app.next_id = 5;
         app.screen = Rect::new(0, 0, 160, 30);
         app
@@ -2786,6 +3202,60 @@ mod tests {
             press(&mut app, KeyCode::Enter);
             refused(&mut app, "a topology");
 
+            // Plugins, through their window and through Search: only turning one off is left to a window inside a pane.
+            use crate::plugin_list::{Act, Out};
+            crate::install::place(crate::install::stage_add(&plugin_repo("plug").to_string_lossy(), None, true).unwrap()).unwrap();
+            std::fs::create_dir_all(crate::plugins::data_dir("plug")).unwrap();
+            std::fs::create_dir_all(crate::catalog::dir().join("plugins")).unwrap();
+            let entry = serde_json::json!({ "title": "Todos", "url": "https://github.com/me/todos.git", "tag": "v1.0.0", "commit": "a".repeat(40), "version": "1.0.0", "risk": 0, "review": "checked" });
+            std::fs::write(crate::catalog::dir().join("plugins/todos.json"), entry.to_string()).unwrap();
+            let act = |app: &mut App, name: &str, a: Act| {
+                let Overlay::Plugins(w) = app.run_action(Action::Plugins, &MenuCtx::Global) else { panic!("it opens") };
+                app.overlay = app.plugins_outcome(w, Out::Act(name.into(), a));
+            };
+            let off = || crate::install::read_off().unwrap().contains_key("plug");
+            act(&mut app, "plug", Act::Off);
+            assert!(off() && app.notice.is_none(), "turning off is allowed");
+            act(&mut app, "plug", Act::On);
+            refused(&mut app, "Turn on");
+            assert!(off());
+            act(&mut app, "plug", Act::Update);
+            refused(&mut app, "Update");
+            act(&mut app, "todos", Act::Install);
+            refused(&mut app, "Install");
+            assert!(app.plugin_job.is_none(), "no fetch started");
+            assert!(matches!(app.overlay, Overlay::Plugins(_)), "the window stays to say why");
+            for (k, what) in [("y", "Remove"), ("d", "Remove with its data")] {
+                act(&mut app, "plug", Act::Remove);
+                assert!(matches!(app.overlay, Overlay::Confirm(_, Pending::RemovePlugin(_))), "{what} asks");
+                letter(&mut app, k);
+                refused(&mut app, what);
+            }
+            assert!(crate::paths::state_root().join("plugins/plug").is_dir() && crate::plugins::data_dir("plug").is_dir());
+            app.plugins_back = None;
+            staged_by_a_pane("other");
+            app.ask_staged_plugin();
+            click_yes(&mut app);
+            refused(&mut app, "the install question");
+            assert!(!crate::paths::state_root().join("plugins/other").exists());
+            search_for(&mut app, "plug");
+            for _ in 0..4 {
+                press(&mut app, KeyCode::Tab);
+            }
+            assert_eq!(find(&app).tab, Some(crate::find::Group::Plugins));
+            press(&mut app, KeyCode::Enter);
+            assert_eq!(find(&app).note, Some((true, INSIDE_REFUSED.to_string())), "Turn on from Search, said in the window");
+            assert!(screen(&mut app).contains("Not from a window inside a pane"), "wrapped in the window");
+            assert!(off() && app.notice.is_none() && *crate::policy::current() == *before);
+            for _ in 0..4 {
+                press(&mut app, KeyCode::Backspace);
+            }
+            letter(&mut app, "todos");
+            press(&mut app, KeyCode::Enter);
+            let Overlay::Plugins(w) = std::mem::replace(&mut app.overlay, Overlay::None) else { panic!("a catalog plugin opens the Plugins window") };
+            app.overlay = app.plugins_outcome(w, Out::Act("todos".into(), Act::Install));
+            refused(&mut app, "Install from Search's Plugins window");
+
             assert_eq!(app.pane(1).unwrap().label.as_deref(), Some("planner"));
             assert!(app.pane(1).unwrap().isolation.is_open());
             assert_eq!(app.spaces[0].tabs[0].isolation_new, None);
@@ -2960,12 +3430,6 @@ mod tests {
         let r = m.rect(area);
         assert_eq!(at(&app, r.x + 2, r.y + 1), POINTER, "a menu item");
         assert_eq!(at(&app, r.x, r.y), DEFAULT, "the menu's frame");
-    }
-
-    #[test]
-    fn navigator_from_the_menu_opens_it() {
-        let mut app = with_one_space();
-        assert!(matches!(app.run_action(Action::Navigator, &MenuCtx::Global), Overlay::Navigator(_)));
     }
 
     #[test]
@@ -3613,7 +4077,7 @@ mod tests {
     fn the_main_menu_follows_its_anatomy_inside_and_outside_tmux() {
         let mut app = with_one_space();
         let plain = [
-            "New space…", "New tab [⌥+C]", "Navigator… [⌥+N]", "—",
+            "New space…", "New tab [⌥+C]", "Search… [⌥+O]", "—",
             "Show file tree [⌥+T]", "Collapse sidebar [⌥+S]", "—",
             "Settings… [⌥+,]", "Keys and mouse… [⌥+K]", "Plugins…", "Reload plugins and agents", "—",
             "Messages…", "Routes map…", "Rename this server…", "Servers…", "Session history…", "—",
@@ -3872,8 +4336,8 @@ mod tests {
         app.cfg.preview = true;
         app.toggle_tree();
         let menu = |app: &App, path: &std::path::Path| rows(app.tree_menu(path.to_path_buf(), path.is_dir(), (1, 1)));
-        let file = ["Open in editor [⌥+E]", "Open in its app [⌥+O]", "Insert path into pane [⌥+I]", "Copy path [⌥+Y]"];
-        let folder = ["Go to this folder in the pane [⌥+D]", "Open as a space [⌥+P]", "Make it the root [⌥+=]", "New file or folder… [⌥+A]", "Open in Finder [⌥+O]", "Copy path [⌥+Y]"];
+        let file = ["Open in editor [⌥+E]", "Open in its app [⌥+J]", "Insert path into pane [⌥+I]", "Copy path [⌥+Y]"];
+        let folder = ["Go to this folder in the pane [⌥+D]", "Open as a space [⌥+P]", "Make it the root [⌥+=]", "New file or folder… [⌥+A]", "Open in Finder [⌥+J]", "Copy path [⌥+Y]"];
         let on = ["Full screen [z]", "~Next view [v]", "Wrap long lines [w]"];
         let off = ["~Full screen [z]", "~Next view [v]", "~Wrap long lines [w]"];
         let expect = |what: &[&str], view: &str, shape: &str, hidden: &str, zoom: &[&str]| -> Vec<String> {

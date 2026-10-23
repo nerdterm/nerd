@@ -48,6 +48,39 @@ Every window except a context menu is drawn through `chrome::dialog`, and `chrom
   the window is broken the same way, close on the last line.
 - Section headers are sentence case; a rule between groups is drawn in the border colour.
 
+## Search
+
+**Search…** in the main menu, the `Search` button on the top row and `⌥`+`O` open one window over what nerd already
+has. The field has a frame of its own at the top. Type to filter; every word must match. Nothing is listed before a
+letter is typed: the sidebar already lists the panes. Each result is one line, its name on the left and one value on
+the right (a key, a setting's value, a folder, a pane's place); a name, place or value is cut at 512 bytes. Search
+is the exception to the size rules above: it is 68 columns wide with its frame, keeps its top where its longest list
+would put it and grows downward with its results, up to 14 rows; more scroll, and the list moves only to keep the
+chosen row in view, never under the pointer. Groups are tabs: All, Panes, Commands, Settings, Plugins, Files, Help
+and Text; on a narrow window the tabs and the chips take more lines. All shows at most five rows of each group and a
+row that says how many more there are. Panes has chips for the agent states; a chip other than all lists the panes
+in that state. Search, a name field and New space take a paste's first line; every other window drops it; the pane
+search and the file tree's filter take it while they hold the keys, and the sidebar and the tab bar drop it. What a
+result says while the window stays (a pane that has closed, a refusal, a help page's address) is a line in the
+window above the keys, gone at the next letter typed; a longer note takes more rows.
+
+- Panes: Enter or a click goes to the pane.
+- Commands: runs the menu item on the pane, tab or space it was listed for; a pane that has closed gives a notice and
+  nothing else is touched. The item's own window replaces Search.
+- Settings: a setting that is on or off toggles in its row and Search stays; every other setting opens Settings on
+  that row.
+- Plugins: an installed plugin turns on or off in its row; one only in the catalog opens the Plugins window.
+- Files: shows the file in the file tree. Names are read once per window, from the second letter typed, or the first
+  on the Files tab; a link is listed by its own name and never followed. Desktop, Documents, Downloads, Library,
+  Pictures, Movies and Music in the home folder, and other disks and network folders (/Volumes, /net, /Network,
+  /System/Volumes), are never entered from outside them, and the Files tab says so; a space inside one is searched.
+- Help: shows the section in the window; `o` opens its page on nerdterm.dev.
+- Text: searches the text of every pane, only on Enter, never while typing; the last row searches again. A line opens
+  in the pane search, on that line even when the pane has printed more since.
+
+A window attached from inside a pane is refused the same actions through Search as through the windows they come
+from (turning a plugin on, removing, installing, updating).
+
 ## Servers
 
 - Main menu, server group: Messages…, Routes map…, Rename this server…, **Servers…**, Session history…, and, inside

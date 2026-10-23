@@ -79,7 +79,7 @@ pub const COMMAND: &[Key] = &[
           } },
     Key { code: Char('i'), alt: true, label: "⌥+I", word: "insert", what: "insert its path into the pane", group: Group::Do,
           act: |t, _, _| match t.sel() { Some(r) => Outcome::InsertPath(r.path), None => Outcome::None } },
-    Key { code: Char('o'), alt: true, label: "⌥+O", word: "open", what: "open in its app, or a folder in Finder", group: Group::Do,
+    Key { code: Char('j'), alt: true, label: "⌥+J", word: "open", what: "open in its app, or a folder in Finder", group: Group::Do,
           act: |t, _, _| match t.sel() { Some(r) => Outcome::OpenSystem(r.path), None => Outcome::None } },
     Key { code: Char('y'), alt: true, label: "⌥+Y", word: "copy", what: "copy its path", group: Group::Do,
           act: |t, _, _| match t.sel() { Some(r) => Outcome::CopyPath(r.path), None => Outcome::None } },
@@ -173,6 +173,22 @@ impl Tree {
             self.selected = k;
             self.focus = Focus::Tree;
         }
+    }
+
+    /// A pasted line into the filter or grep query, as typing it would; the preview takes none.
+    pub fn paste(&mut self, s: &str) {
+        if self.focus == Focus::Preview || s.is_empty() {
+            return;
+        }
+        if !self.typing {
+            self.start_filter(s);
+        } else {
+            self.query.push_str(s);
+            if self.mode == Mode::Filter {
+                self.reload();
+            }
+        }
+        self.selected = 0;
     }
 
     pub fn key(&mut self, v: &TreeView, k: crossterm::event::KeyEvent) -> Outcome {

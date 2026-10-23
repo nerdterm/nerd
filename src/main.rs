@@ -32,7 +32,8 @@ mod mailcli;
 mod messages;
 mod mouse;
 mod msock;
-mod navigator;
+mod find;
+mod help;
 mod notify;
 mod panel;
 mod paths;
@@ -290,7 +291,7 @@ fn help(autostart: &str, hook: &str) -> String {
          Right click anything for its menu. Keys: ⌃+B, then one of these (⌃+B twice sends it to the pane);\n\
          where Option is sent as Alt (nerd --preset), ⌥ and the same key, with shift for an arrow:\n\
            K  keys        M  main menu   /  search the pane\n\
-           T  file tree   N  navigator   ,  settings\n\
+           T  file tree   O  search      ,  settings\n\
            C  new tab     W  close pane  Q  detach\n\
            -  split down  \\  split side  Z  full screen\n\
            S  sidebar     U  update      an arrow  move between panes and areas\n\

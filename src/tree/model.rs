@@ -149,6 +149,15 @@ impl Tree {
         self.hidden
     }
 
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    #[cfg(test)]
+    pub fn query(&self) -> &str {
+        &self.query
+    }
+
     /// How images show now; the preview on screen follows at once.
     pub fn set_image_view(&mut self, view: crate::preview::ImageView) {
         self.image_view = view;
@@ -474,9 +483,8 @@ impl Tree {
             return;
         }
         let mut hits = Vec::new();
-        let end = walk_names(&self.scope, self.hidden, FIND_TIME, |e, rel, link| {
-            let file = if link { e.path().is_file() } else { e.file_type().is_ok_and(|t| t.is_file()) };
-            if file && rel.to_lowercase().contains(&q) {
+        let (end, _) = walk_names(&self.scope, self.hidden, FIND_TIME, &[], |e, rel, link| {
+            if (link || e.file_type().is_ok_and(|t| t.is_file())) && rel.to_lowercase().contains(&q) {
                 hits.push((e.path(), rel.to_string()));
             }
             // One past the cap tells "exactly N" from "more than N".
@@ -485,7 +493,8 @@ impl Tree {
         hits.sort_by_cached_key(|(_, rel)| tree_order(rel));
         hits.truncate(FIND_MAX);
         for (path, rel) in hits {
-            let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+            // A link's own size: its target could hang on a dead mount.
+            let size = std::fs::symlink_metadata(&path).map(|m| m.len()).unwrap_or(0);
             self.rows.push(found(path, rel, size, None));
         }
         self.cut = self.cut_by(end, "filter");
@@ -499,7 +508,7 @@ impl Tree {
             return;
         }
         let mut hits = Vec::new();
-        let end = walk_names(&self.scope, self.hidden, GREP_TIME, |e, rel, _| {
+        let (end, _) = walk_names(&self.scope, self.hidden, GREP_TIME, &[], |e, rel, _| {
             let path = e.path();
             let Ok(md) = std::fs::metadata(&path) else { return true };
             let size = md.len();
@@ -929,15 +938,17 @@ enum Walked {
     OutOfTime(std::time::Duration),
 }
 
-/// `visit` gets (entry, path from root, is a symlink) for anything not a folder; false stops the walk.
-fn walk_names(root: &Path, hidden: bool, budget: std::time::Duration, mut visit: impl FnMut(&std::fs::DirEntry, &str, bool) -> bool) -> Walked {
+/// `visit` gets (entry, path from root, is a symlink) for anything not a folder; false stops the walk. Entries are
+/// classified without following a link, and the folders in `skip` are not entered; true when one was met.
+fn walk_names(root: &Path, hidden: bool, budget: std::time::Duration, skip: &[PathBuf], mut visit: impl FnMut(&std::fs::DirEntry, &str, bool) -> bool) -> (Walked, bool) {
     let started = std::time::Instant::now();
+    let mut skipped = false;
     let mut stack = vec![(root.to_path_buf(), String::new(), 0u16)];
     while let Some((dir, rel, depth)) = stack.pop() {
         let Ok(rd) = std::fs::read_dir(&dir) else { continue };
         for e in rd.flatten() {
             if started.elapsed() >= budget {
-                return Walked::OutOfTime(budget);
+                return (Walked::OutOfTime(budget), skipped);
             }
             let name = e.file_name();
             let name = name.to_string_lossy();
@@ -945,19 +956,36 @@ fn walk_names(root: &Path, hidden: bool, budget: std::time::Duration, mut visit:
                 continue;
             }
             let Ok(ft) = e.file_type() else { continue };
-            let skip = is_skipped(&name);
+            let huge = is_skipped(&name);
             let r = if rel.is_empty() { name.into_owned() } else { format!("{rel}/{name}") };
             // A symlinked folder is not entered: it could be a shortcut to a cycle.
             if ft.is_dir() {
-                if depth + 1 < DEEP_DEPTH && !skip {
-                    stack.push((e.path(), r, depth + 1));
+                let path = e.path();
+                if skip.contains(&path) {
+                    skipped = true;
+                } else if depth + 1 < DEEP_DEPTH && !huge {
+                    stack.push((path, r, depth + 1));
                 }
             } else if !visit(&e, &r, ft.is_symlink()) {
-                return Walked::Stopped;
+                return (Walked::Stopped, skipped);
             }
         }
     }
-    Walked::All
+    (Walked::All, skipped)
+}
+
+/// Every file under `root` from it, a link by its own name, walked as the filter walks and never into `skip`; the time it
+/// ran out after, if it did, and whether a folder of `skip` was passed by.
+/// ceiling: no cap but the filter's time, so a folder walked whole in it is found whole; a slower disk finds less.
+pub(crate) fn file_names(root: &Path, hidden: bool, skip: &[PathBuf]) -> (Vec<String>, Option<std::time::Duration>, bool) {
+    let mut out = Vec::new();
+    let (end, skipped) = walk_names(root, hidden, FIND_TIME, skip, |e, rel, link| {
+        if link || e.file_type().is_ok_and(|t| t.is_file()) {
+            out.push(rel.to_string());
+        }
+        true
+    });
+    (out, if let Walked::OutOfTime(t) = end { Some(t) } else { None }, skipped)
 }
 
 /// The order the tree walk used to give: folders before files at each level, then by name ignoring case.

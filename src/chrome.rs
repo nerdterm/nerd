@@ -114,15 +114,25 @@ pub const CLOSE: &str = " [Esc] close ";
 
 /// Where the close button sits in dialog `r`: the last row inside the frame, centred.
 pub fn close_rect(r: Rect) -> Rect {
+    button_rect(r, CLOSE)
+}
+
+/// Where a button labelled `label` sits in the close button's place.
+pub fn button_rect(r: Rect, label: &str) -> Rect {
     let inner = r.inner(DIALOG_FRAME);
-    let len = (CLOSE.chars().count() as u16).min(inner.width);
+    let len = (label.chars().count() as u16).min(inner.width);
     Rect::new(inner.x + (inner.width - len) / 2, inner.bottom().saturating_sub(1), len, 1)
 }
 
 /// Draws the close button of dialog `r`; returns what is left of its inside above the button and a blank row.
 pub fn close_button(buf: &mut Buffer, r: Rect, theme: &Theme) -> Rect {
-    let b = close_rect(r);
-    buf.set_stringn(b.x, b.y, CLOSE, b.width as usize, Style::default().bg(theme.ground).fg(theme.text));
+    button(buf, r, CLOSE, theme)
+}
+
+/// The close button with another label, as `close_button`.
+pub fn button(buf: &mut Buffer, r: Rect, label: &str, theme: &Theme) -> Rect {
+    let b = button_rect(r, label);
+    buf.set_stringn(b.x, b.y, label, b.width as usize, Style::default().bg(theme.ground).fg(theme.text));
     let inner = r.inner(DIALOG_FRAME);
     Rect { height: inner.height.saturating_sub(2), ..inner }
 }
@@ -465,7 +475,7 @@ mod tests {
         let mut picker = Picker::new("Pick", vec![item("a"), item("b"), item(&"c".repeat(50))]);
         let mut prompt = Prompt::new("Rename pane", "x");
         let mut confirm = Confirm::new("Close pane", "Sure?");
-        let mut nav = crate::navigator::Navigator::new(Vec::new());
+        let mut find = crate::find::Find::new();
         let mut keys = crate::keyshelp::KeysHelp::new(Prefix::Off);
         let settings = crate::settings::Settings::new(&Config::default());
         let sessions = crate::clients::Sessions::new(Vec::new(), None);
@@ -474,7 +484,7 @@ mod tests {
         let draws: Vec<(&str, Draw)> = vec![
             ("Settings", Box::new(|b, s| { settings.draw(b, s, &theme); })),
             ("Keys and mouse", Box::new(|b, s| keys.draw(b, s, &theme))),
-            ("Navigator", Box::new(|b, s| { nav.draw(b, s, &theme); })),
+            ("Search", Box::new(|b, s| { find.draw(b, s, &theme); })),
             ("Pick", Box::new(|b, s| { picker.draw(b, s, &theme); })),
             ("Rename pane", Box::new(|b, s| prompt.draw(b, s, &theme))),
             ("Close pane", Box::new(|b, s| { confirm.draw(b, s, &theme); })),
@@ -489,7 +499,11 @@ mod tests {
                 let (r, top) = frame(&buf);
                 assert!(top.contains(&format!(" {title} ")), "{title}: the title is in the frame: {top:?}");
                 assert!(r.width <= max_w && r.height <= max_h && r.width >= 40.min(max_w), "{title}: {r:?} inside the margins");
-                assert_eq!((r.x, r.y), ((screen.width - r.width) / 2, (screen.height - r.height) / 2), "{title}: centred");
+                assert_eq!(r.x, (screen.width - r.width) / 2, "{title}: centred");
+                // Search keeps its top where its longest list would put it, and grows downward.
+                if *title != "Search" {
+                    assert_eq!(r.y, (screen.height - r.height) / 2, "{title}: centred");
+                }
             }
         }
         let big = Rect::new(0, 0, 300, 200);
@@ -511,8 +525,11 @@ mod tests {
         let short = confirm.rect(big).height;
         confirm.body = "word ".repeat(30);
         assert!(confirm.rect(big).height > short, "a longer body makes it taller");
-        nav.query = "zzz".into();
-        assert_eq!(nav.rect(big), crate::navigator::Navigator::new(Vec::new()).rect(big), "a search does not move it");
+        let r = find.rect(big);
+        find.query = "zzz".into();
+        let typed = find.rect(big);
+        assert!(typed.x == r.x && typed.y == r.y && typed.width == r.width, "typing does not move Search, it only grows down");
+        assert_eq!(size(&|b, s| { find.draw(b, s, &theme); }), (typed.width, typed.height), "and it draws what it measured");
         let r = keys.rect(big);
         keys.key(KeyEvent::from(KeyCode::Char('/')));
         keys.key(KeyEvent::from(KeyCode::Char('z')));

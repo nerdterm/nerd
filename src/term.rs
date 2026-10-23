@@ -239,6 +239,12 @@ impl Term {
             .collect()
     }
 
+    /// One row as `all_lines` gives it, by its place from the top of the live screen (history is negative).
+    pub fn line(&self, row: isize) -> Option<String> {
+        let g = self.term.grid();
+        (-(g.history_size() as isize)..g.screen_lines() as isize).contains(&row).then(|| row_text(&self.term, Line(row as i32)).0)
+    }
+
     /// Lines as written: wrapped rows joined, so a narrower or wider terminal wraps them again.
     fn logical_lines(&self, styled: bool) -> Vec<Vec<u8>> {
         let g = self.term.grid();

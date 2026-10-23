@@ -112,6 +112,8 @@ pub struct Settings {
     hook_installed: bool,
     /// An install error, red, under the list; without one the selected row's hint shows there.
     message: Option<(bool, String)>,
+    /// The window is attached from inside a pane: agent hooks are not changed from it.
+    pub inside: bool,
 }
 
 /// One key this screen answers: the handler dispatches on these rows and the strip prints them.
@@ -148,6 +150,7 @@ impl Settings {
             cfg: cfg.clone(),
             hook_installed: crate::hook::is_installed(),
             message: None,
+            inside: false,
         }
     }
 
@@ -269,9 +272,27 @@ impl Settings {
     }
 
     /// Selects the row with this label.
-    #[cfg(test)]
     pub fn choose(&mut self, label: &str) {
-        self.selected = ROWS.iter().position(|r| r.1 == label).expect("a row with that label");
+        let at = ROWS.iter().position(|r| r.1 == label);
+        debug_assert!(at.is_some(), "no settings row {label:?}");
+        self.selected = at.unwrap_or(0);
+    }
+
+    /// Every row as (section, label, value now, changed in Search's row): only the six config.json switches are.
+    pub fn rows(&self) -> Vec<(&'static str, &'static str, String, bool)> {
+        let mut section = "";
+        ROWS.iter()
+            .map(|(head, label, item)| {
+                section = head.unwrap_or(section);
+                let in_place = matches!(item, Item::Scrollbar | Item::RestoreScreens | Item::Preview | Item::Wrap | Item::NotifySound | Item::NotifyBell);
+                (section, *label, self.value(*item), in_place)
+            })
+            .collect()
+    }
+
+    #[cfg(test)]
+    pub fn chosen(&self) -> &'static str {
+        ROWS[self.selected].1
     }
 
     #[cfg(test)]
@@ -400,6 +421,10 @@ impl Settings {
 
     /// Both ways ask first when a person has not yet read what changes; a hooked agent is removed even if its resume line changed.
     fn toggle_hook(&mut self) -> SettingsOutcome {
+        if self.inside {
+            self.message = Some((true, crate::app::INSIDE_REFUSED.into()));
+            return SettingsOutcome::None;
+        }
         if self.hook_installed {
             return SettingsOutcome::RemoveHook;
         }
@@ -498,6 +523,25 @@ mod tests {
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn search_changes_in_place_only_the_six_config_json_switches() {
+        let cfg = Config::default();
+        let in_place: Vec<&str> = Settings::new(&cfg).rows().into_iter().filter(|r| r.3).map(|r| r.1).collect();
+        assert_eq!(in_place, ["Scrollbars", "File preview", "Wrap long lines", "Play a sound", "Ring the terminal bell", "Restore screens after a restart"]);
+        for label in in_place {
+            let mut s = Settings::new(&cfg);
+            s.choose(label);
+            let mut changed = cfg.clone();
+            assert_eq!(s.key(key(KeyCode::Enter), &mut changed), SettingsOutcome::Changed, "{label}");
+            let diff = |c: &Config| serde_json::to_value(c).unwrap();
+            let (a, b) = (diff(&cfg), diff(&changed));
+            let keys: Vec<&String> = a.as_object().unwrap().keys().filter(|k| a[k.as_str()] != b[k.as_str()]).collect();
+            assert_eq!(keys.len(), 1, "{label}: one key changes: {keys:?}");
+            assert!(b[keys[0].as_str()].is_boolean() || b[keys[0].as_str()].as_object().is_some(), "{label}: a switch");
+        }
+        assert_eq!(Settings::new(&cfg).rows().iter().find(|r| r.1 == "Wrap long lines").map(|r| r.0), Some("Files"), "the section a row is under");
     }
 
     fn mouse(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {

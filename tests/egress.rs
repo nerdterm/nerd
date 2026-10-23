@@ -429,6 +429,13 @@ fn every_door_out_of_nerd_is_listed_with_its_register_row() {
     assert!(undoored.is_empty(), "register rows with no door in ALLOW and not in STATED_ONLY: {undoored:?}");
 }
 
+#[test]
+fn the_link_row_names_the_help_page_opened_from_search() {
+    let doc = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/privacy-and-security.md")).unwrap();
+    let row = doc.lines().find(|l| l.contains("<!-- egress:link -->")).expect("the egress:link row");
+    assert!(row.contains("Search"), "a help page opened from Search is a link door: {row}");
+}
+
 /// The scan's own coverage: each shape a door was once hidden in must still be reported.
 #[test]
 fn every_known_hiding_place_is_seen() {

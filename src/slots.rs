@@ -91,18 +91,32 @@ fn wide(s: &str, cap: usize) -> bool {
     s.len() > cap * CELL_BYTES || cells(&clean(s)) > cap
 }
 
-/// `s` cut to `max` cells, with an ellipsis when cut: for built-ins, which must stay under the caps.
+/// Each grapheme of `s` as the terminal draws it, an emoji sequence as one: its byte offset in `s`, the grapheme and
+/// its width in cells; `f` returns false to stop. A grapheme with a control character is skipped, as a frame skips it.
+pub fn graphemes(s: &str, mut f: impl FnMut(usize, &str, usize) -> bool) {
+    let span = ratatui::text::Span::raw(s);
+    for g in span.styled_graphemes(ratatui::style::Style::default()) {
+        // the span borrows `s`, so each grapheme is a slice of it
+        if !f(g.symbol.as_ptr() as usize - s.as_ptr() as usize, g.symbol, cells(g.symbol)) {
+            break;
+        }
+    }
+}
+
+/// `s` cut to `max` cells, with an ellipsis when cut; one pass, so a line of pane output costs its length.
 pub fn fit(s: &str, max: usize) -> String {
     if cells(s) <= max {
         return s.to_string();
     }
-    let mut out = String::new();
-    for c in s.chars() {
-        if cells(&out) + cells(&c.to_string()) + 1 > max {
-            break;
+    let (mut out, mut used) = (String::new(), 0);
+    graphemes(s, |_, g, w| {
+        if used + w + 1 > max {
+            return false;
         }
-        out.push(c);
-    }
+        out.push_str(g);
+        used += w;
+        true
+    });
     out + "\u{2026}"
 }
 
@@ -471,6 +485,16 @@ pub fn layout(widths: &[u16], from: u16, end: u16) -> Vec<u16> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fit_measures_what_the_terminal_draws_in_one_pass() {
+        let hearts = "\u{2764}\u{FE0F}".repeat(300);
+        assert!(cells(&fit(&hearts, 100)) <= 100, "an emoji sequence is two cells, not one");
+        let long = "ab".repeat(1_000_000);
+        let t = std::time::Instant::now();
+        assert_eq!(cells(&fit(&long, 1_000_000)), 1_000_000);
+        assert!(t.elapsed() < std::time::Duration::from_secs(1), "2 MB in one pass: {:?}", t.elapsed());
+    }
 
     #[test]
     fn zero_width_text_is_capped_by_its_bytes() {

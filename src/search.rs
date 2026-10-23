@@ -133,6 +133,23 @@ impl Search {
         self.current = self.current.min(self.matches.len().saturating_sub(1));
     }
 
+    /// Of the matches on rows `same` accepts, else of all: the first on this row, else the nearest above it, else the
+    /// nearest below. What the pane printed since the row was taken mostly moves its lines up.
+    pub fn choose_row(&mut self, row: isize, same: impl Fn(isize) -> bool) {
+        let near = |i: &usize| (self.matches[*i].row > row, self.matches[*i].row.abs_diff(row));
+        let pick = (0..self.matches.len()).filter(|&i| same(self.matches[i].row)).min_by_key(near).or_else(|| (0..self.matches.len()).min_by_key(near));
+        if let Some(i) = pick {
+            self.current = i;
+        }
+    }
+
+    /// A pasted line into the query, as typing it would.
+    pub fn paste(&mut self, s: &str) {
+        self.query.push_str(s);
+        self.current = 0;
+        self.typing = true;
+    }
+
     pub fn current(&self) -> Option<Match> {
         self.matches.get(self.current).copied()
     }

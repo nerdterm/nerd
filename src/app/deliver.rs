@@ -555,6 +555,28 @@ mod tests {
     }
 
     #[test]
+    fn a_paste_while_a_window_is_open_goes_into_its_field_and_never_into_the_pane() {
+        with_app("paste-window", "codex", AgentState::Idle, |app, _, typed| {
+            app.spaces[0].tabs[0].layout.focus(2);
+            app.overlay = app.run_action(crate::app::Action::SearchAll, &crate::app::MenuCtx::Global);
+            app.paste("needle\x1b[201~ here\nrm -r ~/x\n");
+            let crate::app::Overlay::Find(f) = &app.overlay else { panic!("Search stays") };
+            assert_eq!(f.query, "needle[201~ here", "the first line, its controls dropped");
+            app.overlay = app.run_action(crate::app::Action::RenamePane, &crate::app::MenuCtx::Pane(2));
+            app.paste("boss\rignored");
+            let crate::app::Overlay::Prompt(p, _) = &app.overlay else { panic!("the field stays") };
+            assert!(p.value.ends_with("boss"), "{}", p.value);
+            app.overlay = app.run_action(crate::app::Action::Settings, &crate::app::MenuCtx::Global);
+            app.paste("dropped\n");
+            std::thread::sleep(Duration::from_millis(60));
+            assert_eq!(read(typed), "", "nothing reached the pane");
+            app.overlay = crate::app::Overlay::None;
+            app.paste("ok");
+            assert_eq!(read_until(typed, |s| s.contains("ok")), "ok", "with no window the pane gets it");
+        });
+    }
+
+    #[test]
     fn a_message_goes_in_as_one_line_without_bracketed_paste() {
         for bracketed in [false, true] {
             with_app("one-line", "codex", AgentState::Idle, |app, _, typed| {
