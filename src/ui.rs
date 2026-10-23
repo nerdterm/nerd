@@ -482,6 +482,13 @@ pub fn draw(f: &mut Frame, app: &App, view: &mut ViewState, geometry: &[crate::a
             return fx;
         }
         crate::app::Overlay::Navigator(n) => view.dialog.rows = n.draw(f.buffer_mut(), full, &theme),
+        crate::app::Overlay::Find(w) => {
+            view.dialog.find = w.draw(f.buffer_mut(), full, &theme);
+            if let Some(at) = w.cursor(full) {
+                f.set_cursor_position(at);
+                return fx;
+            }
+        }
         crate::app::Overlay::Confirm(c, _) => view.dialog.rects = c.draw(f.buffer_mut(), full, &theme),
         crate::app::Overlay::Picker(p, _) => view.dialog.rects = p.draw(f.buffer_mut(), full, &theme),
         crate::app::Overlay::NewSpace(w) => {

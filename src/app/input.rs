@@ -217,6 +217,17 @@ impl App {
                 let out = p.key(k);
                 self.prompt_outcome(p, ask, out)
             }
+            Overlay::Find(mut f) => {
+                let q = f.query.clone();
+                let out = f.key(k);
+                let o = self.find_outcome(f, out);
+                if let Overlay::Find(f) = &o
+                    && f.query != q
+                {
+                    f.log_filter();
+                }
+                o
+            }
             Overlay::Navigator(mut n) => match n.key(k) {
                 crate::navigator::Outcome::Open(e) => {
                     self.go_to(e.space, e.tab, e.pane);
@@ -508,7 +519,7 @@ impl App {
         self.dirty = true;
     }
 
-    /// The six windows ⌥ and a letter open, numbered as `keys::GLOBAL` binds them. The third one toggles the search.
+    /// The seven windows ⌥ and a letter open, numbered as `keys::GLOBAL` binds them. The third one toggles the search.
     fn fkey(&mut self, n: u8) {
         self.dirty = true;
         match n {
@@ -527,6 +538,7 @@ impl App {
             4 => self.toggle_tree(),
             5 => self.open_navigator(),
             6 => self.overlay = Overlay::Settings(crate::settings::Settings::new(&self.cfg)),
+            7 => self.overlay = self.find_overlay(),
             _ => {}
         }
     }
@@ -539,7 +551,7 @@ impl App {
     }
 
     /// Recompute matches; `follow` also scrolls to the current one.
-    fn search_refresh(&mut self, follow: bool) {
+    pub(super) fn search_refresh(&mut self, follow: bool) {
         let Some((id, search)) = self.search.as_mut() else { return };
         let id = *id;
         let Some(p) = self.spaces.get_mut(self.active).and_then(|sp| sp.tab_mut()).and_then(|t| t.panes.get_mut(&id)) else {
@@ -578,6 +590,7 @@ impl App {
             Overlay::Settings(w) => w.rect(screen),
             Overlay::Keys(w) => w.rect(screen),
             Overlay::Navigator(w) => w.rect(screen),
+            Overlay::Find(w) => w.rect(screen),
             Overlay::NewSpace(w) => w.rect(screen),
             Overlay::Picker(w, _) => w.rect(screen),
             Overlay::Messages(_) => return Some(self.view.dialog.messages.close),
@@ -605,6 +618,7 @@ impl App {
                     || hit(&d.panel.close)
                     || d.messages.hits.iter().any(|(r, _)| hit(r))
                     || d.isolation.hits.iter().any(|(r, _)| hit(r))
+                    || d.find.hits.iter().any(|(r, _)| hit(r))
                     || self.close_button(screen).is_some_and(|r| hit(&r));
                 Some(if row { POINTER } else { DEFAULT })
             }
@@ -1086,6 +1100,10 @@ impl App {
             Overlay::Accounts(mut w) => {
                 let out = w.mouse(ev, &self.view.dialog.isolation);
                 self.accounts_outcome(w, out)
+            }
+            Overlay::Find(mut f) => {
+                let out = f.mouse(ev, screen, &self.view.dialog.find);
+                self.find_outcome(f, out)
             }
             Overlay::Navigator(mut n) => match n.mouse(ev, screen, &self.view.dialog.rows) {
                 crate::navigator::Outcome::Open(e) => {

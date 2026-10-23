@@ -149,6 +149,10 @@ impl Tree {
         self.hidden
     }
 
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
     /// How images show now; the preview on screen follows at once.
     pub fn set_image_view(&mut self, view: crate::preview::ImageView) {
         self.image_view = view;
@@ -958,6 +962,20 @@ fn walk_names(root: &Path, hidden: bool, budget: std::time::Duration, mut visit:
         }
     }
     Walked::All
+}
+
+/// Every file under `root` from it, walked as the filter walks; true when the time ran out first.
+/// ceiling: no cap but the filter's time, so a folder walked whole in it is found whole; a slower disk finds less.
+pub(crate) fn file_names(root: &Path, hidden: bool) -> (Vec<String>, bool) {
+    let mut out = Vec::new();
+    let end = walk_names(root, hidden, FIND_TIME, |e, rel, link| {
+        let file = if link { e.path().is_file() } else { e.file_type().is_ok_and(|t| t.is_file()) };
+        if file {
+            out.push(rel.to_string());
+        }
+        true
+    });
+    (out, matches!(end, Walked::OutOfTime(_)))
 }
 
 /// The order the tree walk used to give: folders before files at each level, then by name ignoring case.

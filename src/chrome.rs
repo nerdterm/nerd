@@ -466,6 +466,7 @@ mod tests {
         let mut prompt = Prompt::new("Rename pane", "x");
         let mut confirm = Confirm::new("Close pane", "Sure?");
         let mut nav = crate::navigator::Navigator::new(Vec::new());
+        let mut find = crate::find::Find::new();
         let mut keys = crate::keyshelp::KeysHelp::new(Prefix::Off);
         let settings = crate::settings::Settings::new(&Config::default());
         let sessions = crate::clients::Sessions::new(Vec::new(), None);
@@ -475,6 +476,7 @@ mod tests {
             ("Settings", Box::new(|b, s| { settings.draw(b, s, &theme); })),
             ("Keys and mouse", Box::new(|b, s| keys.draw(b, s, &theme))),
             ("Navigator", Box::new(|b, s| { nav.draw(b, s, &theme); })),
+            ("Search", Box::new(|b, s| { find.draw(b, s, &theme); })),
             ("Pick", Box::new(|b, s| { picker.draw(b, s, &theme); })),
             ("Rename pane", Box::new(|b, s| prompt.draw(b, s, &theme))),
             ("Close pane", Box::new(|b, s| { confirm.draw(b, s, &theme); })),
@@ -513,6 +515,10 @@ mod tests {
         assert!(confirm.rect(big).height > short, "a longer body makes it taller");
         nav.query = "zzz".into();
         assert_eq!(nav.rect(big), crate::navigator::Navigator::new(Vec::new()).rect(big), "a search does not move it");
+        let r = find.rect(big);
+        find.query = "zzz".into();
+        assert_eq!(find.rect(big), r, "typing does not move Search");
+        assert_eq!(size(&|b, s| { find.draw(b, s, &theme); }), (r.width, r.height));
         let r = keys.rect(big);
         keys.key(KeyEvent::from(KeyCode::Char('/')));
         keys.key(KeyEvent::from(KeyCode::Char('z')));

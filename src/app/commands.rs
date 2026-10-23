@@ -509,7 +509,11 @@ impl App {
             self.mail_done(MailAction::Rename { pane: *pane, name: Some(name.clone()), keep: false });
         }
         if let Pending::RemovePlugin(n) = &what {
-            self.remove_plugin(n, true);
+            if self.client_inside {
+                self.notice = Some(super::mail::INSIDE_REFUSED.into());
+            } else {
+                self.remove_plugin(n, true);
+            }
         }
         if let Pending::ReleaseInstall(tag) = &what {
             self.skip_release(tag);
@@ -531,7 +535,9 @@ impl App {
     pub(super) fn perform(&mut self, what: Pending) {
         self.dirty = true;
         match what {
-            Pending::Preset(..) | Pending::ServerStop(_) | Pending::ServerUpdate(_) | Pending::ServerRemove(_) | Pending::StrayStop(..) if self.client_inside => {
+            Pending::Preset(..) | Pending::ServerStop(_) | Pending::ServerUpdate(_) | Pending::ServerRemove(_) | Pending::StrayStop(..) | Pending::RemovePlugin(_) | Pending::PluginReady(..)
+                if self.client_inside =>
+            {
                 self.notice = Some(super::mail::INSIDE_REFUSED.into())
             }
             Pending::ServerStop(id) => {
@@ -1088,6 +1094,7 @@ impl App {
                 Item::new("New space…", Action::NewSpace),
                 Item::new("New tab", Action::NewTab).key(global_label(KeyActionName::Act(KeyAction::NewTab))),
                 Item::new("Navigator…", Action::Navigator).key(global_label(KeyActionName::Surface(5))),
+                Item::new("Search…", Action::SearchAll).key(global_label(KeyActionName::Surface(7))),
             ],
             vec![
                 Item::new(if self.tree.is_some() { "Hide file tree" } else { "Show file tree" }, Action::ToggleTree).key(global_label(KeyActionName::Surface(4))),
@@ -1215,13 +1222,13 @@ impl App {
                 Item::new("Open as a space", Action::TreeSpace).key(k(Char('p'), true)),
                 Item::new("Make it the root", Action::TreeRoot).key(k(Char('='), true)),
                 Item::new("New file or folder…", Action::TreeNew).key(k(Char('a'), true)),
-                Item::new("Open in Finder", Action::TreeOpen).key(k(Char('o'), true)),
+                Item::new("Open in Finder", Action::TreeOpen).key(k(Char('j'), true)),
                 Item::new("Copy path", Action::TreeCopy).key(k(Char('y'), true)),
             ]
         } else {
             vec![
                 Item::new("Open in editor", Action::TreeEdit).key(k(Char('e'), true)),
-                Item::new("Open in its app", Action::TreeOpen).key(k(Char('o'), true)),
+                Item::new("Open in its app", Action::TreeOpen).key(k(Char('j'), true)),
                 Item::new("Insert path into pane", Action::TreeInsert).key(k(Char('i'), true)),
                 Item::new("Copy path", Action::TreeCopy).key(k(Char('y'), true)),
             ]
@@ -1258,6 +1265,11 @@ impl App {
         match (action, ctx) {
             (Action::Plugins, _) => return self.plugins_overlay(),
             (Action::PluginAdd, _) => return Overlay::Prompt(Prompt::new("Add from GitHub: https://github.com/<owner>/<repo>", "").does("add"), Ask::PluginAddress),
+            // Only turning off is left to a window inside a pane: it takes a capability away.
+            (Action::PluginUpdate | Action::PluginInstall | Action::PluginOn, MenuCtx::Plugin(n)) if self.client_inside => {
+                self.notice = Some(super::mail::INSIDE_REFUSED.into());
+                return self.plugins_overlay_at(n);
+            }
             (Action::PluginUpdate, MenuCtx::Plugin(n)) => {
                 self.plugin_fetch(crate::plugin_list::Act::Update, n.clone(), &["--plugin-update", n]);
                 return self.plugins_overlay_at(n);
@@ -1481,6 +1493,7 @@ impl App {
                 self.open_navigator();
                 return std::mem::replace(&mut self.overlay, Overlay::None);
             }
+            (Action::SearchAll, _) => return self.find_overlay(),
             (Action::ToggleSidebar, _) => self.toggle_sidebar(),
             (Action::TreeEdit, MenuCtx::Tree(p)) => self.tree_outcome(crate::tree::Outcome::OpenInEditor(p.clone(), None)),
             (Action::TreeInsert, MenuCtx::Tree(p)) => self.tree_outcome(crate::tree::Outcome::InsertPath(p.clone())),
@@ -1906,6 +1919,8 @@ pub enum Action {
     CheckRelease,
     Search,
     Navigator,
+    /// Main menu > Search…, not the pane's search.
+    SearchAll,
     ToggleSidebar,
     Sessions,
     Plugins,
@@ -2066,6 +2081,7 @@ pub enum Overlay {
     Menu(crate::menu::Menu<Action>, MenuCtx),
     Prompt(crate::menu::Prompt, Ask),
     Navigator(crate::navigator::Navigator),
+    Find(crate::find::Find),
     Confirm(crate::menu::Confirm, Pending),
     Picker(crate::menu::Picker, Pick),
     /// New space: a path field with live completion and a recent-folders list.

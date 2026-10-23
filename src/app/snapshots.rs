@@ -141,6 +141,33 @@ fn golden_top_row_as_master_drew_it() {
     crate::hook::tests::golden("ui/top.txt", &out);
 }
 
+#[test]
+fn golden_search_window() {
+    use crate::find::Group;
+    crate::session::tests::with_temp_state_dir("golden-search", || {
+        let mut app = one_space();
+        for (id, state) in [(1, AgentState::Working), (2, AgentState::Blocked)] {
+            let p = agent_pane(&app, id, state, 0);
+            app.spaces[0].tabs[id - 1].panes.insert(id, p);
+        }
+        let Overlay::Find(mut f) = app.run_action(Action::SearchAll, &MenuCtx::Global) else { panic!("Search opens") };
+        let screen = Rect::new(0, 0, 100, 20);
+        let mut out = String::new();
+        let mut shot = |tag: &str, f: &crate::find::Find| {
+            let mut buf = Buffer::empty(screen);
+            f.draw(&mut buf, screen, &crate::render::Theme::dark());
+            out += &format!("== {tag}\n{}", dump(&buf, screen));
+        };
+        shot("all, nothing typed", &f);
+        f.set_tab(Some(Group::Panes));
+        shot("panes with their chips", &f);
+        f.set_tab(Some(Group::Settings));
+        f.query = "wrap".into();
+        shot("a setting and its value", &f);
+        crate::hook::tests::golden("ui/search.txt", &out);
+    });
+}
+
 /// An agent pane with no process behind it, in `state`, with `subs` subagents running.
 pub(crate) fn agent_pane(app: &App, id: PaneId, state: AgentState, subs: usize) -> Pane {
     use std::os::fd::IntoRawFd;

@@ -811,7 +811,7 @@ mod tests {
         let (dir, file) = (d.join("sub"), d.join("f.txt"));
 
         // on a directory: open with the system, insert, copy, cd, ask
-        assert!(matches!(t.key(alt(KeyCode::Char('o'))), Outcome::OpenSystem(p) if p == dir));
+        assert!(matches!(t.key(alt(KeyCode::Char('j'))), Outcome::OpenSystem(p) if p == dir));
         assert!(matches!(t.key(alt(KeyCode::Char('i'))), Outcome::InsertPath(p) if p == dir));
         assert!(matches!(t.key(alt(KeyCode::Char('y'))), Outcome::CopyPath(p) if p == dir));
         assert!(matches!(t.key(alt(KeyCode::Char('d'))), Outcome::Cd(p) if p == dir));

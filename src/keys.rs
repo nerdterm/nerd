@@ -283,7 +283,7 @@ pub enum KeyAction {
     Detach,
 }
 
-/// What a global shortcut does: perform something, or open one of the six windows `fkey` knows.
+/// What a global shortcut does: perform something, or open one of the seven windows `fkey` knows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Bind {
     Do(KeyAction),
@@ -307,6 +307,8 @@ pub const GLOBAL: &[Global] = &[
     Global { letter: '/', label: "⌥+/", what: "search in the pane; again to close", bind: Bind::Open(3) },
     Global { letter: 't', label: "⌥+T", what: "show or hide the file tree", bind: Bind::Open(4) },
     Global { letter: 'n', label: "⌥+N", what: "navigator", bind: Bind::Open(5) },
+    // open anything, as iTerm2's Open Quickly; unbound in the shells' emacs keymaps
+    Global { letter: 'o', label: "⌥+O", what: "search panes, commands, settings, plugins, files, help and pane text", bind: Bind::Open(7) },
     // settings, where macOS keeps preferences
     Global { letter: ',', label: "⌥+,", what: "settings", bind: Bind::Open(6) },
     Global { letter: 'c', label: "⌥+C", what: "new tab", bind: Bind::Do(KeyAction::NewTab) },
@@ -343,7 +345,7 @@ pub enum KeyActionName {
 }
 
 /// Every letter `option` claims, for the terminal that has to be told about them.
-pub const OPTION_LETTERS: &[char] = &['k', 'm', '/', 't', 'n', ',', 'c', 'w', '-', '\\', 'z', 's', 'u', 'q'];
+pub const OPTION_LETTERS: &[char] = &['k', 'm', '/', 't', 'n', 'o', ',', 'c', 'w', '-', '\\', 'z', 's', 'u', 'q'];
 
 #[cfg(test)]
 mod global_tests {

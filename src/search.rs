@@ -133,6 +133,13 @@ impl Search {
         self.current = self.current.min(self.matches.len().saturating_sub(1));
     }
 
+    /// The first match on this row becomes the current one, when there is one.
+    pub fn choose_row(&mut self, row: isize) {
+        if let Some(i) = self.matches.iter().position(|m| m.row == row) {
+            self.current = i;
+        }
+    }
+
     pub fn current(&self) -> Option<Match> {
         self.matches.get(self.current).copied()
     }

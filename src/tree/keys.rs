@@ -79,7 +79,7 @@ pub const COMMAND: &[Key] = &[
           } },
     Key { code: Char('i'), alt: true, label: "⌥+I", word: "insert", what: "insert its path into the pane", group: Group::Do,
           act: |t, _, _| match t.sel() { Some(r) => Outcome::InsertPath(r.path), None => Outcome::None } },
-    Key { code: Char('o'), alt: true, label: "⌥+O", word: "open", what: "open in its app, or a folder in Finder", group: Group::Do,
+    Key { code: Char('j'), alt: true, label: "⌥+J", word: "open", what: "open in its app, or a folder in Finder", group: Group::Do,
           act: |t, _, _| match t.sel() { Some(r) => Outcome::OpenSystem(r.path), None => Outcome::None } },
     Key { code: Char('y'), alt: true, label: "⌥+Y", word: "copy", what: "copy its path", group: Group::Do,
           act: |t, _, _| match t.sel() { Some(r) => Outcome::CopyPath(r.path), None => Outcome::None } },

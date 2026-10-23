@@ -75,6 +75,7 @@ fn rows(prefix: Prefix) -> Vec<(Option<&'static str>, &'static str, &'static str
         }
     };
     section("Navigator", crate::navigator::KEYS.iter().map(|r| (r.label, r.what)).collect());
+    section("Search", crate::find::KEYS.iter().map(|r| (r.label, r.what)).collect());
     section("Tree", crate::tree::COMMAND.iter().map(|r| (r.label, r.what)).collect());
     section("Tree, in the preview", crate::tree::PREVIEW.iter().map(|r| (r.label, r.what)).collect());
     section("Settings", crate::settings::KEYS.iter().map(|r| (r.label, r.what)).collect());
@@ -374,6 +375,7 @@ mod tests {
                 "⌥ and a letter, with Option sent as Alt",
                 "Mouse",
                 "Navigator",
+                "Search",
                 "Tree",
                 "Tree, in the preview",
                 "Settings",

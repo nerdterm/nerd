@@ -33,6 +33,8 @@ mod messages;
 mod mouse;
 mod msock;
 mod navigator;
+mod find;
+mod help;
 mod notify;
 mod panel;
 mod paths;
