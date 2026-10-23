@@ -499,7 +499,11 @@ mod tests {
                 let (r, top) = frame(&buf);
                 assert!(top.contains(&format!(" {title} ")), "{title}: the title is in the frame: {top:?}");
                 assert!(r.width <= max_w && r.height <= max_h && r.width >= 40.min(max_w), "{title}: {r:?} inside the margins");
-                assert_eq!((r.x, r.y), ((screen.width - r.width) / 2, (screen.height - r.height) / 2), "{title}: centred");
+                assert_eq!(r.x, (screen.width - r.width) / 2, "{title}: centred");
+                // Search keeps its top where its longest list would put it, and grows downward.
+                if *title != "Search" {
+                    assert_eq!(r.y, (screen.height - r.height) / 2, "{title}: centred");
+                }
             }
         }
         let big = Rect::new(0, 0, 300, 200);
@@ -523,8 +527,9 @@ mod tests {
         assert!(confirm.rect(big).height > short, "a longer body makes it taller");
         let r = find.rect(big);
         find.query = "zzz".into();
-        assert_eq!(find.rect(big), r, "typing does not move Search");
-        assert_eq!(size(&|b, s| { find.draw(b, s, &theme); }), (r.width, r.height));
+        let typed = find.rect(big);
+        assert!(typed.x == r.x && typed.y == r.y && typed.width == r.width, "typing does not move Search, it only grows down");
+        assert_eq!(size(&|b, s| { find.draw(b, s, &theme); }), (typed.width, typed.height), "and it draws what it measured");
         let r = keys.rect(big);
         keys.key(KeyEvent::from(KeyCode::Char('/')));
         keys.key(KeyEvent::from(KeyCode::Char('z')));

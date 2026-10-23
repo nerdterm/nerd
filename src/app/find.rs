@@ -23,22 +23,18 @@ impl App {
     }
 
     fn pane_hits(&self) -> Vec<Hit> {
-        let focused = self.tab().map(|t| t.layout.focused());
         let mut out = Vec::new();
-        for (si, sp) in self.spaces.iter().enumerate() {
-            let branch = self.repos.get(&sp.cwd).and_then(|r| r.branch.clone()).unwrap_or_default();
+        for sp in &self.spaces {
             for (ti, tab) in sp.tabs.iter().enumerate() {
                 let mut ids = tab.layout.pane_ids();
                 ids.sort_unstable();
                 for id in ids {
                     let Some(p) = tab.panes.get(&id) else { continue };
                     let state = p.term.state();
-                    let current = si == self.active && ti == sp.active_tab && Some(id) == focused;
                     out.push(
                         Hit::new(Group::Panes, p.label(), format!("{} › {}", sp.label(), tab.label(ti)), Target::Pane(id))
-                            .value(format!("{} {branch}", crate::paths::shown(&p.cwd)).trim_end())
                             .extra(format!("{} {} {}", p.agent.as_deref().unwrap_or_default(), p.command, crate::find::state_word(state)))
-                            .pane((si, sp.label()), tab.label(ti), state, current),
+                            .state(state),
                     );
                 }
             }
@@ -76,7 +72,7 @@ impl App {
         if f.wants_lazy() {
             f.lazy = true;
             f.add(self.plugin_hits());
-            f.add(crate::help::sections().iter().enumerate().map(|(i, s)| Hit::new(Group::Help, &s.name, "", Target::Help(i)).extra(&s.body).top(s.page)).collect());
+            f.add(crate::help::sections().iter().enumerate().map(|(i, s)| Hit::new(Group::Help, &s.name, "", Target::Help(i)).extra(&s.body)).collect());
         }
         if f.wants_files() {
             // ceiling: one snapshot per window; a file made after it is not found until the window reopens.
@@ -102,7 +98,7 @@ impl App {
                     .into_iter()
                     .map(|rel| {
                         let (dir, name) = rel.rsplit_once('/').unwrap_or(("", &rel));
-                        Hit::new(Group::Files, name, if dir.is_empty() { "." } else { dir }, Target::File(root.join(&rel))).top(false)
+                        Hit::new(Group::Files, name, if dir.is_empty() { "." } else { dir }, Target::File(root.join(&rel)))
                     })
                     .collect(),
             );
@@ -112,14 +108,8 @@ impl App {
     fn plugin_hits(&self) -> Vec<Hit> {
         let (catalog, _) = crate::catalog::read();
         let list = crate::plugin_list::entries(&catalog, |n| self.plugins.state_of(n));
-        let risk = |r: u8| crate::install::RISK[r.min(3) as usize];
-        let mut out: Vec<Hit> = list
-            .iter()
-            .map(|e| Hit::new(Group::Plugins, &e.name, &e.title, Target::Plugin(e.name.clone(), true)).value(format!("{} · {}", if e.off.is_some() { "off" } else { "on" }, risk(e.risk))))
-            .collect();
-        out.extend(catalog.entries.iter().filter(|c| !list.iter().any(|e| e.name == c.name)).map(|c| {
-            Hit::new(Group::Plugins, &c.name, &c.title, Target::Plugin(c.name.clone(), false)).value(format!("not installed · {}", risk(c.risk))).extra(&c.summary).top(false)
-        }));
+        let mut out: Vec<Hit> = list.iter().map(|e| Hit::new(Group::Plugins, &e.name, &e.title, Target::Plugin(e.name.clone(), true)).value(if e.off.is_some() { "off" } else { "on" })).collect();
+        out.extend(catalog.entries.iter().filter(|c| !list.iter().any(|e| e.name == c.name)).map(|c| Hit::new(Group::Plugins, &c.name, &c.title, Target::Plugin(c.name.clone(), false)).value("not installed").extra(&c.summary)));
         out
     }
 
@@ -279,7 +269,7 @@ impl App {
                 if hits.len() < TEXT_MAX && words.iter().all(|w| lc.contains(w.as_str())) {
                     // The jump searches the pane once: for the phrase where the line has it, else for the first word.
                     let q = if lc.contains(&phrase_lc) { phrase.clone() } else { words[0].clone() };
-                    hits.push(Hit::new(Group::Text, line.trim(), format!("Pane {label}"), Target::Line(*id, i as isize - history, q, line.trim().to_string())));
+                    hits.push(Hit::new(Group::Text, line.trim(), label, Target::Line(*id, i as isize - history, q, line.trim().to_string())));
                 }
             }
             if late {

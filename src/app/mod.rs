@@ -2382,7 +2382,7 @@ mod tests {
             let (x, y) = find_on_screen(&shown, "Search pane text for \"needle\"").unwrap_or_else(|| panic!("{shown}"));
             mouse_at(&mut app, crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left), (x, y));
             let lines: Vec<String> = find(&app).of(crate::find::Group::Text).iter().map(|h| format!("{} / {}", h.name, h.place)).collect();
-            assert_eq!(lines, ["the needle is here / Pane reader"]);
+            assert_eq!(lines, ["the needle is here / reader"]);
             press(&mut app, KeyCode::Enter);
             assert_eq!(app.active, 1, "its pane is shown");
             let (id, s) = app.search.as_ref().expect("the pane search opens");
@@ -3191,7 +3191,7 @@ mod tests {
             assert_eq!(find(&app).tab, Some(crate::find::Group::Plugins));
             press(&mut app, KeyCode::Enter);
             assert_eq!(find(&app).note, Some((true, INSIDE_REFUSED.to_string())), "Turn on from Search, said in the window");
-            assert!(screen(&mut app).contains(INSIDE_REFUSED));
+            assert!(screen(&mut app).contains("Not from a window inside a pane"), "wrapped in the window");
             assert!(off() && app.notice.is_none() && *crate::policy::current() == *before);
             for _ in 0..4 {
                 press(&mut app, KeyCode::Backspace);

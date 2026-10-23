@@ -36,8 +36,6 @@ pub struct Section {
     pub name: String,
     pub body: String,
     pub url: Option<String>,
-    /// A page of its own on the site: what Help lists before anything is typed.
-    pub page: bool,
 }
 
 /// An anchor as the site makes it from a heading's HTML: `&<>"'` as entities, marks dropped, lowercase, every run of
@@ -66,7 +64,7 @@ pub fn sections() -> &'static [Section] {
         for (head, body) in split(README).into_iter().skip(1) {
             let head = head.unwrap_or_default();
             let url = README_PAGES.iter().find(|(s, _)| *s == slug(&head)).and_then(|(_, p)| *p).map(|p| format!("{SITE}{p}"));
-            out.push(Section { name: head, body, url, page: true });
+            out.push(Section { name: head, body, url });
         }
         for (text, page) in DOCS {
             let title = text.lines().next().and_then(|l| l.strip_prefix("# ")).unwrap_or_default().to_string();
@@ -75,7 +73,7 @@ pub fn sections() -> &'static [Section] {
                     None => (title.clone(), page.map(|p| format!("{SITE}{p}"))),
                     Some(h) => (format!("{title} › {h}"), page.map(|p| format!("{SITE}{}#{}", p.split('#').next().unwrap_or(p), slug(h)))),
                 };
-                out.push(Section { page: head.is_none(), name, body, url });
+                out.push(Section { name, body, url });
             }
         }
         out

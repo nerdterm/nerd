@@ -51,13 +51,16 @@ Every window except a context menu is drawn through `chrome::dialog`, and `chrom
 ## Search
 
 **Search…** in the main menu, the `Search` button on the top row and `⌥`+`O` open one window over what nerd already
-has. Type to filter; every word must match. Groups are tabs: All, Panes, Commands, Settings, Plugins, Files, Help
-and Text; on a narrow window the tabs and the chips take more lines. All shows at most five rows of each group and a
-row that says how many more there are. Panes has chips for the agent states. A paste goes into the field, its first
-line only. A paste reaches a pane only while the keys are on it: an open window, the pane search and the file tree
-take its first line into their field, and the sidebar and the tab bar drop it. What a result says while the window
-stays (a pane that has closed, a refusal, a help page's address) is a line in the window above the keys, gone at the
-next letter typed.
+has. The field has a frame of its own at the top. Type to filter; every word must match. Nothing is listed before a
+letter is typed: the sidebar already lists the panes. Each result is one line, its name on the left and one value on
+the right (a key, a setting's value, a folder, a pane's place). The window is about 64 columns wide and as tall as
+its results, up to 14 rows; more scroll. Groups are tabs: All, Panes, Commands, Settings, Plugins, Files, Help and
+Text; on a narrow window the tabs and the chips take more lines. All shows at most five rows of each group and a row
+that says how many more there are. Panes has chips for the agent states; a chip other than all lists the panes in
+that state. A paste goes into the field, its first line only. A paste reaches a pane only while the keys are on it:
+an open window, the pane search and the file tree take its first line into their field, and the sidebar and the tab
+bar drop it. What a result says while the window stays (a pane that has closed, a refusal, a help page's address) is
+a line in the window above the keys, gone at the next letter typed.
 
 - Panes: Enter or a click goes to the pane.
 - Commands: runs the menu item on the pane, tab or space it was listed for; a pane that has closed gives a notice and

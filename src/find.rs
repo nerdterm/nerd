@@ -8,6 +8,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
+use ratatui::widgets::{Block, Widget};
 
 use crate::layout::PaneId;
 use crate::render::Theme;
@@ -15,6 +16,10 @@ use crate::term::AgentState;
 
 /// Rows a group shows under All before "N more in <group>".
 const CAP: usize = 5;
+/// The window's width inside its frame: the tabs fit on one line.
+const WIDTH: u16 = 64;
+/// Result rows shown at most; more scroll.
+const ROWS: u16 = 14;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Group {
@@ -116,14 +121,9 @@ pub struct Hit {
     pub value: String,
     /// A greyed menu item: shown, does nothing.
     pub enabled: bool,
-    /// Listed before anything is typed.
-    pub top: bool,
     pub target: Target,
-    /// A pane's space (index and name), tab, state, and whether it has the keys.
-    space: (usize, String),
-    tab: String,
+    /// A pane's state.
     state: Option<AgentState>,
-    current: bool,
     extra: String,
     name_lc: String,
     hay: String,
@@ -137,12 +137,8 @@ impl Hit {
             place: crate::render::unspoofed(place.as_ref()),
             value: String::new(),
             enabled: true,
-            top: true,
             target,
-            space: (0, String::new()),
-            tab: String::new(),
             state: None,
-            current: false,
             extra: String::new(),
             name_lc: String::new(),
             hay: String::new(),
@@ -159,22 +155,14 @@ impl Hit {
         self
     }
 
-    pub fn top(mut self, top: bool) -> Self {
-        self.top = top;
-        self
-    }
-
     /// Words it is also found by, never shown.
     pub fn extra(mut self, words: impl AsRef<str>) -> Self {
         self.extra = words.as_ref().to_string();
         self
     }
 
-    pub fn pane(mut self, space: (usize, String), tab: String, state: AgentState, current: bool) -> Self {
-        self.space = (space.0, crate::render::unspoofed(&space.1));
-        self.tab = crate::render::unspoofed(&tab);
+    pub fn state(mut self, state: AgentState) -> Self {
         self.state = Some(state);
-        self.current = current;
         self
     }
 }
@@ -182,10 +170,6 @@ impl Hit {
 #[derive(Clone, Debug, PartialEq)]
 enum Row {
     Head(Group),
-    /// A space's header over its panes in the tree, by its first pane.
-    Space(usize),
-    /// A pane in the tree: the hit, the last of its space, its space has more than one tab.
-    Tree(usize, bool, bool),
     Hit(usize),
     More(Group, usize),
     /// "Search pane text for …": the text is read only on this.
@@ -195,7 +179,7 @@ enum Row {
 
 impl Row {
     fn acts(&self) -> bool {
-        matches!(self, Row::Tree(..) | Row::Hit(_) | Row::More(..) | Row::AskText)
+        matches!(self, Row::Hit(_) | Row::More(..) | Row::AskText)
     }
 }
 
@@ -330,9 +314,22 @@ impl Find {
         self.set_tab(Some(Group::Text));
     }
 
-    /// The window is as large as a window gets, so it never moves while typing.
+    /// As high as its rows, the top where the tallest list would put it, so typing only moves the bottom; a help page
+    /// takes that tallest size.
     pub fn rect(&self, screen: Rect) -> Rect {
-        crate::chrome::fit(screen, u16::MAX, u16::MAX)
+        let w = crate::chrome::fit(screen, WIDTH, 0).inner(crate::chrome::DIALOG_FRAME).width;
+        let strip = crate::chrome::hint(KEYS.iter().map(|k| (k.label, k.word)), w as usize).len() as u16;
+        // the field's box, the tabs, a blank row over the strip
+        let fixed = 3 + lines(&tab_widths(), 2, w) + 1 + strip;
+        let chips = if self.tab == Some(Group::Panes) { lines(&chip_widths(), 1, w) } else { 0 };
+        let list = |n: u16| if n == 0 { 0 } else { 1 + n.min(ROWS) };
+        let full = crate::chrome::fit(screen, WIDTH, fixed + lines(&chip_widths(), 1, w) + list(ROWS));
+        if self.help.is_some() {
+            return full;
+        }
+        let note = self.note.as_ref().map_or(0, |(_, t)| crate::menu::wrap(t, w as usize).len() as u16);
+        let r = crate::chrome::fit(screen, WIDTH, fixed + chips + note + list(self.rows().len() as u16));
+        Rect { y: full.y, ..r }
     }
 
     /// A hit's rank for the query, best first; None when it lacks a word.
@@ -363,16 +360,13 @@ impl Find {
         let q = self.query.trim().to_lowercase();
         let words = self.words();
         let note = |s: &str| Row::Note(s.to_string());
+        // Nothing before a letter is typed: the sidebar already lists the panes. A state chip lists its panes.
         if words.is_empty() {
-            return match self.tab {
-                None | Some(Group::Panes) => self.tree(),
-                Some(Group::Files) => vec![note("Type to search the names of the files under the file tree's folder.")],
-                Some(Group::Text) => vec![note("Type, then press Enter to search the text of every pane.")],
-                Some(g) => {
-                    let rows: Vec<Row> = (0..self.hits.len()).filter(|&i| self.hits[i].group == g && self.hits[i].top).map(Row::Hit).collect();
-                    if rows.is_empty() { vec![note("Nothing here.")] } else { rows }
-                }
-            };
+            if self.chip() == Chip::All {
+                return Vec::new();
+            }
+            let rows: Vec<Row> = (0..self.hits.len()).filter(|&i| self.hits[i].state.is_some_and(|s| self.chip.fits(s))).map(Row::Hit).collect();
+            return if rows.is_empty() { vec![note("No pane is in this state.")] } else { rows };
         }
         let mut out = Vec::new();
         match self.tab {
@@ -419,28 +413,6 @@ impl Find {
     /// The state filter in force: the chips are only on the Panes tab.
     fn chip(&self) -> Chip {
         if self.tab == Some(Group::Panes) { self.chip } else { Chip::All }
-    }
-
-    /// Every pane under its space, spaces in order and panes by id.
-    fn tree(&self) -> Vec<Row> {
-        let chip = self.chip();
-        let panes: Vec<usize> = (0..self.hits.len()).filter(|&i| self.hits[i].group == Group::Panes && self.hits[i].state.is_some_and(|s| chip.fits(s))).collect();
-        if panes.is_empty() {
-            return vec![Row::Note("No panes.".into())];
-        }
-        let mut out = Vec::new();
-        let mut tabs = false;
-        for (k, &i) in panes.iter().enumerate() {
-            let space = self.hits[i].space.0;
-            if k == 0 || self.hits[panes[k - 1]].space.0 != space {
-                out.push(Row::Space(i));
-                let tab = &self.hits[i].tab;
-                tabs = panes[k..].iter().map(|&j| &self.hits[j]).take_while(|h| h.space.0 == space).any(|h| h.tab != *tab);
-            }
-            let last = panes.get(k + 1).is_none_or(|&j| self.hits[j].space.0 != space);
-            out.push(Row::Tree(i, last, tabs));
-        }
-        out
     }
 
     /// Keeps the choice on a row that acts; returns how many rows there are.
@@ -499,7 +471,7 @@ impl Find {
 
     fn act(&mut self, i: usize) -> Outcome {
         match self.rows().get(i).cloned() {
-            Some(Row::Tree(h, ..) | Row::Hit(h)) => {
+            Some(Row::Hit(h)) => {
                 let hit = &self.hits[h];
                 if !hit.enabled {
                     return Outcome::None;
@@ -510,7 +482,11 @@ impl Find {
                         Outcome::None
                     }
                     _ => {
-                        let what = if matches!(hit.group, Group::Commands | Group::Text) { hit.place.clone() } else { hit.name.clone() };
+                        let what = match hit.group {
+                            Group::Commands => hit.place.clone(),
+                            Group::Text => format!("Pane {}", hit.place),
+                            _ => hit.name.clone(),
+                        };
                         Outcome::Act(hit.target.clone(), what)
                     }
                 }
@@ -604,8 +580,8 @@ impl Find {
             return None;
         }
         let inner = self.rect(screen).inner(crate::chrome::DIALOG_FRAME);
-        let col = crate::slots::cells(&self.query).min(inner.width.saturating_sub(1) as usize) as u16;
-        Some((inner.x + col, inner.y))
+        let col = crate::slots::cells(&self.query).min(inner.width.saturating_sub(5) as usize) as u16;
+        Some((inner.x + 2 + col, inner.y + 1))
     }
 
     pub fn draw(&self, buf: &mut Buffer, screen: Rect, theme: &Theme) -> Drawn {
@@ -649,110 +625,67 @@ impl Find {
     fn draw_list(&self, buf: &mut Buffer, inner: Rect, theme: &Theme, d: &mut Drawn) {
         let w = inner.width as usize;
         let mut y = inner.y;
+        // The field in a box of its own: its frame is what makes it stand out.
+        let field = Rect::new(inner.x, y, inner.width, 3.min(inner.height));
+        Block::bordered().style(Style::default().fg(theme.accent)).render(field, buf);
+        let room = w.saturating_sub(4);
         if self.query.is_empty() {
-            buf.set_stringn(inner.x, y, "Type to search panes, commands, settings, plugins, files, help and pane text", w, Style::default().fg(theme.faint));
+            buf.set_stringn(inner.x + 2, y + 1, "Type to search", room, Style::default().fg(theme.faint));
         } else {
             // The end of the query, cut by cells: the cursor sits after it.
-            let mut over = crate::slots::cells(&self.query).saturating_sub(w.saturating_sub(1));
+            let mut over = crate::slots::cells(&self.query).saturating_sub(room.saturating_sub(1));
             let tail = self.query.trim_start_matches(|c: char| {
                 let cut = over > 0;
                 over = over.saturating_sub(crate::slots::cells(c.encode_utf8(&mut [0; 4])));
                 cut
             });
-            buf.set_stringn(inner.x, y, tail, w, Style::default().fg(theme.text));
+            buf.set_stringn(inner.x + 2, y + 1, tail, room, Style::default().fg(theme.text));
         }
-        y += 1;
-        // The tabs, then the Panes tab's chips: words and chips to click, a key for each only as Tab. Tabs and chips
-        // that do not fit go on the next line.
-        let mut x = inner.x;
-        for t in std::iter::once(None).chain(GROUPS.map(Some)) {
-            let word = t.map_or("All", Group::name);
-            let n = (word.chars().count() as u16).min(inner.width);
-            if x + n > inner.right() {
-                (x, y) = (inner.x, y + 1);
-            }
-            if y >= inner.bottom() {
+        y += 3;
+        // The tabs, then the Panes tab's chips: words and chips to click, a key for each only as Tab; what does not fit
+        // goes on the next line.
+        let tabs: Vec<Option<Group>> = std::iter::once(None).chain(GROUPS.map(Some)).collect();
+        for (t, (x, line)) in tabs.iter().zip(flow(&tab_widths(), 2, inner.width)) {
+            let (word, at) = (t.map_or("All", Group::name), Rect::new(inner.x + x, y + line, 0, 1));
+            if at.y >= inner.bottom() {
                 break;
             }
-            let style = if t == self.tab { theme.chosen() } else { Style::default().fg(theme.muted) };
-            buf.set_stringn(x, y, word, n as usize, style);
-            d.hits.push((Rect::new(x, y, n, 1), Click::Tab(t)));
-            x += n + 2;
+            let style = if *t == self.tab { theme.chosen() } else { Style::default().fg(theme.muted) };
+            let n = (word.chars().count() as u16).min(inner.width);
+            buf.set_stringn(at.x, at.y, word, n as usize, style);
+            d.hits.push((Rect { width: n, ..at }, Click::Tab(*t)));
         }
-        y += 1;
-        if self.tab == Some(Group::Panes) && y < inner.bottom() {
-            let mut x = inner.x;
-            for c in CHIPS {
-                let cw = crate::chrome::chip_width(c.name(), &[]).min(inner.width);
-                if x + cw > inner.right() {
-                    (x, y) = (inner.x, y + 1);
-                }
-                if y >= inner.bottom() {
+        y += lines(&tab_widths(), 2, inner.width);
+        if self.tab == Some(Group::Panes) {
+            for (c, (x, line)) in CHIPS.into_iter().zip(flow(&chip_widths(), 1, inner.width)) {
+                if y + line >= inner.bottom() {
                     break;
                 }
-                let rect = crate::chrome::draw_chip(buf, x, y, c.name(), &[], c == self.chip, false, theme);
+                let rect = crate::chrome::draw_chip(buf, inner.x + x, y + line, c.name(), &[], c == self.chip, false, theme);
                 d.hits.push((rect, Click::Chip(c)));
-                x = rect.right() + 1;
             }
-            y += 1;
+            y += lines(&chip_widths(), 1, inner.width);
         }
         let strip = crate::chrome::hint(KEYS.iter().map(|k| (k.label, k.word)), w);
         let bottom = crate::chrome::draw_hint(buf, inner, &strip, theme).max(y);
         let bottom = self.draw_note(buf, inner, bottom, y, theme);
 
+        // a blank row over the results and under them
+        let (top, bottom) = (y + 1, bottom.saturating_sub(1));
         let rows = self.rows();
-        let room = bottom.saturating_sub(y) as usize;
-        let skip = (self.selected + 1).saturating_sub(room);
-        let words = self.words();
-        let name_w = (w * 2 / 5).max(12);
-        for (i, row) in rows.iter().enumerate().skip(skip) {
-            if y >= bottom {
-                break;
-            }
+        let skip = (self.selected + 1).saturating_sub(bottom.saturating_sub(top) as usize);
+        for ((i, row), y) in rows.iter().enumerate().skip(skip).zip(top..bottom) {
             let line = Rect::new(inner.x, y, inner.width, 1);
-            let text = Style::default().fg(theme.text);
             match row {
                 Row::Head(g) => {
                     buf.set_stringn(inner.x, y, g.name(), w, Style::default().fg(theme.muted));
                 }
-                Row::Space(h) => {
-                    buf.set_stringn(inner.x, y, format!("{} ▾", self.hits[*h].space.1), w, text.add_modifier(Modifier::BOLD));
-                }
-                Row::Tree(h, last, tabs) => {
-                    let hit = &self.hits[*h];
-                    let state = hit.state.unwrap_or(AgentState::Unknown);
-                    let mut s = format!("{}{} ", if *last { "└── " } else { "├── " }, state.mark());
-                    let at = s.chars().count() as u16;
-                    s.push_str(&hit.name);
-                    if *tabs {
-                        s.push_str(" · ");
-                        s.push_str(&hit.tab);
-                    }
-                    buf.set_stringn(inner.x, y, &s, w, text);
-                    if at > 1 && at - 2 < inner.width {
-                        buf.set_stringn(inner.x + at - 2, y, state.mark().to_string(), 1, Style::default().fg(crate::sidebar::state_color(state, theme)));
-                    }
-                    if hit.current && at < inner.width {
-                        buf.set_stringn(inner.x + at, y, &hit.name, (inner.width - at) as usize, theme.chosen());
-                    }
-                    self.draw_value(buf, line, crate::slots::cells(&s), &hit.value, theme);
-                }
-                Row::Hit(h) => {
-                    let hit = &self.hits[*h];
-                    let style = if hit.enabled { text } else { Style::default().fg(theme.faint) };
-                    buf.set_stringn(inner.x + 2, y, &hit.name, name_w.min(w.saturating_sub(2)), style);
-                    let value = if hit.group == Group::Help { snippet(*h, &self.hits, &words) } else { hit.value.clone() };
-                    let used = self.draw_value(buf, line, 2 + name_w + 2, &value, theme);
-                    let px = inner.x + (2 + name_w + 2) as u16;
-                    if px < inner.right() {
-                        buf.set_stringn(px, y, &hit.place, used.saturating_sub(2 + name_w + 3), Style::default().fg(theme.muted));
-                    }
-                }
+                Row::Hit(h) => self.draw_hit(buf, Rect { x: line.x + 2, width: line.width.saturating_sub(2), ..line }, &self.hits[*h], theme),
                 Row::More(g, n) => {
                     buf.set_stringn(inner.x + 2, y, format!("{n} more in {}", g.name()), w.saturating_sub(2), Style::default().fg(theme.muted));
                 }
                 Row::AskText => {
-                    buf.set_stringn(inner.x + 2, y, format!("Search pane text for \"{}\"", self.query.trim()), w.saturating_sub(2), text);
+                    buf.set_stringn(inner.x + 2, y, format!("Search pane text for \"{}\"", self.query.trim()), w.saturating_sub(2), Style::default().fg(theme.text));
                 }
                 Row::Note(s) => {
                     buf.set_stringn(inner.x + 2, y, s, w.saturating_sub(2), Style::default().fg(theme.faint));
@@ -764,7 +697,39 @@ impl Find {
                 }
                 d.hits.push((line, Click::Row(i)));
             }
-            y += 1;
+        }
+    }
+
+    /// One result on one line: its name on the left, one faint value on the right.
+    fn draw_hit(&self, buf: &mut Buffer, line: Rect, hit: &Hit, theme: &Theme) {
+        let faint = Style::default().fg(theme.faint);
+        let w = line.width as usize;
+        let value = match hit.group {
+            Group::Panes | Group::Text => hit.place.clone(),
+            Group::Files => fit_left(&hit.place, w / 2),
+            Group::Help => String::new(),
+            _ => hit.value.clone(),
+        };
+        let vw = crate::slots::cells(&value).min(w / 2);
+        if vw > 0 {
+            buf.set_stringn(line.right() - vw as u16, line.y, crate::slots::fit(&value, vw), vw, faint);
+        }
+        let room = w.saturating_sub(vw + 2);
+        let mut x = line.x;
+        if let Some(state) = hit.state {
+            buf.set_stringn(x, line.y, state.mark().to_string(), room, Style::default().fg(crate::sidebar::state_color(state, theme)));
+            x += 2;
+        }
+        let room = room.saturating_sub((x - line.x) as usize);
+        let name = crate::slots::fit(&hit.name, room);
+        let style = if hit.enabled { Style::default().fg(theme.text) } else { faint };
+        buf.set_stringn(x, line.y, &name, room, style);
+        // Two commands of one label are told apart by where they act.
+        if hit.group == Group::Commands && self.hits.iter().filter(|h| h.group == Group::Commands && h.name == hit.name).count() > 1 {
+            let used = crate::slots::cells(&name) + 2;
+            if used < room {
+                buf.set_stringn(x + used as u16, line.y, &hit.place, room - used, faint);
+            }
         }
     }
 
@@ -780,25 +745,49 @@ impl Find {
         start
     }
 
-    /// Draws `value` right-aligned after `from` columns, cut with "…" when long; returns the columns left before it.
-    fn draw_value(&self, buf: &mut Buffer, line: Rect, from: usize, value: &str, theme: &Theme) -> usize {
-        let w = line.width as usize;
-        let room = w.saturating_sub(from + 2);
-        if value.is_empty() || room < 2 {
-            return w;
-        }
-        let value = crate::slots::fit(value, room);
-        let vw = crate::slots::cells(&value).min(room);
-        buf.set_stringn(line.x + (w - vw) as u16, line.y, &value, vw, Style::default().fg(theme.faint));
-        w - vw
-    }
 }
 
-/// The help section's first line with the query's first word, as its value.
-fn snippet(h: usize, hits: &[Hit], words: &[String]) -> String {
-    let Target::Help(s) = hits[h].target else { return String::new() };
-    let (Some(sec), Some(w)) = (crate::help::sections().get(s), words.first()) else { return String::new() };
-    sec.body.lines().find(|l| l.to_lowercase().contains(w.as_str())).map(|l| format!("\"{}\"", crate::render::unspoofed(l.trim()))).unwrap_or_default()
+/// The tabs' widths, in their order.
+fn tab_widths() -> Vec<u16> {
+    std::iter::once("All").chain(GROUPS.map(Group::name)).map(|w| w.chars().count() as u16).collect()
+}
+
+fn chip_widths() -> Vec<u16> {
+    CHIPS.map(|c| crate::chrome::chip_width(c.name(), &[])).to_vec()
+}
+
+/// Where each of `widths` goes on lines `w` wide, `gap` apart: its column and line.
+fn flow(widths: &[u16], gap: u16, w: u16) -> Vec<(u16, u16)> {
+    let (mut x, mut line) = (0, 0);
+    widths
+        .iter()
+        .map(|&n| {
+            if x > 0 && x + n.min(w) > w {
+                (x, line) = (0, line + 1);
+            }
+            let at = (x, line);
+            x += n.min(w) + gap;
+            at
+        })
+        .collect()
+}
+
+fn lines(widths: &[u16], gap: u16, w: u16) -> u16 {
+    flow(widths, gap, w).last().map_or(0, |(_, l)| l + 1)
+}
+
+/// The end of `s` in `room` cells, "…" in front when cut: a folder's own name is at its end.
+fn fit_left(s: &str, room: usize) -> String {
+    if crate::slots::cells(s) <= room {
+        return s.to_string();
+    }
+    let mut over = crate::slots::cells(s) + 1 - room;
+    let tail = s.trim_start_matches(|c: char| {
+        let cut = over > 0;
+        over = over.saturating_sub(crate::slots::cells(c.encode_utf8(&mut [0; 4])));
+        cut
+    });
+    format!("…{tail}")
 }
 
 #[cfg(test)]
@@ -822,7 +811,7 @@ mod tests {
     }
 
     fn pane(id: PaneId, space: usize, name: &str, state: AgentState) -> Hit {
-        Hit::new(Group::Panes, name, format!("s{space} › 1"), Target::Pane(id)).extra(state_word(state)).pane((space, format!("s{space}")), "1".into(), state, false)
+        Hit::new(Group::Panes, name, format!("s{space} › 1"), Target::Pane(id)).extra(state_word(state)).state(state)
     }
 
     /// The names the window lists now, with "Head" rows as `#Group` and more rows as `+N`.
@@ -831,8 +820,7 @@ mod tests {
             .iter()
             .map(|r| match r {
                 Row::Head(g) => format!("#{}", g.name()),
-                Row::Space(h) => format!("^{}", f.hits[*h].space.1),
-                Row::Tree(h, ..) | Row::Hit(h) => f.hits[*h].name.clone(),
+                Row::Hit(h) => f.hits[*h].name.clone(),
                 Row::More(g, n) => format!("+{n} {}", g.name()),
                 Row::AskText => "?text".into(),
                 Row::Note(s) => format!("({s})"),
@@ -902,13 +890,14 @@ mod tests {
     fn panes_are_found_by_state_word_and_filtered_by_chip() {
         let mut f = Find::new();
         f.add(vec![pane(1, 0, "claude", AgentState::Working), pane(2, 0, "bun", AgentState::Failed), pane(3, 1, "codex", AgentState::Blocked)]);
-        assert_eq!(listed(&f), ["^s0", "claude", "bun", "^s1", "codex"], "no query: the tree");
+        assert!(listed(&f).is_empty(), "no query: nothing, the sidebar lists the panes");
         typed(&mut f, "blocked");
         assert_eq!(listed(&f), ["#Panes", "bun", "codex", "?text"], "a failed turn waits for you too");
         f.query.clear();
         f.set_tab(Some(Group::Panes));
+        assert!(listed(&f).is_empty(), "nor the Panes tab");
         f.chip = Chip::Working;
-        assert_eq!(listed(&f), ["^s0", "claude"]);
+        assert_eq!(listed(&f), ["claude"], "a state chip lists its panes");
         assert!(matches!(f.act(f.selected), Outcome::Act(Target::Pane(1), ref n) if n == "claude"));
     }
 
@@ -927,7 +916,7 @@ mod tests {
         typed(&mut f, "error");
         assert_eq!(listed(&f), ["(Nothing found.)", "?text"]);
         assert!(matches!(f.key(key(KeyCode::Enter)), Outcome::SearchText), "the last row of All");
-        f.set_text(vec![Hit::new(Group::Text, "error: no such file", "Pane claude", Target::Line(1, -3, "error".into(), "error: no such file".into()))], Some("searched 1 of 2 panes".into()));
+        f.set_text(vec![Hit::new(Group::Text, "error: no such file", "claude", Target::Line(1, -3, "error".into(), "error: no such file".into()))], Some("searched 1 of 2 panes".into()));
         assert_eq!(f.tab, Some(Group::Text));
         assert_eq!(listed(&f), ["error: no such file", "(searched 1 of 2 panes)", "?text"], "the same query can be searched again");
         assert!(matches!(f.key(key(KeyCode::Enter)), Outcome::Act(Target::Line(1, -3, ..), ref n) if n == "Pane claude"));
@@ -974,14 +963,23 @@ mod tests {
     }
 
     #[test]
-    fn the_window_keeps_its_size_and_a_click_picks_a_tab_a_chip_or_a_row() {
-        let screen = Rect::new(0, 0, 120, 40);
+    fn the_window_is_compact_grows_downward_with_its_rows_and_a_click_picks_a_tab_a_chip_or_a_row() {
+        let screen = Rect::new(0, 0, 160, 45);
         let mut f = Find::new();
         f.add(vec![pane(1, 0, "claude", AgentState::Working), pane(2, 0, "bun", AgentState::Idle), command("Wrap long lines")]);
+        f.add((0..30).map(|i| command(&format!("x{i}"))).collect());
         let r = f.rect(screen);
-        f.query = "zzz".into();
-        assert_eq!(f.rect(screen), r, "typing does not move it");
+        assert_eq!(r.width, WIDTH + 2 * crate::chrome::DIALOG_FRAME.horizontal, "not the whole screen");
+        typed(&mut f, "wrap");
+        let one = f.rect(screen);
+        assert!(one.y == r.y && one.height > r.height, "one row: the top stays, the bottom moves");
+        f.query = "x".into();
+        f.set_tab(Some(Group::Commands));
+        let many = f.rect(screen);
+        // "wrap" lists a header, a row and the pane text row
+        assert!(many.y == r.y && many.height == one.height + ROWS - 3, "at most {ROWS} rows: {many:?} {one:?}");
         f.query.clear();
+        f.set_tab(None);
         let click = |f: &mut Find, (x, y): (u16, u16)| {
             let mut buf = Buffer::empty(screen);
             let d = f.draw(&mut buf, screen, &Theme::dark());
@@ -997,11 +995,11 @@ mod tests {
         assert_eq!(f.tab, Some(Group::Panes));
         let d = drawn(&f);
         click(&mut f, at(&d, Click::Chip(Chip::Idle)));
-        assert_eq!(listed(&f), ["^s0", "bun"]);
+        assert_eq!(listed(&f), ["bun"]);
         let d = drawn(&f);
-        assert!(matches!(click(&mut f, at(&d, Click::Row(1))), Outcome::Act(Target::Pane(2), _)));
+        assert!(matches!(click(&mut f, at(&d, Click::Row(0))), Outcome::Act(Target::Pane(2), _)));
         assert!(matches!(click(&mut f, (0, 0)), Outcome::Close), "a click outside closes");
-        let b = crate::chrome::close_rect(r);
+        let b = crate::chrome::close_rect(f.rect(screen));
         assert!(matches!(click(&mut f, (b.x, b.y)), Outcome::Close));
     }
 
@@ -1075,15 +1073,37 @@ mod tests {
     }
 
     #[test]
+    fn a_result_is_one_plain_line_with_one_value_on_the_right() {
+        let screen = Rect::new(0, 0, 160, 45);
+        let mut f = Find::new();
+        let deep = format!("{}/src", "very/deep".repeat(10));
+        f.add(vec![
+            Hit::new(Group::Commands, "Isolation for new panes…", "Space s", Target::Command(Action::NewTab, Ctx::Global)),
+            Hit::new(Group::Commands, "Isolation for new panes…", "Tab 1", Target::Command(Action::NewTab, Ctx::Global)),
+            Hit::new(Group::Files, "isolation.rs", &deep, Target::File(PathBuf::from("/x"))),
+            Hit::new(Group::Help, "Isolation", "", Target::Help(0)).extra("isolation body text"),
+        ]);
+        f.paste("isolation");
+        let mut buf = Buffer::empty(screen);
+        f.draw(&mut buf, screen, &Theme::dark());
+        let text = text_of(&buf);
+        let row = |name: &str| text.lines().find(|l| l.contains(name)).unwrap_or_else(|| panic!("{name}: {text}")).to_string();
+        assert!(row("Isolation for new panes…  Space s").contains("Isolation for new panes…  Space s"), "a shared label says where it acts");
+        let file = row("isolation.rs");
+        assert!(file.contains("…") && file.trim_end().trim_end_matches('│').trim_end().ends_with("deep/src"), "the folder, cut from the left: {file}");
+        assert!(!text.contains('"') || text.matches('"').count() == 2, "no quotes but the pane text row's: {text}");
+    }
+
+    #[test]
     fn a_long_wide_query_keeps_its_end_and_the_cursor_in_the_field() {
         let screen = Rect::new(0, 0, 120, 40);
         let mut f = Find::new();
         f.paste(&"界".repeat(40_000));
         let inner = f.rect(screen).inner(crate::chrome::DIALOG_FRAME);
-        assert_eq!(f.cursor(screen), Some((inner.right() - 1, inner.y)));
+        assert_eq!(f.cursor(screen), Some((inner.right() - 3, inner.y + 1)), "in the field's box");
         let mut buf = Buffer::empty(screen);
         f.draw(&mut buf, screen, &Theme::dark());
-        let field: String = (inner.x..inner.right()).map(|x| buf[(x, inner.y)].symbol()).collect();
-        assert_eq!(field.matches('界').count(), (inner.width as usize - 1) / 2, "as many as fit before the cursor");
+        let field: String = (inner.x..inner.right()).map(|x| buf[(x, inner.y + 1)].symbol()).collect();
+        assert_eq!(field.matches('界').count(), (inner.width as usize - 5) / 2, "as many as fit before the cursor");
     }
 }

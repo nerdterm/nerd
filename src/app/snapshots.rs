@@ -151,18 +151,26 @@ fn golden_search_window() {
             app.spaces[0].tabs[id - 1].panes.insert(id, p);
         }
         let Overlay::Find(mut f) = app.run_action(Action::SearchAll, &MenuCtx::Global) else { panic!("Search opens") };
-        let screen = Rect::new(0, 0, 100, 20);
+        let screen = Rect::new(0, 0, 100, 30);
         let mut out = String::new();
         let mut shot = |tag: &str, f: &crate::find::Find| {
             let mut buf = Buffer::empty(screen);
             f.draw(&mut buf, screen, &crate::render::Theme::dark());
             out += &format!("== {tag}\n{}", dump(&buf, screen));
         };
-        shot("all, nothing typed", &f);
+        shot("all, nothing typed: nothing listed", &f);
         f.set_tab(Some(Group::Panes));
         shot("panes with their chips", &f);
+        f.chip = crate::find::Chip::Working;
+        f.set_tab(Some(Group::Panes));
+        shot("the working chip lists its panes", &f);
+        f.chip = crate::find::Chip::All;
+        f.set_tab(None);
+        f.paste("split");
+        shot("commands on All", &f);
+        f.query.clear();
         f.set_tab(Some(Group::Settings));
-        f.query = "wrap".into();
+        f.paste("wrap");
         shot("a setting and its value", &f);
         crate::hook::tests::golden("ui/search.txt", &out);
     });
