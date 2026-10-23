@@ -270,7 +270,9 @@ impl Settings {
 
     /// Selects the row with this label.
     pub fn choose(&mut self, label: &str) {
-        self.selected = ROWS.iter().position(|r| r.1 == label).unwrap_or(0);
+        let at = ROWS.iter().position(|r| r.1 == label);
+        debug_assert!(at.is_some(), "no settings row {label:?}");
+        self.selected = at.unwrap_or(0);
     }
 
     /// Every row as (section, label, value now, changed in Search's row): only the six config.json switches are.

@@ -73,9 +73,13 @@ pub fn sections() -> &'static [Section] {
 fn split(text: &str) -> Vec<(Option<String>, String)> {
     let mut out = vec![(None, String::new())];
     for raw in text.lines() {
-        let line = uncommented(raw);
-        // a line that was only a comment goes, and a code fence; a blank line stays
-        if line.starts_with("# ") || line.starts_with("```") || (line.trim().is_empty() && !raw.trim().is_empty()) {
+        let mut line = uncommented(raw);
+        if let Some(t) = line.trim().strip_prefix("<summary>").and_then(|t| t.strip_suffix("</summary>")) {
+            line = t.to_string();
+        }
+        // a line that was only a comment or an HTML tag goes, and a code fence; a blank line stays
+        let tag = line.trim().starts_with('<') && line.trim().ends_with('>');
+        if tag || line.starts_with("# ") || line.starts_with("```") || (line.trim().is_empty() && !raw.trim().is_empty()) {
             continue;
         }
         match line.strip_prefix("## ") {
@@ -137,6 +141,8 @@ mod tests {
         assert_eq!(named("Privacy and security › What leaves nerd").url.as_deref(), Some("https://nerdterm.dev/security/#what-leaves-nerd"));
         assert_eq!(named("Usage › Keys").url.as_deref(), Some("https://nerdterm.dev/docs/usage/#keys"));
         assert_eq!(named("Quick start").url.as_deref(), Some("https://nerdterm.dev/docs/quick-start/"));
+        assert!(all.iter().any(|s| s.body.contains("Build from source")), "the summary's text stays");
+        assert!(!all.iter().any(|s| s.body.contains("<details>") || s.body.contains("</details>") || s.body.contains("<summary>")), "HTML tags go");
         assert_eq!(named("Uninstall").url, None);
         assert_eq!(named("Documentation").url, None);
         assert!(named("Configuration").body.contains("preview_wrap"));

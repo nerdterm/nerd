@@ -2246,6 +2246,8 @@ mod tests {
                 assert_eq!((found[0].value.as_str(), found[0].place.as_str()), (item.key.as_str(), "Main menu"), "{}", item.label);
             }
             assert!(commands.iter().any(|h| h.name == "Rename tab…" && h.place == "Tab 1") && commands.iter().any(|h| h.name == "Rename space…"), "the shown tab's and space's menus too");
+            let isolation: Vec<&str> = commands.iter().filter(|h| h.name == "Isolation for new panes…").map(|h| h.place.as_str()).collect();
+            assert!(isolation.len() == 2 && isolation[0].starts_with("Space ") && isolation[1].starts_with("Tab "), "the space's and the tab's each, with its own place: {isolation:?}");
             letter(&mut app, "x");
             let f = find(&app);
             assert!(f.lazy && f.files && !f.of(crate::find::Group::Help).is_empty(), "the first letter reads them");
@@ -2270,6 +2272,28 @@ mod tests {
             app.mark_cfg_broken();
             press(&mut app, KeyCode::Enter);
             assert_eq!(std::fs::read_to_string(&path).unwrap(), "{ not json", "a broken file is never written");
+            assert_eq!(app.cfg.preview_wrap, was, "the Enter reached the switch: it toggled back in memory");
+            press(&mut app, KeyCode::Enter);
+            assert_eq!(app.cfg.preview_wrap, !was, "and off again");
+        });
+    }
+
+    #[test]
+    fn a_plugin_turned_off_and_on_through_search_outside_a_pane_shows_its_new_value() {
+        with_policy("search-plugin-toggle", || {
+            let mut app = with_one_space();
+            crate::install::place(crate::install::stage_add(&plugin_repo("plug").to_string_lossy(), None, true).unwrap()).unwrap();
+            search_for(&mut app, "plug");
+            for _ in 0..4 {
+                press(&mut app, KeyCode::Tab);
+            }
+            assert_eq!(find(&app).tab, Some(crate::find::Group::Plugins));
+            let value = |app: &App| find(app).of(crate::find::Group::Plugins).into_iter().find(|h| h.name == "plug").map(|h| h.value.clone()).unwrap_or_default();
+            assert!(value(&app).starts_with("on"), "{}", value(&app));
+            press(&mut app, KeyCode::Enter);
+            assert!(crate::install::read_off().unwrap().contains_key("plug") && value(&app).starts_with("off"), "{}", value(&app));
+            press(&mut app, KeyCode::Enter);
+            assert!(crate::install::read_off().unwrap().is_empty() && value(&app).starts_with("on"), "{}", value(&app));
         });
     }
 
@@ -2306,6 +2330,38 @@ mod tests {
             press(&mut app, KeyCode::Enter);
             assert_eq!((app.active, app.spaces[0].active_tab, app.tab().map(|t| t.layout.focused())), (0, 1, Some(4)), "a pane is gone to");
             assert!(!app.overlay.is_open());
+        });
+    }
+
+    #[test]
+    fn a_multi_word_text_query_opens_the_pane_search_on_the_first_word_the_line_has() {
+        with_policy("search-text-words", || {
+            let mut app = named();
+            app.pane_mut(3).unwrap().term.feed(b"one\r\nthe needle is here\r\ntwo\r\n");
+            search_for(&mut app, "here needle");
+            for _ in 0..7 {
+                press(&mut app, KeyCode::Tab);
+            }
+            press(&mut app, KeyCode::Enter);
+            press(&mut app, KeyCode::Enter);
+            let (id, s) = app.search.as_ref().expect("the pane search opens");
+            assert_eq!((*id, s.query.as_str(), s.current().map(|m| m.row)), (3, "here", Some(1)));
+        });
+    }
+
+    #[test]
+    fn a_text_search_that_reaches_the_cap_says_so() {
+        with_policy("search-text-cap", || {
+            let mut app = named();
+            app.pane_mut(3).unwrap().term = crate::term::Term::new(80, 24, 2000);
+            app.pane_mut(3).unwrap().term.feed("x\r\n".repeat(1100).as_bytes());
+            search_for(&mut app, "x");
+            for _ in 0..7 {
+                press(&mut app, KeyCode::Tab);
+            }
+            press(&mut app, KeyCode::Enter);
+            assert_eq!(find(&app).of(crate::find::Group::Text).len(), 1000);
+            assert_eq!(find(&app).text_note.as_deref(), Some("First 1000 lines; type more to narrow."));
         });
     }
 

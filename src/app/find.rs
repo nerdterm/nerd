@@ -58,7 +58,9 @@ impl App {
         for (menu, place, ctx) in menus {
             let Overlay::Menu(m, _) = menu else { continue };
             for item in m.items.into_iter().filter(|i| !i.label.is_empty()) {
-                if out.iter().any(|h| h.name == item.label && matches!(h.target, Target::Command(a, _) if a == item.action)) {
+                // Same label and action: one row, unless both are space or tab items of different kinds (each acts on its own object).
+                let shared = |c: &Ctx| matches!(c, Ctx::Global | Ctx::Pane(_));
+                if out.iter().any(|h| h.name == item.label && matches!(&h.target, Target::Command(a, c) if *a == item.action && (std::mem::discriminant(c) == std::mem::discriminant(&ctx) || shared(c) || shared(&ctx)))) {
                     continue;
                 }
                 out.push(Hit::new(Group::Commands, &item.label, &place, Target::Command(item.action, ctx.clone())).value(&item.key).enabled(item.enabled));
@@ -75,6 +77,7 @@ impl App {
             f.add(crate::help::sections().iter().enumerate().map(|(i, s)| Hit::new(Group::Help, &s.name, "", Target::Help(i)).extra(&s.body).top(s.page)).collect());
         }
         if f.wants_files() {
+            // ceiling: one snapshot per window; a file made after it is not found until the window reopens.
             f.files = true;
             // The tree's own folder and hidden files; with the tree closed, what opening it would show.
             let (root, hidden) = match &self.tree {
@@ -142,12 +145,16 @@ impl App {
                 let Some((si, ti)) = self.locate(id) else { return gone(self, f) };
                 self.go_to(si, ti, id);
                 if let Target::Line(_, row) = t {
-                    let mut s = crate::search::Search::new();
-                    s.query = f.query.trim().to_string();
-                    self.search = Some((id, s));
-                    self.search_refresh(false);
-                    if let Some((_, s)) = self.search.as_mut() {
-                        s.choose_row(row);
+                    // The phrase first; when it is not on that line (the words matched apart), the first word that is.
+                    let phrase = f.query.trim().to_string();
+                    for q in std::iter::once(phrase).chain(f.words()) {
+                        let mut s = crate::search::Search::new();
+                        s.query = q;
+                        self.search = Some((id, s));
+                        self.search_refresh(false);
+                        if self.search.as_mut().is_some_and(|(_, s)| s.choose_row(row)) {
+                            break;
+                        }
                     }
                     self.search_refresh(true);
                 }
@@ -248,7 +255,11 @@ impl App {
             crate::log::debug(&format!("search: pane {id}: {} lines in {} ms", lines.len(), at.elapsed().as_millis()));
         }
         crate::log::info(&format!("search: pane text of {searched} of {} panes in {} ms, {} lines found", panes.len(), started.elapsed().as_millis(), hits.len()));
-        let note = (searched < panes.len()).then(|| format!("Searched {searched} of {} panes.", panes.len()));
+        let note = if hits.len() >= TEXT_MAX {
+            Some(format!("First {TEXT_MAX} lines; type more to narrow."))
+        } else {
+            (searched < panes.len()).then(|| format!("Searched {searched} of {} panes.", panes.len()))
+        };
         f.set_text(hits, note);
     }
 

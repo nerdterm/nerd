@@ -134,10 +134,12 @@ impl Search {
     }
 
     /// The first match on this row becomes the current one, when there is one.
-    pub fn choose_row(&mut self, row: isize) {
-        if let Some(i) = self.matches.iter().position(|m| m.row == row) {
+    pub fn choose_row(&mut self, row: isize) -> bool {
+        let at = self.matches.iter().position(|m| m.row == row);
+        if let Some(i) = at {
             self.current = i;
         }
+        at.is_some()
     }
 
     pub fn current(&self) -> Option<Match> {

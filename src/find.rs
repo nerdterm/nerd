@@ -1,6 +1,7 @@
 //! Main menu > Search…: one field over panes, menu commands, settings, plugins, files, help and pane text.
 //! The window only finds; each result acts through the code its origin uses, in `app::find`.
 
+use std::cell::Cell;
 use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
@@ -238,13 +239,15 @@ pub struct Find {
     selected: usize,
     /// A help section shown in the window, and how far it is scrolled.
     help: Option<(usize, usize)>,
+    /// How far the help page can scroll at the size last drawn.
+    help_max: Cell<usize>,
     /// Plugins and Help were read; Files were walked. Once per window, on the first query that needs them.
     pub lazy: bool,
     pub files: bool,
     pub files_note: Option<String>,
     /// The query the Text hits were found for, and how far the search got when it stopped early.
     text: Option<String>,
-    text_note: Option<String>,
+    pub text_note: Option<String>,
 }
 
 impl Default for Find {
@@ -273,7 +276,7 @@ pub const KEYS: &[Key] = &[
 
 impl Find {
     pub fn new() -> Self {
-        Self { query: String::new(), tab: None, chip: Chip::All, hits: Vec::new(), selected: 0, help: None, lazy: false, files: false, files_note: None, text: None, text_note: None }
+        Self { query: String::new(), tab: None, chip: Chip::All, hits: Vec::new(), selected: 0, help: None, help_max: Cell::new(0), lazy: false, files: false, files_note: None, text: None, text_note: None }
     }
 
     pub fn add(&mut self, hits: Vec<Hit>) {
@@ -490,9 +493,9 @@ impl Find {
             // A help page's field takes no keys: `o` is the button's.
             match crate::keys::normalize(k).code {
                 KeyCode::Esc => self.help = None,
-                KeyCode::Char('o') => return self.page().map_or(Outcome::None, Outcome::Open),
-                KeyCode::Up => self.help = Some((s, scroll.saturating_sub(1))),
-                KeyCode::Down => self.help = Some((s, (scroll + 1).min(crate::help::sections()[s].body.lines().count()))),
+                KeyCode::Char('o') if !k.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => return self.page().map_or(Outcome::None, Outcome::Open),
+                KeyCode::Up => self.help = Some((s, scroll.min(self.help_max.get()).saturating_sub(1))),
+                KeyCode::Down => self.help = Some((s, (scroll + 1).min(self.help_max.get()))),
                 _ => {}
             }
             return Outcome::None;
@@ -554,7 +557,7 @@ impl Find {
             ScrollUp | ScrollDown => {
                 let d = if ev.kind == ScrollUp { -3 } else { 3 };
                 match self.help.as_mut() {
-                    Some((_, scroll)) => *scroll = scroll.saturating_add_signed(d),
+                    Some((_, scroll)) => *scroll = scroll.saturating_add_signed(d).min(self.help_max.get()),
                     None => self.step(d),
                 }
                 Outcome::None
@@ -617,7 +620,9 @@ impl Find {
             d.hits.push((Rect::new(inner.x, bottom, (label.chars().count() as u16).min(inner.width), 1), Click::Open));
         }
         let lines: Vec<String> = sec.body.lines().flat_map(|l| if l.is_empty() { vec![String::new()] } else { crate::menu::wrap(l, w) }).collect();
-        for (y, line) in (inner.y + 2..bottom.saturating_sub(1)).zip(lines.iter().skip(scroll)) {
+        let rows = bottom.saturating_sub(1).saturating_sub(inner.y + 2) as usize;
+        self.help_max.set(lines.len().saturating_sub(rows));
+        for (y, line) in (inner.y + 2..bottom.saturating_sub(1)).zip(lines.iter().skip(scroll.min(self.help_max.get()))) {
             buf.set_stringn(inner.x, y, line, w, Style::default().fg(theme.text));
         }
     }
@@ -899,6 +904,29 @@ mod tests {
         assert_eq!(f.query, "leaves", "o is the button's");
         assert!(matches!(f.key(key(KeyCode::Esc)), Outcome::None), "Esc goes back");
         assert!(f.help.is_none());
+    }
+
+    #[test]
+    fn a_chord_in_a_help_view_opens_nothing_and_its_scroll_ends_at_its_last_wrapped_line() {
+        let screen = Rect::new(0, 0, 120, 40);
+        let mut f = Find::new();
+        let at = crate::help::sections().iter().position(|s| s.name == "Privacy and security › What leaves nerd").unwrap();
+        f.help = Some((at, 0));
+        for m in [KeyModifiers::ALT, KeyModifiers::CONTROL] {
+            assert!(matches!(f.key(KeyEvent::new(KeyCode::Char('o'), m)), Outcome::None), "{m:?}+o");
+        }
+        let draw = |f: &Find| f.draw(&mut Buffer::empty(screen), screen, &Theme::dark());
+        draw(&f);
+        let max = f.help_max.get();
+        assert!(max > crate::help::sections()[at].body.lines().count().saturating_sub(40), "wrapped lines count, not raw ones");
+        for _ in 0..max + 20 {
+            f.key(key(KeyCode::Down));
+        }
+        assert_eq!(f.help, Some((at, max)), "the last wrapped line is reached and no further");
+        let d = draw(&f);
+        let wheel = MouseEvent { kind: MouseEventKind::ScrollDown, column: 5, row: 5, modifiers: KeyModifiers::NONE };
+        f.mouse(wheel, screen, &d);
+        assert_eq!(f.help, Some((at, max)), "the wheel stops at the end");
     }
 
     #[test]
