@@ -574,7 +574,7 @@ impl App {
         let frame = match &self.overlay {
             Overlay::Settings(w) => w.rect(screen),
             Overlay::Keys(w) => w.rect(screen),
-            Overlay::Find(w) => w.rect(screen),
+            Overlay::Find(w) => return Some(w.button(screen)),
             Overlay::NewSpace(w) => w.rect(screen),
             Overlay::Picker(w, _) => w.rect(screen),
             Overlay::Messages(_) => return Some(self.view.dialog.messages.close),
@@ -1002,7 +1002,7 @@ impl App {
 
     fn overlay_mouse(&mut self, ev: crossterm::event::MouseEvent, screen: Rect) {
         use crate::menu::Outcome;
-        self.dirty = true;
+        let prior = std::mem::replace(&mut self.dirty, true);
         let overlay = std::mem::replace(&mut self.overlay, Overlay::None);
         self.overlay = match overlay {
             Overlay::Menu(mut m, ctx) => match m.mouse(ev, screen) {
@@ -1091,8 +1091,15 @@ impl App {
                 self.accounts_outcome(w, out)
             }
             Overlay::Find(mut f) => {
+                let chosen = f.chosen();
                 let out = f.mouse(ev, screen, &self.view.dialog.find);
-                self.find_outcome(f, out)
+                // A motion that keeps the same row chosen draws nothing new.
+                if ev.kind == crossterm::event::MouseEventKind::Moved && f.chosen() == chosen {
+                    self.dirty = prior;
+                    Overlay::Find(f)
+                } else {
+                    self.find_outcome(f, out)
+                }
             }
             Overlay::None => Overlay::None,
         };
@@ -1155,6 +1162,10 @@ impl App {
     /// Wherever the keys are not on the pane it never reaches one: a text field takes the first line, as typed, as
     /// `key` routes them.
     pub fn paste(&mut self, s: &str) {
+        // As the first key does, it clears the notice.
+        if self.notice.take().is_some() | self.toast.take().is_some() {
+            self.dirty = true;
+        }
         // Terminals paste a line break as CR as often as LF.
         let line = crate::render::unspoofed(s.split(['\n', '\r']).next().unwrap_or_default());
         let focused = self.tab().map(|t| t.layout.focused());

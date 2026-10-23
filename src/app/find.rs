@@ -7,9 +7,11 @@ use crate::find::{Ctx, Find, Group, Hit, Outcome, Target};
 const TEXT_TIME: Duration = Duration::from_millis(300);
 /// ceiling: the first 1000 lines found are listed; a longer query finds the rest.
 const TEXT_MAX: usize = 1000;
-/// ceiling: the home folder's folders macOS guards with a privacy prompt are never entered by Search's file walk, from
-/// whatever folder it starts at, so their files are not found; the way past is to walk them once the tree has opened them.
+/// ceiling: the home folder's folders macOS guards with a privacy prompt, and other disks and network folders (whose
+/// reads can hang the walk), are never entered by Search's file walk from outside them, so their files are not found; a
+/// share mounted somewhere else is walked. The way past is to walk them once the tree has opened them.
 const GUARDED: [&str; 7] = ["Desktop", "Documents", "Downloads", "Library", "Pictures", "Movies", "Music"];
+const MOUNTS: [&str; 4] = ["/Volumes", "/net", "/Network", "/System/Volumes"];
 
 impl App {
     /// Panes, commands and settings are in memory; plugins, help and files are read on the first query that needs them.
@@ -83,14 +85,17 @@ impl App {
                 None => (self.space().map(|s| std::fs::canonicalize(&s.cwd).unwrap_or_else(|_| s.cwd.clone())).unwrap_or_default(), false),
             };
             let home = crate::paths::home().and_then(|h| std::fs::canonicalize(h).ok());
-            let guarded: Vec<PathBuf> = home.iter().flat_map(|h| GUARDED.map(|g| h.join(g))).collect();
+            let mut guarded: Vec<PathBuf> = home.iter().flat_map(|h| GUARDED.map(|g| h.join(g))).chain(MOUNTS.map(PathBuf::from)).collect();
+            // The Data volume's own path to the same folders: a firmlink is no symlink, and canonicalising keeps it.
+            let data: Vec<PathBuf> = guarded.iter().filter_map(|p| p.strip_prefix("/").ok()).map(|p| std::path::Path::new("/System/Volumes/Data").join(p)).collect();
+            guarded.extend(data);
             let (names, cut, skipped) = crate::tree::file_names(&root, hidden, &guarded);
             let mut note = Vec::new();
             if let Some(t) = cut {
                 note.push(format!("Stopped after {} ms: some files under {} are not listed.", t.as_millis(), crate::paths::shown(&root)));
             }
             if skipped {
-                note.push(format!("{} in the home folder are not searched: macOS would ask to let nerd in.", GUARDED.join(", ")));
+                note.push(format!("{} in the home folder, which macOS guards, and other disks and network folders are not searched.", GUARDED.join(", ")));
             }
             f.files_note = (!note.is_empty()).then(|| note.join(" "));
             f.add(
@@ -163,7 +168,7 @@ impl App {
                     // The line itself first: another match printed next to it may sit nearer the row now.
                     if let Some((_, mut s)) = self.search.take() {
                         if let Some(p) = self.pane(id) {
-                            s.choose_row(row, |r| p.term.line(r).is_some_and(|l| l.trim() == line));
+                            s.choose_row(row, |r| p.term.line(r).is_some_and(|l| crate::find::shown(l.trim()) == line));
                         }
                         self.search = Some((id, s));
                     }
@@ -265,15 +270,19 @@ impl App {
                     late = true;
                     break;
                 }
+                if hits.len() >= TEXT_MAX {
+                    break;
+                }
                 let lc = line.to_lowercase();
-                if hits.len() < TEXT_MAX && words.iter().all(|w| lc.contains(w.as_str())) {
+                if words.iter().all(|w| lc.contains(w.as_str())) {
                     // The jump searches the pane once: for the phrase where the line has it, else for the first word.
                     let q = if lc.contains(&phrase_lc) { phrase.clone() } else { words[0].clone() };
-                    hits.push(Hit::new(Group::Text, line.trim(), label, Target::Line(*id, i as isize - history, q, line.trim().to_string())));
+                    // found on its whole line: the name it shows is cut
+                    hits.push(Hit::new(Group::Text, line.trim(), label, Target::Line(*id, i as isize - history, q, crate::find::shown(line.trim()))).extra(words.join(" ")));
                 }
             }
             if late {
-                part = Some(crate::render::unspoofed(label));
+                part = Some(crate::find::shown(label));
                 break;
             }
             searched += 1;

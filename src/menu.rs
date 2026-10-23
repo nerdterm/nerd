@@ -1032,14 +1032,17 @@ pub fn wrap(text: &str, width: usize) -> Vec<String> {
             if !line.is_empty() {
                 lines.push(std::mem::take(&mut line));
             }
-            let mut chunk = String::new();
-            for c in word.chars() {
-                // a chunk always takes one character, so a character wider than the line cannot loop
-                if !chunk.is_empty() && cells(&chunk) + cells(c.encode_utf8(&mut [0; 4])) > width {
+            let (mut chunk, mut used) = (String::new(), 0);
+            crate::slots::graphemes(word, |_, g, w| {
+                // a chunk always takes one grapheme, so one wider than the line cannot loop
+                if !chunk.is_empty() && used + w > width {
                     lines.push(std::mem::take(&mut chunk));
+                    used = 0;
                 }
-                chunk.push(c);
-            }
+                chunk.push_str(g);
+                used += w;
+                true
+            });
             lines.push(chunk);
             continue;
         }
@@ -1065,6 +1068,12 @@ pub fn wrap(text: &str, width: usize) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wrap_cuts_a_long_word_by_what_the_terminal_draws() {
+        let lines = wrap(&"\u{2764}\u{FE0F}".repeat(80), 62);
+        assert!(lines.len() > 1 && lines.iter().all(|l| crate::slots::cells(l) <= 62), "{:?}", lines.iter().map(|l| crate::slots::cells(l)).collect::<Vec<_>>());
+    }
 
     #[test]
     fn wrap_measures_cells_and_keeps_every_character() {

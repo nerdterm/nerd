@@ -243,11 +243,11 @@ pub fn blit_grid(buf: &mut Buffer, area: Rect, screen: crate::term::Screen<'_>, 
 }
 
 /// Characters that aren't visible but change how the terminal renders the
-/// rest: control characters, bidi overrides, invisible separators, BOM.
+/// rest: control characters, bidi overrides, invisible separators and operators, soft hyphens, tag characters, BOM.
 /// U+200C and U+200D stay: emoji sequences and some scripts are built with them.
 pub fn is_spoofing(c: char) -> bool {
     c.is_control()
-        || matches!(c as u32, 0x061C | 0x200B | 0x200E..=0x200F | 0x202A..=0x202E | 0x2066..=0x2069 | 0xFEFF)
+        || matches!(c as u32, 0x00AD | 0x061C | 0x200B | 0x200E..=0x200F | 0x202A..=0x202E | 0x2060..=0x2064 | 0x2066..=0x2069 | 0xFEFF | 0xE0000..=0xE007F)
 }
 
 pub fn unspoofed(s: &str) -> String {
@@ -536,6 +536,7 @@ mod tests {
         assert_eq!((buf[(0, 0)].symbol(), buf[(1, 0)].symbol()), ("a", " "));
         assert_eq!(buf[(2, 0)].symbol(), "\u{1F469}\u{200D}\u{1F4BB}", "an emoji sequence keeps its joiner");
         assert_eq!(unspoofed("a\u{202E}b\u{200C}c\x1b"), "ab\u{200C}c");
+        assert_eq!(unspoofed("w\u{2060}o\u{2064}r\u{00AD}d\u{E0041}\u{E007F}"), "word", "joiners, invisible operators, soft hyphens and tag characters");
     }
 
     fn screen_of(cols: u16, rows: u16, bytes: &[u8]) -> crate::term::Term {

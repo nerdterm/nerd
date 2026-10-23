@@ -2509,7 +2509,61 @@ mod tests {
             search_for(&mut app, "needle");
             let files: Vec<String> = find(&app).of(crate::find::Group::Files).iter().map(|h| h.name.clone()).collect();
             assert_eq!(files, ["needle-notes.txt"]);
-            assert!(find(&app).files_note.as_deref().is_some_and(|n| n.contains("Documents") && n.contains("in the home folder are not searched")), "{:?}", find(&app).files_note);
+            let note = find(&app).files_note.clone().unwrap_or_default();
+            assert!(note.contains("Documents") && note.contains("are not searched"), "{note:?}");
+            for _ in 0..5 {
+                press(&mut app, KeyCode::Tab);
+            }
+            assert_eq!(find(&app).tab, Some(crate::find::Group::Files));
+            let shown = screen(&mut app);
+            for line in crate::menu::wrap(&note, 62) {
+                assert!(shown.contains(line.trim()), "the Files tab shows all of the note, wrapped: {line:?} in {shown}");
+            }
+        });
+    }
+
+    #[test]
+    fn a_line_longer_than_what_a_row_keeps_is_listed_for_a_word_past_the_cut() {
+        with_policy("search-text-long", || {
+            let mut app = named();
+            app.pane_mut(3).unwrap().term = crate::term::Term::new(300, 24, 100);
+            app.pane_mut(3).unwrap().term.feed(format!("{} иголка\r\n", "я".repeat(270)).as_bytes());
+            search_for(&mut app, "иголка");
+            for _ in 0..7 {
+                press(&mut app, KeyCode::Tab);
+            }
+            press(&mut app, KeyCode::Enter);
+            let shown = screen(&mut app);
+            assert!(shown.contains("яяя") && shown.contains("reader") && !shown.contains("No pane has this text"), "{shown}");
+        });
+    }
+
+    #[test]
+    fn a_huge_pane_line_or_name_listed_by_search_draws_a_frame_fast() {
+        with_policy("search-huge", || {
+            let mut app = named();
+            let marks = "\u{301}".repeat(64_000);
+            app.pane_mut(3).unwrap().term = crate::term::Term::new(80, 24, 100);
+            app.pane_mut(3).unwrap().term.feed(format!("a{marks} needle tail\r\n").as_bytes());
+            app.pane_mut(4).unwrap().label = Some(format!("needle{marks}"));
+            search_for(&mut app, "needle");
+            for _ in 0..7 {
+                press(&mut app, KeyCode::Tab);
+            }
+            press(&mut app, KeyCode::Enter);
+            assert!(!find(&app).of(crate::find::Group::Text).is_empty(), "the line is found");
+            let t = Instant::now();
+            let shown = screen(&mut app);
+            assert!(t.elapsed() < Duration::from_millis(200), "the Text tab: {:?}", t.elapsed());
+            assert!(shown.contains("reader") && !shown.contains("No pane has this text"), "and listed, its word past the cut: {shown}");
+            press(&mut app, KeyCode::Tab);
+            press(&mut app, KeyCode::Tab);
+            assert_eq!(find(&app).tab, Some(crate::find::Group::Panes));
+            let t = Instant::now();
+            let shown = screen(&mut app);
+            assert!(t.elapsed() < Duration::from_millis(200) && shown.contains("needle"), "the pane of that name: {:?}", t.elapsed());
+            press(&mut app, KeyCode::Enter);
+            assert_eq!(app.tab().map(|t| t.layout.focused()), Some(4), "and it is still gone to");
         });
     }
 
@@ -2529,7 +2583,7 @@ mod tests {
         crate::paths::TEST_HOME.with(|h| h.replace(old));
         let _ = std::fs::remove_dir_all(&root);
         assert_eq!(files, ["Users/me/needle-notes.txt"]);
-        assert!(note.is_some_and(|n| n.contains("in the home folder are not searched")));
+        assert!(note.is_some_and(|n| n.contains("are not searched")));
     }
 
     #[test]
