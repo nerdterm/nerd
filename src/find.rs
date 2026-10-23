@@ -104,8 +104,9 @@ pub enum Target {
     File(PathBuf),
     /// A section of `help::sections()`.
     Help(usize),
-    /// A line of a pane's text, by its row from the top of the live screen; history is negative.
-    Line(PaneId, isize),
+    /// A line of a pane's text: its row from the top of the live screen (history is negative), what the pane search
+    /// looks for there (the phrase when the line has it, else the first word), and the line, trimmed.
+    Line(PaneId, isize, String, String),
 }
 
 pub struct Hit {
@@ -132,8 +133,8 @@ impl Hit {
     pub fn new(group: Group, name: impl AsRef<str>, place: impl AsRef<str>, target: Target) -> Self {
         Self {
             group,
-            name: printable(name.as_ref()),
-            place: printable(place.as_ref()),
+            name: crate::render::unspoofed(name.as_ref()),
+            place: crate::render::unspoofed(place.as_ref()),
             value: String::new(),
             enabled: true,
             top: true,
@@ -149,7 +150,7 @@ impl Hit {
     }
 
     pub fn value(mut self, v: impl AsRef<str>) -> Self {
-        self.value = printable(v.as_ref());
+        self.value = crate::render::unspoofed(v.as_ref());
         self
     }
 
@@ -170,17 +171,12 @@ impl Hit {
     }
 
     pub fn pane(mut self, space: (usize, String), tab: String, state: AgentState, current: bool) -> Self {
-        self.space = (space.0, printable(&space.1));
-        self.tab = printable(&tab);
+        self.space = (space.0, crate::render::unspoofed(&space.1));
+        self.tab = crate::render::unspoofed(&tab);
         self.state = Some(state);
         self.current = current;
         self
     }
-}
-
-/// Every row's text: a control character from a file, a plugin or a pane would move the cursor.
-fn printable(s: &str) -> String {
-    s.chars().filter(|c| !c.is_control()).collect()
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -248,6 +244,8 @@ pub struct Find {
     /// The query the Text hits were found for, and how far the search got when it stopped early.
     text: Option<String>,
     pub text_note: Option<String>,
+    /// What the last result did while the window stayed, red when refused; a notice card would sit under the window.
+    pub note: Option<(bool, String)>,
 }
 
 impl Default for Find {
@@ -266,17 +264,28 @@ pub struct Key {
 }
 
 pub const KEYS: &[Key] = &[
-    Key { code: KeyCode::Up, label: "↑↓", word: "", what: "up and down the results", act: |f| { f.step(-1); Outcome::None } },
-    Key { code: KeyCode::Down, label: "", word: "", what: "up and down the results", act: |f| { f.step(1); Outcome::None } },
+    Key { code: KeyCode::Up, label: "↑↓", word: "", what: "up and down the results", act: |f| { f.step(-1, true); Outcome::None } },
+    Key { code: KeyCode::Down, label: "", word: "", what: "up and down the results", act: |f| { f.step(1, true); Outcome::None } },
     Key { code: KeyCode::Enter, label: "enter", word: "open", what: "go to, run, change or open the chosen result", act: |f| f.act(f.selected) },
     Key { code: KeyCode::Tab, label: "tab", word: "next group", what: "the next group; with shift, the one before", act: |f| { f.cycle(1); Outcome::None } },
     Key { code: KeyCode::BackTab, label: "", word: "", what: "the next group; with shift, the one before", act: |f| { f.cycle(-1); Outcome::None } },
-    Key { code: KeyCode::Esc, label: "esc", word: "close", what: "close; from a help page, back", act: |_| Outcome::Close },
+    Key { code: KeyCode::Esc, label: "esc", word: "close", what: "close", act: |_| Outcome::Close },
 ];
+
+/// The keys of a help page in the window: its field takes none.
+pub const HELP_KEYS: &[Key] = &[
+    Key { code: KeyCode::Char('o'), label: "o", word: "open on nerdterm.dev", what: "open the page on nerdterm.dev", act: |f| f.page().map_or(Outcome::None, Outcome::Open) },
+    Key { code: KeyCode::Up, label: "↑↓", word: "", what: "scroll the page", act: |f| { f.scroll(-1); Outcome::None } },
+    Key { code: KeyCode::Down, label: "", word: "", what: "scroll the page", act: |f| { f.scroll(1); Outcome::None } },
+    Key { code: KeyCode::Esc, label: "esc", word: "back", what: "back to the results", act: |f| { f.help = None; Outcome::None } },
+];
+
+/// Its label in the close button's place while a help page shows.
+const BACK: &str = " [Esc] back ";
 
 impl Find {
     pub fn new() -> Self {
-        Self { query: String::new(), tab: None, chip: Chip::All, hits: Vec::new(), selected: 0, help: None, help_max: Cell::new(0), lazy: false, files: false, files_note: None, text: None, text_note: None }
+        Self { query: String::new(), tab: None, chip: Chip::All, hits: Vec::new(), selected: 0, help: None, help_max: Cell::new(0), lazy: false, files: false, files_note: None, text: None, text_note: None, note: None }
     }
 
     pub fn add(&mut self, hits: Vec<Hit>) {
@@ -303,8 +312,9 @@ impl Find {
         !self.lazy && (!self.words().is_empty() || matches!(self.tab, Some(Group::Plugins | Group::Help)))
     }
 
+    /// Two letters, or the Files tab: one letter is too little to walk a folder for.
     pub fn wants_files(&self) -> bool {
-        !self.files && !self.words().is_empty()
+        !self.files && (self.query.trim().chars().count() >= 2 || self.tab == Some(Group::Files))
     }
 
     /// The query's words, lowercase: a result has every one.
@@ -340,7 +350,7 @@ impl Find {
     /// One group's hits for the query, best first, ties in source order.
     /// ceiling: words matched as substrings, not fuzzy; a typo finds nothing. A permissive-licence fuzzy scorer if people miss it.
     fn matches(&self, group: Group, q: &str, words: &[String]) -> Vec<usize> {
-        let chip = if self.tab == Some(Group::Panes) { self.chip } else { Chip::All };
+        let chip = self.chip();
         let mut m: Vec<(u8, usize)> = (0..self.hits.len())
             .filter(|&i| self.hits[i].group == group && self.hits[i].state.is_none_or(|s| chip.fits(s)))
             .filter_map(|i| Self::rank(&self.hits[i], q, words).map(|r| (r, i)))
@@ -389,6 +399,8 @@ impl Find {
                     out.push(note("No pane has this text."));
                 }
                 out.extend(self.text_note.as_deref().map(note));
+                // The panes print on: the same query can be searched again.
+                out.push(Row::AskText);
             }
             Some(Group::Text) => out.push(Row::AskText),
             Some(g) => {
@@ -404,37 +416,56 @@ impl Find {
         out
     }
 
-    /// Every pane under its space, as they are laid out.
+    /// The state filter in force: the chips are only on the Panes tab.
+    fn chip(&self) -> Chip {
+        if self.tab == Some(Group::Panes) { self.chip } else { Chip::All }
+    }
+
+    /// Every pane under its space, spaces in order and panes by id.
     fn tree(&self) -> Vec<Row> {
-        let chip = if self.tab == Some(Group::Panes) { self.chip } else { Chip::All };
+        let chip = self.chip();
         let panes: Vec<usize> = (0..self.hits.len()).filter(|&i| self.hits[i].group == Group::Panes && self.hits[i].state.is_some_and(|s| chip.fits(s))).collect();
         if panes.is_empty() {
             return vec![Row::Note("No panes.".into())];
         }
         let mut out = Vec::new();
+        let mut tabs = false;
         for (k, &i) in panes.iter().enumerate() {
             let space = self.hits[i].space.0;
             if k == 0 || self.hits[panes[k - 1]].space.0 != space {
                 out.push(Row::Space(i));
+                let tab = &self.hits[i].tab;
+                tabs = panes[k..].iter().map(|&j| &self.hits[j]).take_while(|h| h.space.0 == space).any(|h| h.tab != *tab);
             }
-            let same: Vec<&Hit> = panes.iter().map(|&j| &self.hits[j]).filter(|h| h.space.0 == space).collect();
-            let tabs = same.iter().any(|h| h.tab != same[0].tab);
             let last = panes.get(k + 1).is_none_or(|&j| self.hits[j].space.0 != space);
             out.push(Row::Tree(i, last, tabs));
         }
         out
     }
 
-    fn clamp(&mut self) {
+    /// Keeps the choice on a row that acts; returns how many rows there are.
+    fn clamp(&mut self) -> usize {
         let rows = self.rows();
         if !rows.get(self.selected).is_some_and(Row::acts) {
             self.selected = rows.iter().position(Row::acts).unwrap_or(0);
         }
+        rows.len()
     }
 
     fn typed(&mut self) {
         self.selected = 0;
-        self.clamp();
+        let t = std::time::Instant::now();
+        let n = self.clamp();
+        crate::log::debug(&format!("search: {n} rows for a {}-character query in {} µs", self.query.chars().count(), t.elapsed().as_micros()));
+    }
+
+    /// A paste's line into the field, as typing it would; a help page's field takes none.
+    pub fn paste(&mut self, line: &str) {
+        if self.help.is_none() && !line.is_empty() {
+            self.query.push_str(line);
+            self.note = None;
+            self.typed();
+        }
     }
 
     pub fn set_tab(&mut self, tab: Option<Group>) {
@@ -448,13 +479,22 @@ impl Find {
         self.set_tab(tabs[(at + d).rem_euclid(tabs.len() as isize) as usize]);
     }
 
-    fn step(&mut self, d: isize) {
+    /// The arrows wrap around the list; the wheel stops at its ends.
+    fn step(&mut self, d: isize, wrap: bool) {
         let acting: Vec<usize> = self.rows().iter().enumerate().filter(|(_, r)| r.acts()).map(|(i, _)| i).collect();
         if acting.is_empty() {
             return;
         }
         let at = acting.iter().position(|&i| i == self.selected).unwrap_or(0) as isize;
-        self.selected = acting[(at + d).rem_euclid(acting.len() as isize) as usize];
+        let n = acting.len() as isize;
+        self.selected = acting[if wrap { (at + d).rem_euclid(n) } else { (at + d).clamp(0, n - 1) } as usize];
+    }
+
+    fn scroll(&mut self, d: isize) {
+        let max = self.help_max.get();
+        if let Some((_, s)) = self.help.as_mut() {
+            *s = (*s).min(max).saturating_add_signed(d).min(max);
+        }
     }
 
     fn act(&mut self, i: usize) -> Outcome {
@@ -489,25 +529,21 @@ impl Find {
     }
 
     pub fn key(&mut self, k: KeyEvent) -> Outcome {
-        if let Some((s, scroll)) = self.help {
-            // A help page's field takes no keys: `o` is the button's.
-            match crate::keys::normalize(k).code {
-                KeyCode::Esc => self.help = None,
-                KeyCode::Char('o') if !k.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => return self.page().map_or(Outcome::None, Outcome::Open),
-                KeyCode::Up => self.help = Some((s, scroll.min(self.help_max.get()).saturating_sub(1))),
-                KeyCode::Down => self.help = Some((s, (scroll + 1).min(self.help_max.get()))),
-                _ => {}
-            }
-            return Outcome::None;
+        let chord = k.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
+        if self.help.is_some() {
+            let code = crate::keys::normalize(k).code;
+            return HELP_KEYS.iter().find(|r| r.code == code && !(chord && matches!(code, KeyCode::Char(_)))).map_or(Outcome::None, |r| (r.act)(self));
         }
         match k.code {
-            KeyCode::Char(c) if !k.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) => {
+            KeyCode::Char(c) if !chord => {
                 self.query.push(c);
+                self.note = None;
                 self.typed();
                 Outcome::None
             }
             KeyCode::Backspace => {
                 self.query.pop();
+                self.note = None;
                 self.typed();
                 Outcome::None
             }
@@ -520,10 +556,9 @@ impl Find {
         let at = (ev.column, ev.row).into();
         let hit = drawn.hits.iter().find(|(r, _)| r.contains(at)).map(|(_, c)| *c);
         match ev.kind {
+            // Only rows that act are drawn as `Click::Row`.
             Moved => {
-                if let Some(Click::Row(i)) = hit
-                    && self.rows().get(i).is_some_and(Row::acts)
-                {
+                if let Some(Click::Row(i)) = hit {
                     self.selected = i;
                 }
                 Outcome::None
@@ -533,7 +568,7 @@ impl Find {
                 if !r.contains(at) {
                     return Outcome::Close;
                 }
-                if crate::chrome::close_rect(r).contains(at) {
+                if crate::chrome::button_rect(r, if self.help.is_some() { BACK } else { crate::chrome::CLOSE }).contains(at) {
                     if self.help.take().is_some() {
                         return Outcome::None;
                     }
@@ -545,7 +580,7 @@ impl Find {
                         self.chip = c;
                         self.typed();
                     }
-                    Some(Click::Row(i)) if self.rows().get(i).is_some_and(Row::acts) => {
+                    Some(Click::Row(i)) => {
                         self.selected = i;
                         return self.act(i);
                     }
@@ -556,21 +591,11 @@ impl Find {
             }
             ScrollUp | ScrollDown => {
                 let d = if ev.kind == ScrollUp { -3 } else { 3 };
-                match self.help.as_mut() {
-                    Some((_, scroll)) => *scroll = scroll.saturating_add_signed(d).min(self.help_max.get()),
-                    None => self.step(d),
-                }
+                if self.help.is_some() { self.scroll(d) } else { self.step(d, false) }
                 Outcome::None
             }
             _ => Outcome::None,
         }
-    }
-
-    /// The filter's time for this query, for the log.
-    pub fn log_filter(&self) {
-        let t = std::time::Instant::now();
-        let n = self.rows().len();
-        crate::log::debug(&format!("search: {n} rows for a {}-character query in {} µs", self.query.chars().count(), t.elapsed().as_micros()));
     }
 
     /// Where the typing goes, while the field takes keys.
@@ -579,8 +604,8 @@ impl Find {
             return None;
         }
         let inner = self.rect(screen).inner(crate::chrome::DIALOG_FRAME);
-        let x = inner.x + crate::slots::cells(&self.query) as u16;
-        Some((x.min(inner.right().saturating_sub(1)), inner.y))
+        let col = crate::slots::cells(&self.query).min(inner.width.saturating_sub(1) as usize) as u16;
+        Some((inner.x + col, inner.y))
     }
 
     pub fn draw(&self, buf: &mut Buffer, screen: Rect, theme: &Theme) -> Drawn {
@@ -590,14 +615,7 @@ impl Find {
             return d;
         }
         crate::chrome::dialog(buf, r, Some("Search"), theme.border_focus, theme, crate::chrome::Moat::All);
-        let inner = if self.help.is_some() {
-            let b = crate::chrome::close_rect(r);
-            buf.set_stringn(b.x, b.y, " [Esc] back ", b.width as usize, Style::default().bg(theme.ground).fg(theme.text));
-            let inner = r.inner(crate::chrome::DIALOG_FRAME);
-            Rect { height: inner.height.saturating_sub(2), ..inner }
-        } else {
-            crate::chrome::close_button(buf, r, theme)
-        };
+        let inner = crate::chrome::button(buf, r, if self.help.is_some() { BACK } else { crate::chrome::CLOSE }, theme);
         if inner.width == 0 || inner.height == 0 {
             return d;
         }
@@ -619,6 +637,7 @@ impl Find {
             buf.set_stringn(inner.x, bottom, label, w, Style::default().fg(theme.text));
             d.hits.push((Rect::new(inner.x, bottom, (label.chars().count() as u16).min(inner.width), 1), Click::Open));
         }
+        bottom = self.draw_note(buf, inner, bottom, inner.y + 2, theme);
         let lines: Vec<String> = sec.body.lines().flat_map(|l| if l.is_empty() { vec![String::new()] } else { crate::menu::wrap(l, w) }).collect();
         let rows = bottom.saturating_sub(1).saturating_sub(inner.y + 2) as usize;
         self.help_max.set(lines.len().saturating_sub(rows));
@@ -633,17 +652,26 @@ impl Find {
         if self.query.is_empty() {
             buf.set_stringn(inner.x, y, "Type to search panes, commands, settings, plugins, files, help and pane text", w, Style::default().fg(theme.faint));
         } else {
-            let shown = crate::slots::cells(&self.query).saturating_sub(w.saturating_sub(1));
-            let tail: String = self.query.chars().skip(shown).collect();
+            // The end of the query, cut by cells: the cursor sits after it.
+            let mut over = crate::slots::cells(&self.query).saturating_sub(w.saturating_sub(1));
+            let tail = self.query.trim_start_matches(|c: char| {
+                let cut = over > 0;
+                over = over.saturating_sub(crate::slots::cells(c.encode_utf8(&mut [0; 4])));
+                cut
+            });
             buf.set_stringn(inner.x, y, tail, w, Style::default().fg(theme.text));
         }
         y += 1;
-        // The tabs, then the Panes tab's chips: words and chips to click, a key for each only as Tab.
+        // The tabs, then the Panes tab's chips: words and chips to click, a key for each only as Tab. Tabs and chips
+        // that do not fit go on the next line.
         let mut x = inner.x;
         for t in std::iter::once(None).chain(GROUPS.map(Some)) {
             let word = t.map_or("All", Group::name);
-            let n = word.chars().count() as u16;
+            let n = (word.chars().count() as u16).min(inner.width);
             if x + n > inner.right() {
+                (x, y) = (inner.x, y + 1);
+            }
+            if y >= inner.bottom() {
                 break;
             }
             let style = if t == self.tab { theme.chosen() } else { Style::default().fg(theme.muted) };
@@ -655,8 +683,11 @@ impl Find {
         if self.tab == Some(Group::Panes) && y < inner.bottom() {
             let mut x = inner.x;
             for c in CHIPS {
-                let cw = crate::chrome::chip_width(c.name(), &[]);
+                let cw = crate::chrome::chip_width(c.name(), &[]).min(inner.width);
                 if x + cw > inner.right() {
+                    (x, y) = (inner.x, y + 1);
+                }
+                if y >= inner.bottom() {
                     break;
                 }
                 let rect = crate::chrome::draw_chip(buf, x, y, c.name(), &[], c == self.chip, false, theme);
@@ -667,6 +698,7 @@ impl Find {
         }
         let strip = crate::chrome::hint(KEYS.iter().map(|k| (k.label, k.word)), w);
         let bottom = crate::chrome::draw_hint(buf, inner, &strip, theme).max(y);
+        let bottom = self.draw_note(buf, inner, bottom, y, theme);
 
         let rows = self.rows();
         let room = bottom.saturating_sub(y) as usize;
@@ -703,7 +735,7 @@ impl Find {
                     if hit.current && at < inner.width {
                         buf.set_stringn(inner.x + at, y, &hit.name, (inner.width - at) as usize, theme.chosen());
                     }
-                    self.draw_value(buf, line, s.chars().count(), &hit.value, theme);
+                    self.draw_value(buf, line, crate::slots::cells(&s), &hit.value, theme);
                 }
                 Row::Hit(h) => {
                     let hit = &self.hits[*h];
@@ -736,6 +768,18 @@ impl Find {
         }
     }
 
+    /// The note, wrapped, on the rows above `bottom` and no higher than `top`; returns where it starts.
+    fn draw_note(&self, buf: &mut Buffer, inner: Rect, bottom: u16, top: u16, theme: &Theme) -> u16 {
+        let Some((bad, text)) = &self.note else { return bottom };
+        let lines = crate::menu::wrap(text, inner.width as usize);
+        let start = bottom.saturating_sub(lines.len() as u16).max(top);
+        let style = Style::default().fg(if *bad { theme.bad } else { theme.faint });
+        for (y, line) in (start..bottom).zip(&lines) {
+            buf.set_stringn(inner.x, y, line, inner.width as usize, style);
+        }
+        start
+    }
+
     /// Draws `value` right-aligned after `from` columns, cut with "…" when long; returns the columns left before it.
     fn draw_value(&self, buf: &mut Buffer, line: Rect, from: usize, value: &str, theme: &Theme) -> usize {
         let w = line.width as usize;
@@ -743,7 +787,7 @@ impl Find {
         if value.is_empty() || room < 2 {
             return w;
         }
-        let value = if crate::slots::cells(value) > room { format!("{}…", value.chars().take(room - 1).collect::<String>()) } else { value.to_string() };
+        let value = crate::slots::fit(value, room);
         let vw = crate::slots::cells(&value).min(room);
         buf.set_stringn(line.x + (w - vw) as u16, line.y, &value, vw, Style::default().fg(theme.faint));
         w - vw
@@ -754,7 +798,7 @@ impl Find {
 fn snippet(h: usize, hits: &[Hit], words: &[String]) -> String {
     let Target::Help(s) = hits[h].target else { return String::new() };
     let (Some(sec), Some(w)) = (crate::help::sections().get(s), words.first()) else { return String::new() };
-    sec.body.lines().find(|l| l.to_lowercase().contains(w.as_str())).map(|l| format!("\"{}\"", printable(l.trim()))).unwrap_or_default()
+    sec.body.lines().find(|l| l.to_lowercase().contains(w.as_str())).map(|l| format!("\"{}\"", crate::render::unspoofed(l.trim()))).unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -883,10 +927,10 @@ mod tests {
         typed(&mut f, "error");
         assert_eq!(listed(&f), ["(Nothing found.)", "?text"]);
         assert!(matches!(f.key(key(KeyCode::Enter)), Outcome::SearchText), "the last row of All");
-        f.set_text(vec![Hit::new(Group::Text, "error: no such file", "Pane claude", Target::Line(1, -3))], Some("searched 1 of 2 panes".into()));
+        f.set_text(vec![Hit::new(Group::Text, "error: no such file", "Pane claude", Target::Line(1, -3, "error".into(), "error: no such file".into()))], Some("searched 1 of 2 panes".into()));
         assert_eq!(f.tab, Some(Group::Text));
-        assert_eq!(listed(&f), ["error: no such file", "(searched 1 of 2 panes)"]);
-        assert!(matches!(f.key(key(KeyCode::Enter)), Outcome::Act(Target::Line(1, -3), ref n) if n == "Pane claude"));
+        assert_eq!(listed(&f), ["error: no such file", "(searched 1 of 2 panes)", "?text"], "the same query can be searched again");
+        assert!(matches!(f.key(key(KeyCode::Enter)), Outcome::Act(Target::Line(1, -3, ..), ref n) if n == "Pane claude"));
         typed(&mut f, "s");
         assert_eq!(listed(&f), ["?text"], "another query asks again");
         assert!(matches!(f.key(key(KeyCode::Enter)), Outcome::SearchText));
@@ -959,5 +1003,87 @@ mod tests {
         assert!(matches!(click(&mut f, (0, 0)), Outcome::Close), "a click outside closes");
         let b = crate::chrome::close_rect(r);
         assert!(matches!(click(&mut f, (b.x, b.y)), Outcome::Close));
+    }
+
+    fn text_of(buf: &Buffer) -> String {
+        (0..buf.area.height).map(|y| (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect::<String>() + "\n").collect()
+    }
+
+    #[test]
+    fn the_wheel_stops_at_the_ends_and_a_row_scrolled_to_is_clicked_as_drawn() {
+        let screen = Rect::new(0, 0, 120, 20);
+        let mut f = Find::new();
+        f.add((0..50).map(|i| pane(i, 0, &format!("p{i}"), AgentState::Idle)).collect());
+        f.set_tab(Some(Group::Panes));
+        typed(&mut f, "p");
+        let wheel = |f: &mut Find, kind| {
+            let d = f.draw(&mut Buffer::empty(screen), screen, &Theme::dark());
+            f.mouse(MouseEvent { kind, column: 5, row: 5, modifiers: KeyModifiers::NONE }, screen, &d);
+        };
+        wheel(&mut f, MouseEventKind::ScrollUp);
+        assert_eq!(chosen(&f), "p0", "no wrap to the end");
+        for _ in 0..20 {
+            wheel(&mut f, MouseEventKind::ScrollDown);
+        }
+        assert_eq!(chosen(&f), "p49", "no wrap to the top");
+        let d = f.draw(&mut Buffer::empty(screen), screen, &Theme::dark());
+        let (r, i) = d.hits.iter().find_map(|(r, c)| match c { Click::Row(i) if *i + 3 == f.selected => Some((*r, *i)), _ => None }).expect("rows above the chosen one are drawn");
+        let out = f.mouse(MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), column: r.x, row: r.y, modifiers: KeyModifiers::NONE }, screen, &d);
+        assert!(matches!(out, Outcome::Act(Target::Pane(id), _) if id == 46), "{}", listed(&f)[i]);
+    }
+
+    #[test]
+    fn on_a_narrow_window_the_tabs_and_chips_go_on_more_lines_and_each_is_clicked() {
+        let screen = Rect::new(0, 0, 60, 30);
+        let mut f = Find::new();
+        let d = f.draw(&mut Buffer::empty(screen), screen, &Theme::dark());
+        let tabs: Vec<(Rect, Option<Group>)> = d.hits.iter().filter_map(|(r, c)| if let Click::Tab(t) = c { Some((*r, *t)) } else { None }).collect();
+        assert_eq!(tabs.len(), GROUPS.len() + 1, "every tab is drawn");
+        assert!(tabs.last().unwrap().0.y > tabs[0].0.y, "on a second line");
+        let (r, t) = *tabs.last().unwrap();
+        f.mouse(MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), column: r.x, row: r.y, modifiers: KeyModifiers::NONE }, screen, &d);
+        assert_eq!(f.tab, t);
+
+        let screen = Rect::new(0, 0, 36, 30);
+        f.set_tab(Some(Group::Panes));
+        let d = f.draw(&mut Buffer::empty(screen), screen, &Theme::dark());
+        let chips: Vec<(Rect, Chip)> = d.hits.iter().filter_map(|(r, c)| if let Click::Chip(c) = c { Some((*r, *c)) } else { None }).collect();
+        assert_eq!(chips.len(), CHIPS.len(), "the chips too");
+        assert!(chips.last().unwrap().0.y > chips[0].0.y);
+        let (r, c) = *chips.last().unwrap();
+        f.mouse(MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), column: r.x, row: r.y, modifiers: KeyModifiers::NONE }, screen, &d);
+        assert_eq!(f.chip, c);
+    }
+
+    #[test]
+    fn the_note_is_drawn_over_the_key_strip_until_the_query_changes_and_a_paste_types_its_line() {
+        let screen = Rect::new(0, 0, 120, 40);
+        let mut f = Find::new();
+        f.note = Some((true, "Pane planner is closed".into()));
+        let mut buf = Buffer::empty(screen);
+        f.draw(&mut buf, screen, &Theme::dark());
+        assert!(text_of(&buf).contains("Pane planner is closed"));
+        f.paste("needle");
+        assert_eq!((f.query.as_str(), &f.note), ("needle", &None));
+        f.help = Some((0, 0));
+        f.note = Some((false, "opened".into()));
+        let mut buf = Buffer::empty(screen);
+        f.draw(&mut buf, screen, &Theme::dark());
+        assert!(text_of(&buf).contains("opened"), "in a help page too");
+        f.paste("more");
+        assert_eq!(f.query, "needle", "a help page's field takes no paste");
+    }
+
+    #[test]
+    fn a_long_wide_query_keeps_its_end_and_the_cursor_in_the_field() {
+        let screen = Rect::new(0, 0, 120, 40);
+        let mut f = Find::new();
+        f.paste(&"界".repeat(40_000));
+        let inner = f.rect(screen).inner(crate::chrome::DIALOG_FRAME);
+        assert_eq!(f.cursor(screen), Some((inner.right() - 1, inner.y)));
+        let mut buf = Buffer::empty(screen);
+        f.draw(&mut buf, screen, &Theme::dark());
+        let field: String = (inner.x..inner.right()).map(|x| buf[(x, inner.y)].symbol()).collect();
+        assert_eq!(field.matches('界').count(), (inner.width as usize - 1) / 2, "as many as fit before the cursor");
     }
 }

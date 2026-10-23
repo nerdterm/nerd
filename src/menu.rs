@@ -394,6 +394,13 @@ impl Prompt {
         PromptOutcome::None
     }
 
+    /// A pasted line, at the cursor as typing would put it.
+    pub fn paste(&mut self, s: &str) {
+        let at = self.byte(self.cursor);
+        self.value.insert_str(at, s);
+        self.cursor += s.chars().count();
+    }
+
     // Cursor can sit past the last character, so it needs one more slot than the chars before it.
     fn offset(&self, w: usize) -> usize {
         self.cursor.saturating_sub(w.saturating_sub(1))

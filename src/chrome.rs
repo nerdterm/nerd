@@ -114,15 +114,25 @@ pub const CLOSE: &str = " [Esc] close ";
 
 /// Where the close button sits in dialog `r`: the last row inside the frame, centred.
 pub fn close_rect(r: Rect) -> Rect {
+    button_rect(r, CLOSE)
+}
+
+/// Where a button labelled `label` sits in the close button's place.
+pub fn button_rect(r: Rect, label: &str) -> Rect {
     let inner = r.inner(DIALOG_FRAME);
-    let len = (CLOSE.chars().count() as u16).min(inner.width);
+    let len = (label.chars().count() as u16).min(inner.width);
     Rect::new(inner.x + (inner.width - len) / 2, inner.bottom().saturating_sub(1), len, 1)
 }
 
 /// Draws the close button of dialog `r`; returns what is left of its inside above the button and a blank row.
 pub fn close_button(buf: &mut Buffer, r: Rect, theme: &Theme) -> Rect {
-    let b = close_rect(r);
-    buf.set_stringn(b.x, b.y, CLOSE, b.width as usize, Style::default().bg(theme.ground).fg(theme.text));
+    button(buf, r, CLOSE, theme)
+}
+
+/// The close button with another label, as `close_button`.
+pub fn button(buf: &mut Buffer, r: Rect, label: &str, theme: &Theme) -> Rect {
+    let b = button_rect(r, label);
+    buf.set_stringn(b.x, b.y, label, b.width as usize, Style::default().bg(theme.ground).fg(theme.text));
     let inner = r.inner(DIALOG_FRAME);
     Rect { height: inner.height.saturating_sub(2), ..inner }
 }

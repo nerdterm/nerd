@@ -535,7 +535,7 @@ impl App {
     pub(super) fn perform(&mut self, what: Pending) {
         self.dirty = true;
         match what {
-            Pending::Preset(..) | Pending::ServerStop(_) | Pending::ServerUpdate(_) | Pending::ServerRemove(_) | Pending::StrayStop(..) | Pending::RemovePlugin(_) | Pending::PluginReady(..)
+            Pending::Preset(..) | Pending::ServerStop(_) | Pending::ServerUpdate(_) | Pending::ServerRemove(_) | Pending::StrayStop(..) | Pending::RemovePlugin(_) | Pending::PluginReady(..) | Pending::InstallHook(_) | Pending::RemoveHook
                 if self.client_inside =>
             {
                 self.notice = Some(super::mail::INSIDE_REFUSED.into())

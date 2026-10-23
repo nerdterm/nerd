@@ -52,8 +52,12 @@ Every window except a context menu is drawn through `chrome::dialog`, and `chrom
 
 **Search…** in the main menu, the `Search` button on the top row and `⌥`+`O` open one window over what nerd already
 has. Type to filter; every word must match. Groups are tabs: All, Panes, Commands, Settings, Plugins, Files, Help
-and Text. All shows at most five rows of each group and a row that says how many more there are. Panes has chips for
-the agent states.
+and Text; on a narrow window the tabs and the chips take more lines. All shows at most five rows of each group and a
+row that says how many more there are. Panes has chips for the agent states. A paste goes into the field, its first
+line only. A paste reaches a pane only while the keys are on it: an open window, the pane search and the file tree
+take its first line into their field, and the sidebar and the tab bar drop it. What a result says while the window
+stays (a pane that has closed, a refusal, a help page's address) is a line in the window above the keys, gone at the
+next letter typed.
 
 - Panes: Enter or a click goes to the pane.
 - Commands: runs the menu item on the pane, tab or space it was listed for; a pane that has closed gives a notice and
@@ -61,9 +65,12 @@ the agent states.
 - Settings: a setting that is on or off toggles in its row and Search stays; every other setting opens Settings on
   that row.
 - Plugins: an installed plugin turns on or off in its row; one only in the catalog opens the Plugins window.
-- Files: shows the file in the file tree.
+- Files: shows the file in the file tree. Names are read once per window, from the second letter typed or when the
+  Files tab is chosen; a link is listed by its own name and never followed. Desktop, Documents, Downloads, Library,
+  Pictures, Movies and Music in the home folder are never searched, from whatever folder, and the Files tab says so.
 - Help: shows the section in the window; `o` opens its page on nerdterm.dev.
-- Text: searches the text of every pane, only on Enter, never while typing.
+- Text: searches the text of every pane, only on Enter, never while typing; the last row searches again. A line opens
+  in the pane search, on that line even when the pane has printed more since.
 
 A window attached from inside a pane is refused the same actions through Search as through the windows they come
 from (turning a plugin on, removing, installing, updating).

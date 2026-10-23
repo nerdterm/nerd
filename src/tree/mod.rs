@@ -592,6 +592,26 @@ mod tests {
     }
 
     #[test]
+    fn a_link_is_found_by_its_own_name_without_reading_its_target_and_named_top_folders_are_not_walked() {
+        use std::os::unix::fs::symlink;
+        let d = tmp("links");
+        fs::create_dir_all(d.join("Documents")).unwrap();
+        fs::create_dir_all(d.join("a/Documents")).unwrap();
+        fs::write(d.join("Documents/top.txt"), "").unwrap();
+        fs::write(d.join("a/Documents/deep.txt"), "").unwrap();
+        // a target that cannot be read stands for one on a mount that would hang
+        symlink("/nonexistent/nerd-dead-mount/file", d.join("dead.txt")).unwrap();
+        let (mut found, cut, skipped) = file_names(&d, false, &[d.join("a/Documents")]);
+        found.sort();
+        assert_eq!((found, cut, skipped), (vec!["Documents/top.txt".to_string(), "dead.txt".to_string()], None, true), "a folder to skip at any depth, by its path");
+        assert!(!file_names(&d, false, &[d.join("elsewhere")]).2, "and said only when one was met");
+        let mut t = at(&d);
+        ktype(&mut t, "dead");
+        assert_eq!(names(&t), vec!["dead.txt".to_string()], "the filter too");
+        rm(&d);
+    }
+
+    #[test]
     fn a_capped_filter_says_so_and_a_longer_query_looks_again() {
         crate::session::tests::with_temp_state_dir("tree-cap", || {
             let d = tmp("cap");

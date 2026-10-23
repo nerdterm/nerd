@@ -112,6 +112,8 @@ pub struct Settings {
     hook_installed: bool,
     /// An install error, red, under the list; without one the selected row's hint shows there.
     message: Option<(bool, String)>,
+    /// The window is attached from inside a pane: agent hooks are not changed from it.
+    pub inside: bool,
 }
 
 /// One key this screen answers: the handler dispatches on these rows and the strip prints them.
@@ -148,6 +150,7 @@ impl Settings {
             cfg: cfg.clone(),
             hook_installed: crate::hook::is_installed(),
             message: None,
+            inside: false,
         }
     }
 
@@ -418,6 +421,10 @@ impl Settings {
 
     /// Both ways ask first when a person has not yet read what changes; a hooked agent is removed even if its resume line changed.
     fn toggle_hook(&mut self) -> SettingsOutcome {
+        if self.inside {
+            self.message = Some((true, crate::app::INSIDE_REFUSED.into()));
+            return SettingsOutcome::None;
+        }
         if self.hook_installed {
             return SettingsOutcome::RemoveHook;
         }

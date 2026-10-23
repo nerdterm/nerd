@@ -218,15 +218,8 @@ impl App {
                 self.prompt_outcome(p, ask, out)
             }
             Overlay::Find(mut f) => {
-                let q = f.query.clone();
                 let out = f.key(k);
-                let o = self.find_outcome(f, out);
-                if let Overlay::Find(f) = &o
-                    && f.query != q
-                {
-                    f.log_filter();
-                }
-                o
+                self.find_outcome(f, out)
             }
             Overlay::Confirm(mut c, mut what) => match c.key(k) {
                 crate::menu::ConfirmOutcome::Yes => {
@@ -261,6 +254,7 @@ impl App {
                 crate::space_picker::Outcome::None => Overlay::NewSpace(w),
             },
             Overlay::Settings(mut s) => {
+                s.inside = self.client_inside;
                 let outcome = s.key(k, &mut self.cfg);
                 self.settings_outcome(s, outcome)
             }
@@ -1054,6 +1048,7 @@ impl App {
                 crate::space_picker::Outcome::None => Overlay::NewSpace(w),
             },
             Overlay::Settings(mut s) => {
+                s.inside = self.client_inside;
                 let outcome = s.mouse(ev, screen, &mut self.cfg, &self.view.dialog.rows);
                 self.settings_outcome(s, outcome)
             }
@@ -1157,7 +1152,51 @@ impl App {
     }
 
     /// A paste goes into the pane as one chunk, so multi-line text isn't seen as a series of Enter presses.
+    /// Wherever the keys are not on the pane it never reaches one: a text field takes the first line, as typed, as
+    /// `key` routes them.
     pub fn paste(&mut self, s: &str) {
+        // Terminals paste a line break as CR as often as LF.
+        let line = crate::render::unspoofed(s.split(['\n', '\r']).next().unwrap_or_default());
+        let focused = self.tab().map(|t| t.layout.focused());
+        if !self.overlay.is_open() && self.search.as_ref().is_some_and(|(id, _)| Some(*id) == focused) {
+            if let Some((_, search)) = self.search.as_mut() {
+                search.paste(&line);
+            }
+            self.search_refresh(true);
+            self.dirty = true;
+            return;
+        }
+        if !self.overlay.is_open() && matches!(self.focus, Focus::Sidebar | Focus::Tabs) {
+            return;
+        }
+        if !self.overlay.is_open()
+            && self.focus == Focus::Tree
+            && self.view.tree_rect.is_some()
+            && let Some(tree) = self.tree.as_mut()
+        {
+            tree.paste(&line);
+            self.dirty = true;
+            return;
+        }
+        if self.overlay.is_open() {
+            self.dirty = true;
+            self.overlay = match std::mem::replace(&mut self.overlay, Overlay::None) {
+                Overlay::Find(mut f) => {
+                    f.paste(&line);
+                    self.find_outcome(f, crate::find::Outcome::None)
+                }
+                Overlay::Prompt(mut p, ask) => {
+                    p.paste(&line);
+                    Overlay::Prompt(p, ask)
+                }
+                Overlay::NewSpace(mut w) => {
+                    w.paste(&line);
+                    Overlay::NewSpace(w)
+                }
+                other => other,
+            };
+            return;
+        }
         let Some(id) = self.tab().map(|t| t.layout.focused()) else { return };
         self.owner_typed(id);
         self.paste_into(id, s);

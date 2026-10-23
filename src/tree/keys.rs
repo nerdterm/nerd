@@ -175,6 +175,22 @@ impl Tree {
         }
     }
 
+    /// A pasted line into the filter or grep query, as typing it would; the preview takes none.
+    pub fn paste(&mut self, s: &str) {
+        if self.focus == Focus::Preview || s.is_empty() {
+            return;
+        }
+        if !self.typing {
+            self.start_filter(s);
+        } else {
+            self.query.push_str(s);
+            if self.mode == Mode::Filter {
+                self.reload();
+            }
+        }
+        self.selected = 0;
+    }
+
     pub fn key(&mut self, v: &TreeView, k: crossterm::event::KeyEvent) -> Outcome {
         use crossterm::event::KeyCode::*;
         use crossterm::event::KeyModifiers;

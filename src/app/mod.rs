@@ -2240,7 +2240,8 @@ mod tests {
             assert!(!f.lazy && !f.files && f.of(crate::find::Group::Plugins).is_empty() && f.of(crate::find::Group::Help).is_empty(), "opening reads no plugin, doc or folder");
             let commands = f.of(crate::find::Group::Commands);
             let Overlay::Menu(menu, _) = app.global_menu((1, 1)) else { panic!("a menu") };
-            for item in menu.items.iter().filter(|i| !i.label.is_empty()) {
+            assert!(!commands.iter().any(|h| h.target == crate::find::Target::Command(Action::SearchAll, crate::find::Ctx::Global)), "Search… is not among its own results");
+            for item in menu.items.iter().filter(|i| !i.label.is_empty() && i.action != Action::SearchAll) {
                 let found: Vec<_> = commands.iter().filter(|h| h.name == item.label).collect();
                 assert_eq!(found.len(), 1, "{} once", item.label);
                 assert_eq!((found[0].value.as_str(), found[0].place.as_str()), (item.key.as_str(), "Main menu"), "{}", item.label);
@@ -2250,7 +2251,9 @@ mod tests {
             assert!(isolation.len() == 2 && isolation[0].starts_with("Space ") && isolation[1].starts_with("Tab "), "the space's and the tab's each, with its own place: {isolation:?}");
             letter(&mut app, "x");
             let f = find(&app);
-            assert!(f.lazy && f.files && !f.of(crate::find::Group::Help).is_empty(), "the first letter reads them");
+            assert!(f.lazy && !f.files && !f.of(crate::find::Group::Help).is_empty(), "the first letter reads plugins and help, and walks no folder");
+            letter(&mut app, "y");
+            assert!(find(&app).files, "the second walks it");
         });
     }
 
@@ -2320,8 +2323,11 @@ mod tests {
             app.spaces[0].tabs[0].panes.retain(|id, _| *id != 1);
             let before: Vec<Vec<PaneId>> = app.spaces.iter().flat_map(|s| s.tabs.iter().map(|t| t.layout.pane_ids())).collect();
             press(&mut app, KeyCode::Enter);
-            assert_eq!(app.notice.as_deref(), Some("Pane planner is closed"));
-            assert!(matches!(app.overlay, Overlay::Find(_)), "the window stays");
+            assert_eq!(find(&app).note, Some((true, "Pane planner is closed".to_string())));
+            assert!(app.notice.is_none(), "no card under the window");
+            assert!(screen(&mut app).contains("Pane planner is closed"), "said in the window");
+            letter(&mut app, " ");
+            assert!(find(&app).note.is_none(), "until the query changes");
             let after: Vec<Vec<PaneId>> = app.spaces.iter().flat_map(|s| s.tabs.iter().map(|t| t.layout.pane_ids())).collect();
             assert_eq!(after, before, "nothing split");
 
@@ -2385,6 +2391,89 @@ mod tests {
     }
 
     #[test]
+    fn a_text_line_is_still_found_after_its_pane_printed_more() {
+        with_policy("search-text-moved", || {
+            let mut app = named();
+            let fill = "f\r\n".repeat(30);
+            app.pane_mut(3).unwrap().term.feed(format!("a needle early\r\n{fill}the needle is here\r\ntwo\r\n").as_bytes());
+            search_for(&mut app, "needle");
+            for _ in 0..7 {
+                press(&mut app, KeyCode::Tab);
+            }
+            press(&mut app, KeyCode::Enter);
+            press(&mut app, KeyCode::Down);
+            let row = find(&app).of(crate::find::Group::Text).iter().find_map(|h| match &h.target {
+                crate::find::Target::Line(3, row, ..) if h.name == "the needle is here" => Some(*row),
+                _ => None,
+            });
+            app.pane_mut(3).unwrap().term.feed("x\r\n".repeat(5).as_bytes());
+            press(&mut app, KeyCode::Enter);
+            let (id, s) = app.search.as_ref().expect("the pane search opens");
+            assert_eq!((*id, s.current().map(|m| m.row)), (3, row.map(|r| r - 5)), "the line it moved to, not the oldest match");
+        });
+    }
+
+    #[test]
+    fn a_text_line_is_found_by_its_own_text_when_a_neighbour_moved_nearer() {
+        with_policy("search-text-neighbour", || {
+            let mut app = named();
+            let fill = "f\r\n".repeat(30);
+            app.pane_mut(3).unwrap().term.feed(format!("{fill}error A first\r\nerror B second\r\n").as_bytes());
+            search_for(&mut app, "error");
+            for _ in 0..7 {
+                press(&mut app, KeyCode::Tab);
+            }
+            press(&mut app, KeyCode::Enter);
+            let row = find(&app).of(crate::find::Group::Text).iter().find_map(|h| match &h.target {
+                crate::find::Target::Line(3, row, ..) if h.name == "error A first" => Some(*row),
+                _ => None,
+            });
+            app.pane_mut(3).unwrap().term.feed("x\r\n".repeat(5).as_bytes());
+            press(&mut app, KeyCode::Enter);
+            let (_, s) = app.search.as_ref().expect("the pane search opens");
+            assert_eq!(s.current().map(|m| m.row), row.map(|r| r - 5), "A, not B, which is nearer the old row now");
+        });
+    }
+
+    #[test]
+    fn a_paste_goes_into_the_pane_search_or_the_tree_filter_that_has_the_keys() {
+        crate::session::tests::with_temp_state_dir("paste-fields", || {
+            let dir = crate::paths::state_root().join("proj");
+            std::fs::create_dir_all(&dir).unwrap();
+            let mut app = named();
+            app.search = Some((1, crate::search::Search::new()));
+            app.paste("needle\rrm -r ~/x\r");
+            assert_eq!(app.search.as_ref().map(|(_, s)| s.query.as_str()), Some("needle"), "the pane search's field");
+            app.search = None;
+            app.spaces[0].cwd = dir.clone();
+            app.toggle_tree();
+            screen(&mut app);
+            assert_eq!(app.focus, Focus::Tree);
+            app.paste("main.rs\nmore");
+            assert_eq!(app.tree.as_ref().map(|t| t.query()), Some("main.rs"), "the tree's filter");
+            app.focus = Focus::Sidebar;
+            app.paste("dropped");
+            assert_eq!(app.tree.as_ref().map(|t| t.query()), Some("main.rs"), "the sidebar takes none");
+        });
+    }
+
+    #[test]
+    fn a_tab_or_space_command_from_search_acts_on_the_one_it_was_listed_for() {
+        with_policy("search-ctx", || {
+            let mut app = named();
+            search_for(&mut app, "rename tab");
+            app.active = 1;
+            press(&mut app, KeyCode::Enter);
+            assert!(matches!(&app.overlay, Overlay::Prompt(_, Ask::RenameTab(0))) && app.active == 0, "the tab of the space it was listed in");
+            app.overlay = Overlay::None;
+            search_for(&mut app, "rename space");
+            app.active = 1;
+            press(&mut app, KeyCode::Enter);
+            assert!(matches!(&app.overlay, Overlay::Prompt(_, Ask::RenameSpace(0))));
+        });
+    }
+
+    #[test]
     fn a_file_found_by_search_is_shown_in_the_tree() {
         crate::session::tests::with_temp_state_dir("search-files", || {
             let dir = crate::paths::state_root().join("proj");
@@ -2398,6 +2487,72 @@ mod tests {
             assert_eq!(app.focus, Focus::Tree);
             let want = std::fs::canonicalize(dir.join("src/needle.rs")).unwrap();
             assert_eq!(app.tree.as_ref().and_then(|t| t.selected_path()), Some(want.as_path()));
+
+            std::fs::write(dir.join("other.rs"), "").unwrap();
+            app.focus = Focus::Panes;
+            search_for(&mut app, "other");
+            press(&mut app, KeyCode::Enter);
+            let want = std::fs::canonicalize(dir.join("other.rs")).unwrap();
+            assert_eq!((app.focus, app.tree.as_ref().and_then(|t| t.selected_path())), (Focus::Tree, Some(want.as_path())), "the tree already open");
+        });
+    }
+
+    #[test]
+    fn from_a_space_at_home_search_walks_no_folder_macos_guards_and_says_so() {
+        crate::config::tests::with_temp_home(|| {
+            let home = std::fs::canonicalize(crate::paths::home().unwrap()).unwrap();
+            std::fs::create_dir_all(home.join("Documents")).unwrap();
+            std::fs::write(home.join("Documents/needle-secret.txt"), "").unwrap();
+            std::fs::write(home.join("needle-notes.txt"), "").unwrap();
+            let mut app = with_one_space();
+            app.spaces[0].cwd = home.clone();
+            search_for(&mut app, "needle");
+            let files: Vec<String> = find(&app).of(crate::find::Group::Files).iter().map(|h| h.name.clone()).collect();
+            assert_eq!(files, ["needle-notes.txt"]);
+            assert!(find(&app).files_note.as_deref().is_some_and(|n| n.contains("Documents") && n.contains("in the home folder are not searched")), "{:?}", find(&app).files_note);
+        });
+    }
+
+    #[test]
+    fn from_a_folder_above_home_search_still_walks_no_folder_macos_guards() {
+        let root = std::fs::canonicalize(crate::paths::test_dir("above-home")).unwrap();
+        let home = root.join("Users/me");
+        std::fs::create_dir_all(home.join("Documents")).unwrap();
+        std::fs::write(home.join("Documents/needle-secret.txt"), "").unwrap();
+        std::fs::write(home.join("needle-notes.txt"), "").unwrap();
+        let old = crate::paths::TEST_HOME.with(|h| h.replace(Some(home.clone())));
+        let mut app = with_one_space();
+        app.spaces[0].cwd = root.clone();
+        search_for(&mut app, "needle");
+        let files: Vec<String> = find(&app).of(crate::find::Group::Files).iter().map(|h| format!("{}/{}", h.place, h.name)).collect();
+        let note = find(&app).files_note.clone();
+        crate::paths::TEST_HOME.with(|h| h.replace(old));
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(files, ["Users/me/needle-notes.txt"]);
+        assert!(note.is_some_and(|n| n.contains("in the home folder are not searched")));
+    }
+
+    #[test]
+    fn agent_hooks_are_not_changed_from_a_window_inside_a_pane() {
+        crate::session::tests::with_temp_state_dir("inside-hooks", || {
+            let home = crate::paths::home().unwrap();
+            let gemini = home.join(".gemini");
+            let _ = std::fs::remove_dir_all(&gemini);
+            std::fs::create_dir_all(&gemini).unwrap();
+            let mut app = with_one_space();
+            app.client_inside = true;
+            app.overlay = Overlay::Settings(crate::settings::Settings::new(&app.cfg));
+            press(&mut app, KeyCode::Up);
+            press(&mut app, KeyCode::Up);
+            press(&mut app, KeyCode::Enter);
+            assert!(matches!(app.overlay, Overlay::Settings(_)) && screen(&mut app).contains("Not from a window inside a pane"), "the row says why");
+            for confirm in [app.install_hook_overlay(), app.remove_hook_overlay()] {
+                app.overlay = confirm;
+                press(&mut app, KeyCode::Enter);
+                assert_eq!(app.notice.take().as_deref(), Some(INSIDE_REFUSED));
+            }
+            assert!(!gemini.join("settings.json").exists(), "nothing written");
+            let _ = std::fs::remove_dir_all(&gemini);
         });
     }
 
@@ -2413,7 +2568,8 @@ mod tests {
             let shown = screen(&mut app);
             assert!(shown.contains("[o] open on nerdterm.dev") && shown.contains("[Esc] back"), "{shown}");
             letter(&mut app, "o");
-            assert_eq!(app.notice.as_deref(), Some("this window is on another Mac; the page is https://nerdterm.dev/security/#what-leaves-nerd"));
+            assert_eq!(find(&app).note, Some((false, "this window is on another Mac; the page is https://nerdterm.dev/security/#what-leaves-nerd".to_string())), "information, not an error");
+            assert!(screen(&mut app).contains("https://nerdterm.dev/security/#what-leaves-nerd"), "said in the window");
             press(&mut app, KeyCode::Esc);
             assert!(matches!(app.overlay, Overlay::Find(_)), "Esc goes back to the results");
         });
@@ -2441,8 +2597,10 @@ mod tests {
         let main = Tab { name: Some("main".into()), layout, panes: HashMap::from([(1, pane(&app, 1, Some("planner"))), (2, pane(&app, 2, None))]), isolation_new: None };
         let two = Tab { name: Some("two".into()), layout: Layout::new(4), panes: HashMap::from([(4, pane(&app, 4, Some("coder")))]), isolation_new: None };
         let research = Tab { name: None, layout: Layout::new(3), panes: HashMap::from([(3, pane(&app, 3, Some("reader")))]), isolation_new: None };
-        app.spaces.push(Space { name: Some("work".into()), cwd: "/".into(), tabs: vec![main, two], active_tab: 0, isolation_new: None });
-        app.spaces.push(Space { name: Some("research".into()), cwd: "/".into(), tabs: vec![research], active_tab: 0, isolation_new: None });
+        // A folder that is not there: Search walks nothing for these spaces, not the real `/`.
+        let cwd = std::env::temp_dir().join("nerd-test-no-such-folder");
+        app.spaces.push(Space { name: Some("work".into()), cwd: cwd.clone(), tabs: vec![main, two], active_tab: 0, isolation_new: None });
+        app.spaces.push(Space { name: Some("research".into()), cwd, tabs: vec![research], active_tab: 0, isolation_new: None });
         app.next_id = 5;
         app.screen = Rect::new(0, 0, 160, 30);
         app
@@ -3032,8 +3190,9 @@ mod tests {
             }
             assert_eq!(find(&app).tab, Some(crate::find::Group::Plugins));
             press(&mut app, KeyCode::Enter);
-            refused(&mut app, "Turn on from Search");
-            assert!(off() && matches!(app.overlay, Overlay::Find(_)));
+            assert_eq!(find(&app).note, Some((true, INSIDE_REFUSED.to_string())), "Turn on from Search, said in the window");
+            assert!(screen(&mut app).contains(INSIDE_REFUSED));
+            assert!(off() && app.notice.is_none() && *crate::policy::current() == *before);
             for _ in 0..4 {
                 press(&mut app, KeyCode::Backspace);
             }

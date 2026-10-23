@@ -365,7 +365,7 @@ fn a_short_row_keeps_the_time_of_a_dated_clock() {
     let row = top_row(&mut app, 120);
     assert!(row.lines().next().unwrap().ends_with("zeta · Sun 4. 10.  09:05   Search  "), "room for all: {row}");
     let line = top_row(&mut app, 32).lines().next().unwrap().to_string();
-    assert!(line.contains("09:05") && !line.contains("Sun"), "short: the time alone: {line:?}");
+    assert!(line.trim_end().ends_with("09:05") && !line.contains("Sun"), "short: the time alone: {line:?}");
     assert!(app.view.hits.segments.iter().any(|(_, h)| *h == crate::mouse::SegmentHit::Clock), "and still a click back");
 }
 
@@ -388,7 +388,7 @@ fn golden_top_row_with_segments_in_the_free_gap() {
     let row = top_row(&mut app, 32);
     out += &format!("== narrow\n{row}");
     let line = row.lines().next().unwrap();
-    assert!(line.contains("  1 ▕  logs ▕  + ") && line.contains("09:05") && !line.contains("alpha"), "{line:?}");
+    assert!(line.contains("  1 ▕  logs ▕  + ") && line.trim_end().ends_with("09:05") && !line.contains("alpha"), "{line:?}");
     assert!(app.view.hits.segments.iter().all(|(_, h)| matches!(h, crate::mouse::SegmentHit::Clock | crate::mouse::SegmentHit::Search)), "no plugin's click left, only the clock's and Search");
 
     // A notice is a card over the panes now: the top row keeps its segments and their clicks.

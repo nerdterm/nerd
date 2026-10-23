@@ -4,8 +4,8 @@ use std::sync::OnceLock;
 
 pub const SITE: &str = "https://nerdterm.dev/";
 
-/// Each doc and its page on the site, or none when the site has no page for it. menus.md and releasing.md are
-/// contributor docs the site leaves out, and so does Search.
+/// Each doc and its page on the site, or none when the site has no page for it; a doc that is a part of a page has
+/// that part's anchor. menus.md and releasing.md are contributor docs the site leaves out, and so does Search.
 const DOCS: [(&str, Option<&str>); 8] = [
     (include_str!("../docs/usage.md"), Some("docs/usage/")),
     (include_str!("../docs/isolation.md"), Some("docs/isolation/")),
@@ -14,7 +14,7 @@ const DOCS: [(&str, Option<&str>); 8] = [
     (include_str!("../docs/configuration.md"), Some("docs/configuration/")),
     (include_str!("../docs/privacy-and-security.md"), Some("security/")),
     (include_str!("../docs/troubleshooting.md"), Some("docs/troubleshooting/")),
-    (include_str!("../docs/uninstall.md"), None),
+    (include_str!("../docs/uninstall.md"), Some("install/#uninstall")),
 ];
 
 const README: &str = include_str!("../README.md");
@@ -40,9 +40,22 @@ pub struct Section {
     pub page: bool,
 }
 
-/// An anchor as the site makes it from a heading: lowercase, every run of other characters one hyphen.
+/// An anchor as the site makes it from a heading's HTML: `&<>"'` as entities, marks dropped, lowercase, every run of
+/// other characters (a letter outside a-z too) one hyphen.
 pub fn slug(heading: &str) -> String {
-    let s: String = heading.to_lowercase().chars().filter(|c| *c != '`' && *c != '*').map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+    let mut html = String::new();
+    for c in heading.chars() {
+        match c {
+            '&' => html.push_str("&amp;"),
+            '<' => html.push_str("&lt;"),
+            '>' => html.push_str("&gt;"),
+            '"' => html.push_str("&quot;"),
+            '\'' => html.push_str("&#39;"),
+            '`' | '*' => {}
+            c => html.push(c),
+        }
+    }
+    let s: String = html.to_lowercase().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
     s.split('-').filter(|p| !p.is_empty()).collect::<Vec<_>>().join("-")
 }
 
@@ -60,7 +73,7 @@ pub fn sections() -> &'static [Section] {
             for (head, body) in split(text) {
                 let (name, url) = match &head {
                     None => (title.clone(), page.map(|p| format!("{SITE}{p}"))),
-                    Some(h) => (format!("{title} › {h}"), page.map(|p| format!("{SITE}{p}#{}", slug(h)))),
+                    Some(h) => (format!("{title} › {h}"), page.map(|p| format!("{SITE}{}#{}", p.split('#').next().unwrap_or(p), slug(h)))),
                 };
                 out.push(Section { page: head.is_none(), name, body, url });
             }
@@ -70,16 +83,28 @@ pub fn sections() -> &'static [Section] {
 }
 
 /// The text before the first `##`, then each `##` section; its `#` title and the site's summary comments left out.
+/// Code between fences stays as it is.
 fn split(text: &str) -> Vec<(Option<String>, String)> {
     let mut out = vec![(None, String::new())];
+    let mut code = false;
     for raw in text.lines() {
+        if raw.starts_with("```") {
+            code = !code;
+            continue;
+        }
+        if code {
+            let body = &mut out.last_mut().expect("starts with one").1;
+            body.push_str(raw);
+            body.push('\n');
+            continue;
+        }
         let mut line = uncommented(raw);
         if let Some(t) = line.trim().strip_prefix("<summary>").and_then(|t| t.strip_suffix("</summary>")) {
             line = t.to_string();
         }
         // a line that was only a comment or an HTML tag goes, and a code fence; a blank line stays
         let tag = line.trim().starts_with('<') && line.trim().ends_with('>');
-        if tag || line.starts_with("# ") || line.starts_with("```") || (line.trim().is_empty() && !raw.trim().is_empty()) {
+        if tag || line.starts_with("# ") || (line.trim().is_empty() && !raw.trim().is_empty()) {
             continue;
         }
         match line.strip_prefix("## ") {
@@ -120,7 +145,23 @@ mod tests {
         assert_eq!(slug("Protocol 2"), "protocol-2");
         assert_eq!(slug("What a program inside a pane can do"), "what-a-program-inside-a-pane-can-do");
         assert_eq!(slug("`nerd --preset`, and *more*"), "nerd-preset-and-more");
+        // as nerd-plugins site/build.mjs makes them, checked by running its slug on its own markdown
+        assert_eq!(slug("Fish & chips"), "fish-amp-chips");
+        assert_eq!(slug("It's \"quoted\""), "it-39-s-quot-quoted-quot");
+        assert_eq!(slug("a < b > c"), "a-lt-b-gt-c");
+        assert_eq!(slug("**Bold** --- dashes"), "bold-dashes");
+        assert_eq!(slug("Café — naïve"), "caf-na-ve");
+        assert_eq!(slug("Ünïcode only"), "n-code-only");
+        assert_eq!(slug("日本語"), "");
+        assert_eq!(slug("x_y"), "x-y");
         assert_eq!(uncommented("| <!-- egress:link --> A link |"), "|  A link |");
+    }
+
+    #[test]
+    fn code_in_fences_stays_whole_and_makes_no_section() {
+        let parts = split("# Title\n\nIntro\n\n## Run\n\n```sh\n# a comment\n## not a heading\n\n**kept**\n```\nAfter\n");
+        assert_eq!(parts.len(), 2, "{parts:?}");
+        assert_eq!(parts[1], (Some("Run".into()), "# a comment\n## not a heading\n\n**kept**\nAfter".into()));
     }
 
     #[test]
@@ -136,6 +177,25 @@ mod tests {
                 assert!(u.starts_with("https://nerdterm.dev/"), "{}: {u}", s.name);
             }
             assert!(!s.body.contains("<!--") && !s.name.is_empty(), "{}", s.name);
+            // the site makes a link's label its anchor and a repeated heading's anchor longer; slug does neither
+            assert!(!s.name.contains("]("), "{}", s.name);
+        }
+        // A page as the site makes it: a doc without its title, or a README section; its h2 to h5 are `#` to `####`.
+        let mut pages: Vec<&str> = DOCS.iter().map(|(t, _)| t.split_once('\n').map_or("", |(_, rest)| rest)).collect();
+        pages.extend(README.split("\n## ").skip(1));
+        for page in pages {
+            let mut code = false;
+            let mut ids = Vec::new();
+            for l in page.lines() {
+                if l.starts_with("```") {
+                    code = !code;
+                }
+                let n = l.chars().take_while(|c| *c == '#').count();
+                if !code && (1..=4).contains(&n) && l[n..].starts_with(' ') {
+                    ids.push(slug(l[n..].trim()));
+                }
+            }
+            assert!(ids.iter().enumerate().all(|(i, h)| !ids[..i].contains(h)), "an id repeats on a page: {ids:?}");
         }
         let named = |n: &str| all.iter().find(|s| s.name == n).unwrap_or_else(|| panic!("no {n}"));
         assert_eq!(named("Privacy and security › What leaves nerd").url.as_deref(), Some("https://nerdterm.dev/security/#what-leaves-nerd"));
@@ -143,7 +203,7 @@ mod tests {
         assert_eq!(named("Quick start").url.as_deref(), Some("https://nerdterm.dev/docs/quick-start/"));
         assert!(all.iter().any(|s| s.body.contains("Build from source")), "the summary's text stays");
         assert!(!all.iter().any(|s| s.body.contains("<details>") || s.body.contains("</details>") || s.body.contains("<summary>")), "HTML tags go");
-        assert_eq!(named("Uninstall").url, None);
+        assert_eq!(named("Uninstall").url.as_deref(), Some("https://nerdterm.dev/install/#uninstall"), "a part of the Install page");
         assert_eq!(named("Documentation").url, None);
         assert!(named("Configuration").body.contains("preview_wrap"));
         assert!(!all.iter().any(|s| s.name.starts_with("Menus, settings and windows") || s.name.starts_with("Releasing")), "contributor docs stay out");

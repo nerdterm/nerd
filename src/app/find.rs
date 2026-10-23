@@ -3,10 +3,13 @@
 use super::*;
 use crate::find::{Ctx, Find, Group, Hit, Outcome, Target};
 
-/// Text search stops between panes past this, and says how far it got.
+/// Text search stops past this, and says how far it got.
 const TEXT_TIME: Duration = Duration::from_millis(300);
 /// ceiling: the first 1000 lines found are listed; a longer query finds the rest.
 const TEXT_MAX: usize = 1000;
+/// ceiling: the home folder's folders macOS guards with a privacy prompt are never entered by Search's file walk, from
+/// whatever folder it starts at, so their files are not found; the way past is to walk them once the tree has opened them.
+const GUARDED: [&str; 7] = ["Desktop", "Documents", "Downloads", "Library", "Pictures", "Movies", "Music"];
 
 impl App {
     /// Panes, commands and settings are in memory; plugins, help and files are read on the first query that needs them.
@@ -57,10 +60,9 @@ impl App {
         let mut out: Vec<Hit> = Vec::new();
         for (menu, place, ctx) in menus {
             let Overlay::Menu(m, _) = menu else { continue };
-            for item in m.items.into_iter().filter(|i| !i.label.is_empty()) {
-                // Same label and action: one row, unless both are space or tab items of different kinds (each acts on its own object).
-                let shared = |c: &Ctx| matches!(c, Ctx::Global | Ctx::Pane(_));
-                if out.iter().any(|h| h.name == item.label && matches!(&h.target, Target::Command(a, c) if *a == item.action && (std::mem::discriminant(c) == std::mem::discriminant(&ctx) || shared(c) || shared(&ctx)))) {
+            // Search… itself would only open a fresh Search.
+            for item in m.items.into_iter().filter(|i| !i.label.is_empty() && i.action != Action::SearchAll) {
+                if out.iter().any(|h| h.name == item.label && matches!(&h.target, Target::Command(a, c) if *a == item.action && same_command(c, &ctx))) {
                     continue;
                 }
                 out.push(Hit::new(Group::Commands, &item.label, &place, Target::Command(item.action, ctx.clone())).value(&item.key).enabled(item.enabled));
@@ -84,10 +86,17 @@ impl App {
                 Some(t) => (t.root().to_path_buf(), t.hidden()),
                 None => (self.space().map(|s| std::fs::canonicalize(&s.cwd).unwrap_or_else(|_| s.cwd.clone())).unwrap_or_default(), false),
             };
-            let (names, cut) = crate::tree::file_names(&root, hidden);
-            if cut {
-                f.files_note = Some(format!("Stopped after 100 ms: some files under {} are not listed.", crate::paths::shown(&root)));
+            let home = crate::paths::home().and_then(|h| std::fs::canonicalize(h).ok());
+            let guarded: Vec<PathBuf> = home.iter().flat_map(|h| GUARDED.map(|g| h.join(g))).collect();
+            let (names, cut, skipped) = crate::tree::file_names(&root, hidden, &guarded);
+            let mut note = Vec::new();
+            if let Some(t) = cut {
+                note.push(format!("Stopped after {} ms: some files under {} are not listed.", t.as_millis(), crate::paths::shown(&root)));
             }
+            if skipped {
+                note.push(format!("{} in the home folder are not searched: macOS would ask to let nerd in.", GUARDED.join(", ")));
+            }
+            f.files_note = (!note.is_empty()).then(|| note.join(" "));
             f.add(
                 names
                     .into_iter()
@@ -116,7 +125,9 @@ impl App {
 
     pub(super) fn find_outcome(&mut self, mut f: Find, out: Outcome) -> Overlay {
         self.dirty = true;
-        match out {
+        // While the window stays, what a result says goes on its own line: a notice card would sit under the window.
+        let earlier = (self.notice.take(), self.toast.take());
+        let mut o = match out {
             Outcome::Close => Overlay::None,
             Outcome::Act(t, what) => self.find_act(f, t, &what),
             Outcome::SearchText => {
@@ -131,7 +142,17 @@ impl App {
                 self.find_sources(&mut f);
                 Overlay::Find(f)
             }
+        };
+        if let Overlay::Find(f) = &mut o {
+            if let Some(n) = self.notice.take() {
+                f.note = Some((true, n));
+            } else if let Some(t) = self.toast.take() {
+                f.note = Some((false, t));
+            }
         }
+        self.notice = self.notice.take().or(earlier.0);
+        self.toast = self.toast.take().or(earlier.1);
+        o
     }
 
     /// A target that is gone is refused, never redirected: the window stays and says so.
@@ -141,20 +162,20 @@ impl App {
             Overlay::Find(f)
         };
         match t {
-            Target::Pane(id) | Target::Line(id, _) => {
+            Target::Pane(id) | Target::Line(id, ..) => {
                 let Some((si, ti)) = self.locate(id) else { return gone(self, f) };
                 self.go_to(si, ti, id);
-                if let Target::Line(_, row) = t {
-                    // The phrase first; when it is not on that line (the words matched apart), the first word that is.
-                    let phrase = f.query.trim().to_string();
-                    for q in std::iter::once(phrase).chain(f.words()) {
-                        let mut s = crate::search::Search::new();
-                        s.query = q;
-                        self.search = Some((id, s));
-                        self.search_refresh(false);
-                        if self.search.as_mut().is_some_and(|(_, s)| s.choose_row(row)) {
-                            break;
+                if let Target::Line(_, row, q, line) = t {
+                    let mut s = crate::search::Search::new();
+                    s.query = q;
+                    self.search = Some((id, s));
+                    self.search_refresh(false);
+                    // The line itself first: another match printed next to it may sit nearer the row now.
+                    if let Some((_, mut s)) = self.search.take() {
+                        if let Some(p) = self.pane(id) {
+                            s.choose_row(row, |r| p.term.line(r).is_some_and(|l| l.trim() == line));
                         }
+                        self.search = Some((id, s));
                     }
                     self.search_refresh(true);
                 }
@@ -186,6 +207,7 @@ impl App {
             }
             Target::Setting(label, true) => {
                 let mut s = crate::settings::Settings::new(&self.cfg);
+                s.inside = self.client_inside;
                 s.choose(label);
                 let out = s.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &mut self.cfg);
                 let _ = self.settings_outcome(s, out);
@@ -218,12 +240,14 @@ impl App {
         }
     }
 
-    /// Every pane's text, read once on demand; the time is checked between panes, so it ends within one pane past it.
+    /// Every pane's text, read once on demand; the time is checked as it goes, so it ends within one pane's read past it.
     fn find_text(&mut self, f: &mut Find) {
         let words = f.words();
         if words.is_empty() {
             return;
         }
+        let phrase = f.query.trim().to_string();
+        let phrase_lc = phrase.to_lowercase();
         let panes: Vec<(PaneId, String)> = self
             .spaces
             .iter()
@@ -235,7 +259,7 @@ impl App {
             })
             .collect();
         let started = Instant::now();
-        let (mut hits, mut searched) = (Vec::new(), 0);
+        let (mut hits, mut searched, mut part) = (Vec::new(), 0, None);
         for (id, label) in &panes {
             if started.elapsed() >= TEXT_TIME || hits.len() >= TEXT_MAX {
                 break;
@@ -245,11 +269,22 @@ impl App {
             let rows = p.term.screen().size().0 as usize;
             let lines = p.term.all_lines();
             let history = lines.len().saturating_sub(rows) as isize;
+            let mut late = false;
             for (i, line) in lines.iter().enumerate() {
+                if i % 1024 == 0 && started.elapsed() >= TEXT_TIME {
+                    late = true;
+                    break;
+                }
                 let lc = line.to_lowercase();
                 if hits.len() < TEXT_MAX && words.iter().all(|w| lc.contains(w.as_str())) {
-                    hits.push(Hit::new(Group::Text, line.trim(), format!("Pane {label}"), Target::Line(*id, i as isize - history)));
+                    // The jump searches the pane once: for the phrase where the line has it, else for the first word.
+                    let q = if lc.contains(&phrase_lc) { phrase.clone() } else { words[0].clone() };
+                    hits.push(Hit::new(Group::Text, line.trim(), format!("Pane {label}"), Target::Line(*id, i as isize - history, q, line.trim().to_string())));
                 }
+            }
+            if late {
+                part = Some(crate::render::unspoofed(label));
+                break;
             }
             searched += 1;
             crate::log::debug(&format!("search: pane {id}: {} lines in {} ms", lines.len(), at.elapsed().as_millis()));
@@ -258,7 +293,10 @@ impl App {
         let note = if hits.len() >= TEXT_MAX {
             Some(format!("First {TEXT_MAX} lines; type more to narrow."))
         } else {
-            (searched < panes.len()).then(|| format!("Searched {searched} of {} panes.", panes.len()))
+            (searched < panes.len()).then(|| match &part {
+                Some(l) => format!("Searched {searched} of {} panes, and {l} only in part.", panes.len()),
+                None => format!("Searched {searched} of {} panes.", panes.len()),
+            })
         };
         f.set_text(hits, note);
     }
@@ -266,7 +304,7 @@ impl App {
     /// A help page on nerdterm.dev, opened on the server's Mac; a window from another Mac is told the address.
     fn open_page(&mut self, url: &str) {
         if self.caps.bye {
-            self.notice = Some(format!("this window is on another Mac; the page is {url}"));
+            self.toast = Some(format!("this window is on another Mac; the page is {url}"));
             return;
         }
         match crate::links::open(&crate::links::Link::Url(url.into()), std::path::Path::new("/")) {
@@ -274,6 +312,12 @@ impl App {
             Err(e) => self.notice = Some(e),
         }
     }
+}
+
+/// Same label and action are one row, unless both are space or tab items of different kinds: each acts on its own object.
+fn same_command(a: &Ctx, b: &Ctx) -> bool {
+    let shared = |c: &Ctx| matches!(c, Ctx::Global | Ctx::Pane(_));
+    std::mem::discriminant(a) == std::mem::discriminant(b) || shared(a) || shared(b)
 }
 
 fn setting_hits(cfg: &Config) -> Vec<Hit> {
