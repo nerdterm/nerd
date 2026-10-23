@@ -26,6 +26,7 @@ nerd runs your shells and coding agents side by side in panes and tabs, inside t
 - **Decide what each pane can reach.** A pane runs as you, with your files and your network, until you narrow it. **Isolation…** keeps a pane to its folder, to the hosts of the agents you choose, or to another macOS account. Messages between agents pass through nerd, under fixed limits and routes that only you change. A plugin shows what it can do before you install it.
 - **See every way out of nerd's own code.** No telemetry; nerd checks for updates only if you allowed it, and logs every check. The server runs in a macOS sandbox with networking denied. Every way out of nerd's own code is listed in [What leaves nerd](docs/privacy-and-security.md#what-leaves-nerd), starts from something you do or approved, and writes a line to the log.
 - **A file tree beside the panes.** It shows git changes, searches file contents, and previews files with highlighting and images.
+- **One search for everything.** `⌥`+`O`, or the Search button, finds a pane, a command, a setting, a plugin, a file, a help section or a line a pane printed earlier. Plain switches and installed plugins turn on and off in the result; anything that changes what a pane can reach opens its own window or Settings, never changes in place.
 
 Panes live in a background server. Close the window or restart the Mac, and the layout, folders and pane text come back; agents that support it resume their sessions. Every action is in a right-click menu; keys only repeat them.
 
