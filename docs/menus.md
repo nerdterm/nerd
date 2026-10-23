@@ -48,6 +48,26 @@ Every window except a context menu is drawn through `chrome::dialog`, and `chrom
   the window is broken the same way, close on the last line.
 - Section headers are sentence case; a rule between groups is drawn in the border colour.
 
+## Search
+
+**Search…** in the main menu, the `Search` button on the top row and `⌥`+`O` open one window over what nerd already
+has. Type to filter; every word must match. Groups are tabs: All, Panes, Commands, Settings, Plugins, Files, Help
+and Text. All shows at most five rows of each group and a row that says how many more there are. Panes has chips for
+the agent states.
+
+- Panes: Enter or a click goes to the pane.
+- Commands: runs the menu item on the pane, tab or space it was listed for; a pane that has closed gives a notice and
+  nothing else is touched. The item's own window replaces Search.
+- Settings: a setting that is on or off toggles in its row and Search stays; every other setting opens Settings on
+  that row.
+- Plugins: an installed plugin turns on or off in its row; one only in the catalog opens the Plugins window.
+- Files: shows the file in the file tree.
+- Help: shows the section in the window; `o` opens its page on nerdterm.dev.
+- Text: searches the text of every pane, only on Enter, never while typing.
+
+A window attached from inside a pane is refused the same actions through Search as through the windows they come
+from (turning a plugin on, removing, installing, updating).
+
 ## Servers
 
 - Main menu, server group: Messages…, Routes map…, Rename this server…, **Servers…**, Session history…, and, inside

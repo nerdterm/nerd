@@ -74,7 +74,6 @@ fn rows(prefix: Prefix) -> Vec<(Option<&'static str>, &'static str, &'static str
             out.push((first.take(), label, what));
         }
     };
-    section("Navigator", crate::navigator::KEYS.iter().map(|r| (r.label, r.what)).collect());
     section("Search", crate::find::KEYS.iter().map(|r| (r.label, r.what)).collect());
     section("Tree", crate::tree::COMMAND.iter().map(|r| (r.label, r.what)).collect());
     section("Tree, in the preview", crate::tree::PREVIEW.iter().map(|r| (r.label, r.what)).collect());
@@ -374,7 +373,6 @@ mod tests {
             vec![
                 "⌥ and a letter, with Option sent as Alt",
                 "Mouse",
-                "Navigator",
                 "Search",
                 "Tree",
                 "Tree, in the preview",
@@ -432,8 +430,8 @@ mod tests {
         for r in crate::tree::PREVIEW.iter().filter(|r| !r.label.is_empty()) {
             assert!(listed.contains(&r.label), "the preview answers {:?} and the list omits it", r.label);
         }
-        for r in crate::navigator::KEYS.iter().filter(|r| !r.label.is_empty()) {
-            assert!(listed.contains(&r.label), "the navigator answers {:?} and the list omits it", r.label);
+        for r in crate::find::KEYS.iter().filter(|r| !r.label.is_empty()) {
+            assert!(listed.contains(&r.label), "the search answers {:?} and the list omits it", r.label);
         }
     }
 

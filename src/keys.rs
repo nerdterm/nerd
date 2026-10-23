@@ -306,7 +306,6 @@ pub const GLOBAL: &[Global] = &[
     // the key that already means "find" in the tree and the lists
     Global { letter: '/', label: "⌥+/", what: "search in the pane; again to close", bind: Bind::Open(3) },
     Global { letter: 't', label: "⌥+T", what: "show or hide the file tree", bind: Bind::Open(4) },
-    Global { letter: 'n', label: "⌥+N", what: "navigator", bind: Bind::Open(5) },
     // open anything, as iTerm2's Open Quickly; unbound in the shells' emacs keymaps
     Global { letter: 'o', label: "⌥+O", what: "search panes, commands, settings, plugins, files, help and pane text", bind: Bind::Open(7) },
     // settings, where macOS keeps preferences
@@ -345,7 +344,7 @@ pub enum KeyActionName {
 }
 
 /// Every letter `option` claims, for the terminal that has to be told about them.
-pub const OPTION_LETTERS: &[char] = &['k', 'm', '/', 't', 'n', 'o', ',', 'c', 'w', '-', '\\', 'z', 's', 'u', 'q'];
+pub const OPTION_LETTERS: &[char] = &['k', 'm', '/', 't', 'o', ',', 'c', 'w', '-', '\\', 'z', 's', 'u', 'q'];
 
 #[cfg(test)]
 mod global_tests {

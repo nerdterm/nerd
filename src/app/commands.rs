@@ -893,34 +893,6 @@ impl App {
         self.refresh_tree_marks();
     }
 
-    /// Open the navigator across all panes (option+n).
-    pub fn open_navigator(&mut self) {
-        use crate::navigator::{Entry, Navigator};
-        let focused = self.tab().map(|t| t.layout.focused());
-        let mut entries = Vec::new();
-        for (si, sp) in self.spaces.iter().enumerate() {
-            for (ti, tab) in sp.tabs.iter().enumerate() {
-                let mut ids = tab.layout.pane_ids();
-                ids.sort_unstable();
-                for id in ids {
-                    let Some(p) = tab.panes.get(&id) else { continue };
-                    entries.push(Entry {
-                        space: si,
-                        tab: ti,
-                        pane: p.id,
-                        space_name: sp.label(),
-                        tab_label: tab.name.clone().unwrap_or_else(|| (ti + 1).to_string()),
-                        title: p.label.clone().or_else(|| p.agent.clone()).unwrap_or_else(|| p.command.clone()),
-                        state: p.term.state(),
-                        is_current: si == self.active && ti == sp.active_tab && Some(p.id) == focused,
-                    });
-                }
-            }
-        }
-        self.overlay = Overlay::Navigator(Navigator::new(entries));
-        self.dirty = true;
-    }
-
     pub(super) fn split(&mut self, dir: Dir) {
         let Some(t) = self.tab() else { return };
         // A split is a plain shell in the pane's folder; a second agent is started deliberately, not via split.
@@ -1093,7 +1065,6 @@ impl App {
             vec![
                 Item::new("New space…", Action::NewSpace),
                 Item::new("New tab", Action::NewTab).key(global_label(KeyActionName::Act(KeyAction::NewTab))),
-                Item::new("Navigator…", Action::Navigator).key(global_label(KeyActionName::Surface(5))),
                 Item::new("Search…", Action::SearchAll).key(global_label(KeyActionName::Surface(7))),
             ],
             vec![
@@ -1487,11 +1458,6 @@ impl App {
                     self.focus_pane(id);
                     self.search = Some((id, crate::search::Search::new()));
                 }
-            }
-            // Returned, not left in place: the caller puts what this returns over the overlay.
-            (Action::Navigator, _) => {
-                self.open_navigator();
-                return std::mem::replace(&mut self.overlay, Overlay::None);
             }
             (Action::SearchAll, _) => return self.find_overlay(),
             (Action::ToggleSidebar, _) => self.toggle_sidebar(),
@@ -1918,7 +1884,6 @@ pub enum Action {
     Update,
     CheckRelease,
     Search,
-    Navigator,
     /// Main menu > Search…, not the pane's search.
     SearchAll,
     ToggleSidebar,
@@ -2080,7 +2045,6 @@ pub enum Overlay {
     None,
     Menu(crate::menu::Menu<Action>, MenuCtx),
     Prompt(crate::menu::Prompt, Ask),
-    Navigator(crate::navigator::Navigator),
     Find(crate::find::Find),
     Confirm(crate::menu::Confirm, Pending),
     Picker(crate::menu::Picker, Pick),

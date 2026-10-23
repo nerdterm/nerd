@@ -228,14 +228,6 @@ impl App {
                 }
                 o
             }
-            Overlay::Navigator(mut n) => match n.key(k) {
-                crate::navigator::Outcome::Open(e) => {
-                    self.go_to(e.space, e.tab, e.pane);
-                    Overlay::None
-                }
-                crate::navigator::Outcome::Cancelled => Overlay::None,
-                crate::navigator::Outcome::None => Overlay::Navigator(n),
-            },
             Overlay::Confirm(mut c, mut what) => match c.key(k) {
                 crate::menu::ConfirmOutcome::Yes => {
                     let back = topology_back(&mut what);
@@ -536,7 +528,6 @@ impl App {
                 }
             }
             4 => self.toggle_tree(),
-            5 => self.open_navigator(),
             6 => self.overlay = Overlay::Settings(crate::settings::Settings::new(&self.cfg)),
             7 => self.overlay = self.find_overlay(),
             _ => {}
@@ -589,7 +580,6 @@ impl App {
         let frame = match &self.overlay {
             Overlay::Settings(w) => w.rect(screen),
             Overlay::Keys(w) => w.rect(screen),
-            Overlay::Navigator(w) => w.rect(screen),
             Overlay::Find(w) => w.rect(screen),
             Overlay::NewSpace(w) => w.rect(screen),
             Overlay::Picker(w, _) => w.rect(screen),
@@ -778,6 +768,10 @@ impl App {
                 use crate::config::Battery;
                 self.cfg.battery = if self.cfg.battery == Battery::Percent { Battery::Time } else { Battery::Percent };
                 self.save_cfg();
+                self.dirty = true;
+            }
+            Action::Segment(crate::mouse::SegmentHit::Search) => {
+                self.overlay = self.find_overlay();
                 self.dirty = true;
             }
             Action::Segment(crate::mouse::SegmentHit::Clock) => {
@@ -1105,14 +1099,6 @@ impl App {
                 let out = f.mouse(ev, screen, &self.view.dialog.find);
                 self.find_outcome(f, out)
             }
-            Overlay::Navigator(mut n) => match n.mouse(ev, screen, &self.view.dialog.rows) {
-                crate::navigator::Outcome::Open(e) => {
-                    self.go_to(e.space, e.tab, e.pane);
-                    Overlay::None
-                }
-                crate::navigator::Outcome::Cancelled => Overlay::None,
-                crate::navigator::Outcome::None => Overlay::Navigator(n),
-            },
             Overlay::None => Overlay::None,
         };
     }

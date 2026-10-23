@@ -2189,7 +2189,6 @@ mod tests {
             let windows = vec![
                 ("Settings", app.run_action(Action::Settings, &MenuCtx::Global), "Settings"),
                 ("Keys", app.run_action(Action::Keybinds, &MenuCtx::Global), "Keys and mouse"),
-                ("Navigator", app.run_action(Action::Navigator, &MenuCtx::Global), "Navigator"),
                 ("Search", app.run_action(Action::SearchAll, &MenuCtx::Global), "Search"),
                 ("New space", app.run_action(Action::NewSpace, &MenuCtx::Global), "New space"),
                 ("Export logs", app.run_action(Action::Report, &MenuCtx::Global), "Export logs"),
@@ -3165,12 +3164,6 @@ mod tests {
     }
 
     #[test]
-    fn navigator_from_the_menu_opens_it() {
-        let mut app = with_one_space();
-        assert!(matches!(app.run_action(Action::Navigator, &MenuCtx::Global), Overlay::Navigator(_)));
-    }
-
-    #[test]
     fn marks_for_a_space_no_longer_active_are_ignored() {
         let dir = std::env::temp_dir().join(format!("nerd-marks-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -3815,7 +3808,7 @@ mod tests {
     fn the_main_menu_follows_its_anatomy_inside_and_outside_tmux() {
         let mut app = with_one_space();
         let plain = [
-            "New space…", "New tab [⌥+C]", "Navigator… [⌥+N]", "Search… [⌥+O]", "—",
+            "New space…", "New tab [⌥+C]", "Search… [⌥+O]", "—",
             "Show file tree [⌥+T]", "Collapse sidebar [⌥+S]", "—",
             "Settings… [⌥+,]", "Keys and mouse… [⌥+K]", "Plugins…", "Reload plugins and agents", "—",
             "Messages…", "Routes map…", "Rename this server…", "Servers…", "Session history…", "—",
@@ -3825,7 +3818,7 @@ mod tests {
         assert_eq!(rows(app.global_menu((1, 1))), plain);
         app.caps.mux = true;
         let mut inside = strings(&plain);
-        inside.insert(18, "Open outside tmux…".into());
+        inside.insert(17, "Open outside tmux…".into());
         assert_eq!(rows(app.global_menu((1, 1))), inside, "last in its group");
     }
 
