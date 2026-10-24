@@ -176,20 +176,18 @@ impl View {
             y += 1;
         }
         y += 1;
-        // Longer than its room, the body scrolls; the row over the buttons says where it is, else where the rows are.
+        // The row over the buttons says what is hidden: the rows, the text, or both; it takes the text's last line.
         let room = bottom.saturating_sub(y) as usize;
-        let scrolls = c.body.len() > room && room > 1;
-        let shown = if scrolls { room - 1 } else { room };
+        let shown = if self.list.hides() || c.body.len() > room && room > 1 { room.saturating_sub(1) } else { room };
         let from = self.text.place(shown, c.body.len());
         for line in c.body.iter().skip(from).take(shown) {
             put(buf, y, line);
             y += 1;
         }
-        // the rows and the text both hidden: both on the one row
-        let at = match (self.list.hidden("rows"), scrolls.then(|| self.text.hidden("lines")).flatten()) {
+        let at = match (self.list.hidden("rows"), (shown < room).then(|| self.text.hidden("lines")).flatten()) {
             (Some(rows), Some(lines)) => Some(format!("{rows} · {lines}")),
-            (Some(_), None) if c.body.len() < room => self.list.hidden("lines"),
-            (_, lines) => lines,
+            (Some(_), None) => self.list.hidden("lines"),
+            (None, lines) => lines,
         };
         if let Some(at) = at {
             crate::chrome::say(buf, r, bottom.saturating_sub(1), &at, theme);
@@ -523,6 +521,22 @@ mod tests {
         View::new(ROWS, false, crate::chrome::WINDOW_W).draw(&mut buf, SCREEN, &theme, "Panel", &only_rows);
         let text = crate::app::snapshots::dump(&buf, SCREEN);
         assert!(text.contains("│ lines 1–") && !text.contains("rows "), "rows alone keep the word lines: {text}");
+    }
+
+    #[test]
+    fn hidden_rows_say_so_whatever_the_text_takes() {
+        let theme = Theme::dark();
+        let row = |i: usize| Row { id: format!("{i}"), base: Style::default(), spans: vec![(0, format!("row {i}"), Style::default())], parent: false };
+        let line = |i: usize| vec![(0, format!("line {i}"), Style::default())];
+        // 30 rows, of which 15 show at most; the text's room is what its body_h keeps, one more than it
+        for (body, body_h) in [(4, 3), (3, 3), (1, 0), (0, 0)] {
+            let c = Content { rows: (0..30).map(row).collect(), body: (0..body).map(line).collect(), body_h, ..Content::default() };
+            let mut buf = Buffer::empty(SCREEN);
+            View::new(ROWS, false, crate::chrome::WINDOW_W).draw(&mut buf, SCREEN, &theme, "Panel", &c);
+            let text: Vec<String> = crate::app::snapshots::dump(&buf, SCREEN).lines().take(24).map(String::from).collect();
+            let at = text.iter().position(|l| l.contains("│ lines 1–") || l.contains("│ rows 1–")).unwrap_or_else(|| panic!("{body} lines in {body_h}: {text:#?}"));
+            assert!(text[at + 1].contains("[Esc] close"), "{body} lines in {body_h}: over the buttons {text:#?}");
+        }
     }
 
     fn labels(d: &Data, o: &Open) -> Vec<String> {

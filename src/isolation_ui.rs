@@ -767,6 +767,72 @@ pub(crate) mod tests {
         (d, rows)
     }
 
+    /// pi names 36 provider groups; `chosen` of them are ticked.
+    fn pi(chosen: &[&str]) -> IsolationWin {
+        let many: Vec<(String, Vec<String>)> = (0..36).map(|i| (format!("group-{i:02}"), vec![format!("h{i}.dev")])).collect();
+        let net = AgentNetwork { net: crate::agents::Network::Internet { hosts: many.iter().flat_map(|(_, h)| h.clone()).collect(), ports: vec![443] }, providers: many };
+        let chosen: Vec<String> = chosen.iter().map(|c| c.to_string()).collect();
+        IsolationWin {
+            providers: vec!["claude".into(), "pi".into()],
+            groups: vec![("pi".into(), net)],
+            chosen: vec![("pi".into(), Some(chosen.clone()))],
+            pick: Some(Isolation { files: Files::Everything, network: Network::Providers(chosen.iter().map(|c| format!("pi/{c}")).collect()) }),
+            ..pane()
+        }
+    }
+
+    /// Clicks `label` where `screen` shows it; None when it is not drawn.
+    fn click_seen(w: &mut IsolationWin, screen: Rect, label: &str) -> Option<Out> {
+        let mut buf = Buffer::empty(screen);
+        let d = w.draw(&mut buf, screen, &Theme::dark());
+        let (x, y) = (0..screen.height).find_map(|y| {
+            let row: String = (0..screen.width).map(|x| buf[(x, y)].symbol()).collect();
+            row.find(label).map(|b| (row[..b].chars().count() as u16 + 1, y))
+        })?;
+        Some(w.mouse(MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), column: x, row: y, modifiers: KeyModifiers::NONE }, &d))
+    }
+
+    #[test]
+    fn a_long_provider_list_goes_on_under_the_text_after_its_label_and_its_link_keeps_its_click() {
+        let five = ["amazon-bedrock", "anthropic", "github-copilot", "openrouter", "vercel-ai"];
+        let (_, rows) = inside(|b, s| pi(&five).draw(b, s, &Theme::dark()));
+        let at = rows.iter().position(|r| r.contains("      pi: amazon-bedrock, anthropic, github-copilot, openrouter, vercel-ai")).unwrap_or_else(|| panic!("{rows:#?}"));
+        assert!(rows[at + 1].starts_with("│           [Choose providers…]"), "the link on the next line, under the text after \"pi: \": {rows:#?}");
+        let ten: Vec<String> = (0..10).map(|i| format!("group-{i:02}")).collect();
+        let mut w = pi(&ten.iter().map(String::as_str).collect::<Vec<_>>());
+        let (_, rows) = inside(|b, s| w.draw(b, s, &Theme::dark()));
+        let at = rows.iter().position(|r| r.contains("      pi: group-00, ")).unwrap_or_else(|| panic!("{rows:#?}"));
+        let shown: String = rows[at..at + 2].concat();
+        assert!(ten.iter().all(|g| shown.contains(g.as_str())) && !shown.contains('…'), "the whole list: {rows:#?}");
+        assert!(rows[at + 1].starts_with("│           group-") && rows[at + 2].starts_with("│           [Choose providers…]"), "under the text after \"pi: \": {rows:#?}");
+        let tall = Rect::new(0, 0, 160, 45);
+        assert_eq!(click_seen(&mut w, tall, "[Choose providers…]"), Some(Out::None));
+        assert!(w.view.as_ref().is_some_and(|v| v.agent == "pi"), "the link opens Choose providers");
+        w.view = None;
+        // on a short screen the link is below the fold until the window scrolls
+        let short = Rect::new(0, 0, 160, 16);
+        assert_eq!(click_seen(&mut w, short, "[Choose providers…]"), None, "hidden at first");
+        w.key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE));
+        assert_eq!(click_seen(&mut w, short, "[Choose providers…]"), Some(Out::None));
+        assert!(w.view.as_ref().is_some_and(|v| v.agent == "pi"), "and after scrolling");
+    }
+
+    #[test]
+    fn a_long_account_name_puts_its_button_under_the_indent() {
+        let long = "a-very-long-account-name-for-an-agent-that-runs-night-builds";
+        let accounts = [Account { name: long.into(), uid: 501 }, Account { name: "scout".into(), uid: 502 }];
+        for shown in [long, "scout"] {
+            let mut w = Accounts::for_name(shown);
+            let (d, rows) = inside(|b, s| w.draw(b, s, &Theme::dark(), &accounts));
+            let at = rows.iter().position(|r| r.contains(&format!("  {long}  uid 501"))).unwrap_or_else(|| panic!("{rows:#?}"));
+            let next = rows[at + 1].trim_start_matches('│');
+            assert!(next.starts_with("   [x] remove") || next.starts_with("    remove "), "{shown}: the button whole, under the indent: {rows:#?}");
+            let (x, y) = (d.frame.x + rows[at + 1].chars().position(|c| c == 'r').unwrap() as u16, d.frame.y + at as u16 + 1);
+            let click = MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), column: x, row: y, modifiers: KeyModifiers::NONE };
+            assert_eq!(w.mouse(click, &d), Out::Remove(long.into()), "{shown}: it keeps its click");
+        }
+    }
+
     #[test]
     fn isolation_wraps_its_text_and_its_chips_and_every_chip_keeps_its_click() {
         let names = ["claude", "codex", "qwen", "gemini", "cursor", "copilot", "opencode", "pi", "another-agent", "and-one-more"];

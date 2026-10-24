@@ -683,6 +683,8 @@ pub(crate) mod tests {
         let plugins = crate::plugin_list::PluginList::new(Vec::new(), Default::default());
         let messages = crate::messages::Messages::new();
         let mail = crate::messages::tests::view();
+        let mut held = crate::messages::Messages::at(mail.waiting[0].id.clone());
+        assert!(held.settle(&mail));
         let wide_buttons = Confirm::new("Remove plugin", "x").does("remove plugin").other(" [d] remove it and its data ");
         let isolation = crate::isolation_ui::IsolationWin { home: true, ..crate::isolation_ui::tests::grouped() };
         let accounts = crate::isolation_ui::Accounts::for_name("scout");
@@ -705,6 +707,7 @@ pub(crate) mod tests {
             ("Servers", WIDE_W, Box::new(|b| { servers.draw(b, screen, &theme); })),
             ("Plugins", WIDE_W, Box::new(|b| { plugins.draw(b, screen, &theme); })),
             ("Messages", WIDE_W, Box::new(|b| { messages.draw(b, screen, &theme, &mail, &crate::messages::tests::verdict); })),
+            ("Held message", WIDE_W, Box::new(|b| { held.draw(b, screen, &theme, &mail, &crate::messages::tests::verdict); })),
             ("Choose providers", WIDE_W, Box::new(|b| { providers.draw(b, screen, &theme); })),
             ("Isolation", WIDE_W, Box::new(|b| { isolation.draw(b, screen, &theme); })),
             ("Accounts", WIDE_W, Box::new(|b| { accounts.draw(b, screen, &theme, &[]); })),

@@ -105,16 +105,19 @@ pub fn draw<H: Clone>(buf: &mut Buffer, r: Rect, title: &str, theme: &Theme, lin
 }
 
 /// A wide window for `lines`, and the lines wrapped to its width.
-pub fn fit<H: Clone>(screen: Rect, lines: Vec<Line<H>>) -> (Rect, Vec<Line<H>>) {
+pub fn fit<H: Clone + PartialEq>(screen: Rect, lines: Vec<Line<H>>) -> (Rect, Vec<Line<H>>) {
     let w = crate::chrome::fit(screen, crate::chrome::WIDE_W, 0).width.saturating_sub(2 * crate::chrome::DIALOG_FRAME.horizontal) as usize;
     let lines = wrap(lines, w);
     (crate::chrome::fit(screen, crate::chrome::WIDE_W, lines.len() as u16), lines)
 }
 
 /// `lines` in at most `width` cells. Text alone wraps between words under its own indent; a line of several parts,
-/// such as chips, breaks between them and goes on under its second part, each keeping its click.
-pub fn wrap<H: Clone>(lines: Vec<Line<H>>, width: usize) -> Vec<Line<H>> {
+/// such as chips, breaks between them and goes on under its second part, each keeping its click. A part that does not
+/// fit there goes on under the text after the line's label ("pi: "), or its indent when it has none; a first part
+/// wider than the line wraps under that same place.
+pub fn wrap<H: Clone + PartialEq>(lines: Vec<Line<H>>, width: usize) -> Vec<Line<H>> {
     let mut out = Vec::new();
+    let pad = |n: usize| (" ".repeat(n), Style::default(), None);
     for line in lines {
         if self::width(&line) <= width {
             out.push(line);
@@ -124,19 +127,55 @@ pub fn wrap<H: Clone>(lines: Vec<Line<H>>, width: usize) -> Vec<Line<H>> {
                 out.push(vec![(format!("{}{part}", " ".repeat(indent)), *style, hit.clone())]);
             }
         } else {
-            let under = line.first().map_or(0, |s| cells(&s.0));
-            let mut x = 0;
-            let mut row: Line<H> = Vec::new();
-            for seg in line {
-                if !row.is_empty() && x + cells(&seg.0) > width && x > under {
-                    out.push(std::mem::take(&mut row));
-                    row.push((" ".repeat(under), Style::default(), None));
-                    x = under;
+            let indent = line.first().map_or(0, |s| s.0.len() - s.0.trim_start_matches(' ').len());
+            // under the text after a short "name: " label, or the indent
+            let hang = line.first().and_then(|s| s.0[indent..].find(": ")).filter(|&i| indent + i + 2 < width / 2).map_or(indent, |i| indent + i + 2);
+            let mut under = line.first().map_or(0, |s| cells(&s.0));
+            let mut segs = line.into_iter();
+            let (mut row, mut x, mut start): (Line<H>, usize, usize) = (Vec::new(), 0, 0);
+            if under > width
+                && let Some((text, style, hit)) = segs.next()
+            {
+                let (mut at, mut cur) = (indent, String::new());
+                for word in text[indent..].split(' ').filter(|w| !w.is_empty()) {
+                    if !cur.is_empty() && at + cells(&cur) + 1 + cells(word) > width {
+                        out.push(vec![(format!("{}{cur}", " ".repeat(at)), style, hit.clone())]);
+                        (at, cur) = (hang, String::new());
+                    }
+                    if !cur.is_empty() {
+                        cur.push(' ');
+                    }
+                    cur.push_str(word);
                 }
-                x += cells(&seg.0);
-                row.push(seg);
+                if !cur.is_empty() {
+                    out.push(vec![(format!("{}{cur}", " ".repeat(at)), style, hit.clone())]);
+                }
+                (row, x, start, under) = (vec![pad(hang)], hang, hang, hang);
             }
-            out.push(row);
+            // A button's key and word, or a chip and the gap after it, move together.
+            let mut units: Vec<Line<H>> = Vec::new();
+            for seg in segs {
+                let blank = seg.2.is_none() && seg.0.trim().is_empty();
+                match units.last_mut() {
+                    Some(u) if blank || seg.2.is_some() && u.last().is_some_and(|p| p.2 == seg.2) => u.push(seg),
+                    _ => units.push(vec![seg]),
+                }
+            }
+            for unit in units {
+                let all = self::width(&unit);
+                let w = all - unit.iter().rev().take_while(|s| s.2.is_none() && s.0.trim().is_empty()).map(|s| cells(&s.0)).sum::<usize>();
+                if x > start && x + w > width {
+                    out.push(std::mem::take(&mut row));
+                    start = if under + w <= width { under } else { hang };
+                    row.push(pad(start));
+                    x = start;
+                }
+                x += all;
+                row.extend(unit);
+            }
+            if x > start {
+                out.push(row);
+            }
         }
     }
     out
