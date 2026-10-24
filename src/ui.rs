@@ -134,18 +134,20 @@ fn menu_marked(app: &App) -> bool {
     matches!(app.global_menu((0, 0)), crate::app::Overlay::Menu(m, _) if m.items.iter().any(|i| i.mark))
 }
 
-/// Draws the button ending at `x`: strokes alone sit flush against that edge, and the badge keeps
-/// the edge while growing left to three cells, the only width that puts the strokes in its middle.
-/// So the strokes step one cell left exactly when something waits. Returns the cells it covers.
+/// Draws the strokes at `x`; the badge adds half a cell either side (▐ ≡ ▌), so the strokes never move
+/// and its edges fall mid-cell, where border lines are drawn. Returns the cells it covers.
 fn draw_menu(buf: &mut Buffer, x: u16, y: u16, marked: bool, theme: &crate::render::Theme) -> Rect {
     if !marked {
         buf.set_string(x, y, MENU, Style::default().fg(theme.muted));
         return Rect::new(x, y, 1, 1);
     }
     let badge = Style::default().fg(theme.ground).bg(theme.warn).add_modifier(ratatui::style::Modifier::BOLD);
-    let left = x.saturating_sub(2);
-    buf.set_string(left, y, format!(" {MENU} "), badge);
-    Rect::new(left, y, x + 1 - left, 1)
+    let edge = Style::default().fg(theme.warn).bg(theme.ground);
+    let left = x.saturating_sub(1);
+    buf.set_string(left, y, "\u{2590}", edge);
+    buf.set_string(x, y, MENU, badge);
+    buf.set_string(x + 1, y, "\u{258c}", edge);
+    Rect::new(left, y, x + 2 - left, 1)
 }
 
 /// The current server's name or number, cut to `max` cells; none for the legacy server, which has neither.
@@ -236,7 +238,8 @@ pub fn draw(f: &mut Frame, app: &App, view: &mut ViewState, geometry: &[crate::a
             fx.screen.extend(place_logo(app, view, None));
             f.buffer_mut().set_stringn(side.x + TEXT_INSET, top.y, "nerd", w.saturating_sub(TEXT_INSET) as usize, name);
         }
-        let menu = Rect::new(side.right().saturating_sub(TEXT_INSET + 1), top.y, 1, 1);
+        // the strokes sit in the cell before the sidebar's right border, so the badge's right half ends on it
+        let menu = Rect::new(side.right().saturating_sub(2), top.y, 1, 1);
         let marked = menu_marked(app);
         let button = draw_menu(f.buffer_mut(), menu.x, menu.y, marked, &theme);
         // The server this session shows, after the wordmark and a cell short of the menu.
@@ -256,6 +259,8 @@ pub fn draw(f: &mut Frame, app: &App, view: &mut ViewState, geometry: &[crate::a
         view.sidebar_mail = hits.mail;
         // what was drawn, not a second guess at it: the badge is wider than the bare strokes
         view.hits.sidebar_menu = Some(button);
+        // the menu opens a cell left of the strokes, with the badge or without
+        view.hits.menu_at = Some((menu.x.saturating_sub(1), top.y));
         // width is dragged from the border's right edge
         view.hits.sidebar_divider = Some(Rect { x: side.x + w - 1, width: 1, ..body });
     } else if let Some(rail) = a.rail {
@@ -272,6 +277,7 @@ pub fn draw(f: &mut Frame, app: &App, view: &mut ViewState, geometry: &[crate::a
         view.hits.sidebar_toggle = hits.toggle;
         // the whole rail width is the target here: the rail is narrow and the strokes sit alone on it
         view.hits.sidebar_menu = Some(Rect { x: rail.x, width: w.max(button.width), ..button });
+        view.hits.menu_at = Some((rail.x, top.y));
     } else {
         fx.screen.extend(place_logo(app, view, None));
         view.sidebar_mail.clear();
@@ -847,14 +853,13 @@ mod tests {
             let button = super::draw_menu(&mut buf, 5, 0, marked, &theme);
             let filled: Vec<u16> = (0..area.width).filter(|&x| buf[(x, 0)].bg == theme.warn).collect();
             if marked {
-                assert_eq!(filled, vec![3, 4, 5], "the badge covers three cells");
+                assert_eq!(filled, vec![5], "the badge's whole cell is the strokes'; its halves are drawn by glyphs");
             } else {
                 assert!(filled.is_empty(), "nothing is filled while nothing waits");
             }
             let clickable: Vec<u16> = (button.x..button.right()).collect();
-            assert_eq!(button.right() - 1, 5, "whatever the state, the button ends where it was given");
             if marked {
-                assert_eq!(clickable, filled, "every filled cell opens the menu, and no empty one does");
+                assert_eq!(clickable, vec![4, 5, 6], "the half cells either side open the menu too");
             } else {
                 assert_eq!(clickable, vec![5], "the strokes alone are the target");
             }
@@ -875,10 +880,12 @@ mod tests {
 
         let mut buf = Buffer::empty(area);
         let rect = super::draw_menu(&mut buf, 5, 0, true, &theme);
-        assert_eq!(rect, Rect::new(3, 0, 3, 1), "the badge keeps the right edge and grows left");
-        assert_eq!((buf[(3, 0)].bg, buf[(4, 0)].bg, buf[(5, 0)].bg), (theme.warn, theme.warn, theme.warn));
-        assert_eq!((buf[(4, 0)].symbol(), buf[(4, 0)].fg), ("\u{2261}", theme.ground), "the strokes sit in the middle of the badge");
-        assert_eq!((buf[(3, 0)].symbol(), buf[(5, 0)].symbol()), (" ", " "), "one cell of fill on each side");
+        assert_eq!(rect, Rect::new(4, 0, 3, 1), "half a cell either side of the strokes");
+        assert_eq!((buf[(5, 0)].symbol(), buf[(5, 0)].fg, buf[(5, 0)].bg), ("\u{2261}", theme.ground, theme.warn), "the strokes stay in their cell");
+        assert_eq!((buf[(4, 0)].symbol(), buf[(4, 0)].fg, buf[(4, 0)].bg), ("\u{2590}", theme.warn, theme.ground), "the right half of the cell before");
+        assert_eq!((buf[(6, 0)].symbol(), buf[(6, 0)].fg, buf[(6, 0)].bg), ("\u{258c}", theme.warn, theme.ground), "the left half of the cell after");
+        assert_ne!(buf[(3, 0)].bg, theme.warn, "nothing beyond the halves");
+        assert_ne!(buf[(7, 0)].bg, theme.warn, "nothing beyond the halves");
     }
 
     #[test]
