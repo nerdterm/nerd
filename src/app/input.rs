@@ -511,7 +511,7 @@ impl App {
         match n {
             1 => self.overlay = Overlay::Keys(crate::keyshelp::KeysHelp::new(self.cfg.prefix)),
             2 => {
-                let at = self.view.hits.sidebar_menu.map(|r| (r.x, r.y + 1)).unwrap_or((1, 1));
+                let at = self.view.hits.menu_at.or(self.view.hits.sidebar_menu.map(|r| (r.x, r.y))).map(|(x, y)| (x, y + 1)).unwrap_or((1, 1));
                 self.overlay = self.global_menu(at);
             }
             3 => {

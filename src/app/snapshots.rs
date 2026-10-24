@@ -215,6 +215,11 @@ fn golden_the_menu_button_against_the_border_lines() {
             assert!([strokes - 1, strokes + 1].iter().all(|&x| buf[(x, 0)].symbol() == " "), "{tag}: nothing beside them");
         }
         out += &format!("== {tag}\n{}", dump(&buf, Rect::new(0, 0, 40, 3)));
+        // the menu opens from one cell whether the badge shows or not: 31 in the open sidebar, the rail's edge
+        let click = crossterm::event::MouseEvent { kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left), column: strokes, row: 0, modifiers: crossterm::event::KeyModifiers::NONE };
+        app.mouse(click, Rect::new(0, 0, 120, 12));
+        let Overlay::Menu(m, _) = &app.overlay else { panic!("{tag}: a click on the strokes opens the menu") };
+        assert_eq!(m.rect(Rect::new(0, 0, 120, 12)).x, if sidebar { 31 } else { 0 }, "{tag}: where the menu opens");
     }
     crate::session::tests::INSTANCE.set(None);
     crate::hook::tests::golden("ui/menu-button.txt", &out);

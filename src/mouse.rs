@@ -22,6 +22,8 @@ pub struct Hits {
     pub sidebar_group_toggles: Vec<(Rect, usize)>,
     pub sidebar_new: Option<Rect>,
     pub sidebar_menu: Option<Rect>,
+    /// Where the main menu opens from the button: one place whether its badge shows or not.
+    pub menu_at: Option<(u16, u16)>,
     /// « in the sidebar's bottom line, » in the collapsed rail's.
     pub sidebar_toggle: Option<Rect>,
     /// An agent's `◦N` subagent count.
@@ -72,6 +74,7 @@ impl Hits {
         self.sidebar_group_toggles.clear();
         self.sidebar_new = None;
         self.sidebar_menu = None;
+        self.menu_at = None;
         self.sidebar_toggle = None;
         self.sidebar_subagents.clear();
         self.sidebar_subagent_rows.clear();
@@ -211,8 +214,9 @@ impl Router {
             }
             if let Some(r) = hits.sidebar_menu
                 && hit(r, x, y) {
-                    // the button's own corner, not the cursor's: the same button must open it in one place
-                    return Action::OpenMenu(r.x, r.y);
+                    // the same place every time, not the cursor's or the badge's corner
+                    let (mx, my) = hits.menu_at.unwrap_or((r.x, r.y));
+                    return Action::OpenMenu(mx, my);
                 }
             if let Some(r) = hits.sidebar_new
                 && hit(r, x, y) {

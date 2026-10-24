@@ -259,6 +259,8 @@ pub fn draw(f: &mut Frame, app: &App, view: &mut ViewState, geometry: &[crate::a
         view.sidebar_mail = hits.mail;
         // what was drawn, not a second guess at it: the badge is wider than the bare strokes
         view.hits.sidebar_menu = Some(button);
+        // the menu opens a cell left of the strokes, with the badge or without
+        view.hits.menu_at = Some((menu.x.saturating_sub(1), top.y));
         // width is dragged from the border's right edge
         view.hits.sidebar_divider = Some(Rect { x: side.x + w - 1, width: 1, ..body });
     } else if let Some(rail) = a.rail {
@@ -275,6 +277,7 @@ pub fn draw(f: &mut Frame, app: &App, view: &mut ViewState, geometry: &[crate::a
         view.hits.sidebar_toggle = hits.toggle;
         // the whole rail width is the target here: the rail is narrow and the strokes sit alone on it
         view.hits.sidebar_menu = Some(Rect { x: rail.x, width: w.max(button.width), ..button });
+        view.hits.menu_at = Some((rail.x, top.y));
     } else {
         fx.screen.extend(place_logo(app, view, None));
         view.sidebar_mail.clear();
