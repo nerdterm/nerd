@@ -1495,12 +1495,13 @@ mod tests {
 
     /// A frame as the loop draws it: its text, and the bytes that go out after it.
     fn frame(app: &mut App) -> (String, Vec<u8>) {
-        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(160, 30)).unwrap();
+        let h = app.screen.height.max(30);
+        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(160, h)).unwrap();
         app.sync_tree();
         let mut out = Vec::new();
         term.draw(|f| out = crate::ui::frame(f, app).screen).unwrap();
         let buf = term.backend().buffer().clone();
-        ((0..30).map(|y| (0..160).map(|x| buf[(x, y)].symbol().to_string()).collect::<String>() + "\n").collect(), out)
+        ((0..h).map(|y| (0..160).map(|x| buf[(x, y)].symbol().to_string()).collect::<String>() + "\n").collect(), out)
     }
 
     fn screen(app: &mut App) -> String {
@@ -2656,7 +2657,8 @@ mod tests {
         app.spaces.push(Space { name: Some("work".into()), cwd: cwd.clone(), tabs: vec![main, two], active_tab: 0, isolation_new: None });
         app.spaces.push(Space { name: Some("research".into()), cwd, tabs: vec![research], active_tab: 0, isolation_new: None });
         app.next_id = 5;
-        app.screen = Rect::new(0, 0, 160, 30);
+        // tall enough for the whole Messages window at its 80 columns
+        app.screen = Rect::new(0, 0, 160, 40);
         app
     }
 
@@ -2797,7 +2799,7 @@ mod tests {
             let mut app = named();
             app.overlay = app.run_action(Action::RenamePane, &MenuCtx::Pane(2));
             let shown = screen(&mut app);
-            assert!(shown.contains("A named pane can receive messages from other agents."), "{shown}");
+            assert!(shown.contains("│ A named pane can receive messages from other │") && shown.contains("│ agents. "), "the note wraps in the field's width: {shown}");
             letter(&mut app, "reader");
             press(&mut app, KeyCode::Enter);
             assert!(matches!(&app.overlay, Overlay::Prompt(p, Ask::RenamePane(2)) if p.value == "reader"), "the prompt stays open with what was typed");
@@ -2826,7 +2828,7 @@ mod tests {
                 letter(&mut app, "scout");
                 press(&mut app, KeyCode::Enter);
                 let shown = screen(&mut app);
-                assert!(shown.contains("This name has 1 route and 1 waiting message from before:") && shown.contains("planner → scout allow."), "{shown}");
+                assert!(shown.contains("This name has 1 route and 1 waiting message from before: planner") && shown.contains("→ scout allow."), "{shown}");
                 assert!(shown.contains("[k] keep them") && shown.contains("[d] drop them") && shown.contains("[Esc] cancel"), "{shown}");
                 letter(&mut app, &key.to_string());
                 assert!(!app.overlay.is_open());
@@ -3869,8 +3871,10 @@ mod tests {
         app.screen = Rect::new(0, 0, 160, 30);
         app.overlay = app.run_action(Action::About, &MenuCtx::Global);
         let shown = screen(&mut app);
+        // a long path wraps under its column, so it is read with the frames and the space taken out
+        let flat: String = shown.chars().filter(|c| !c.is_whitespace() && *c != '\u{2502}').collect();
         for want in [crate::version_line().as_str(), "This server", "running", "config.json", "daemon.log", "Licence", "MIT", "[Enter] copy version", "[Esc] close"] {
-            assert!(shown.contains(want), "{want}:\n{shown}");
+            assert!(flat.contains(&want.replace(' ', "")), "{want}:\n{shown}");
         }
         let (x, y) = find_on_screen(&shown, "[Esc] close").unwrap();
         let down = crossterm::event::MouseEvent { kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left), column: x, row: y, modifiers: KeyModifiers::NONE };

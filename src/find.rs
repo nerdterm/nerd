@@ -333,18 +333,18 @@ impl Find {
 
     /// The window for `n` result rows.
     fn rect_n(&self, screen: Rect, n: usize) -> Rect {
-        let w = crate::chrome::fit(screen, WIDTH, 0).inner(crate::chrome::DIALOG_FRAME).width;
+        let w = crate::chrome::fit(screen, crate::chrome::WINDOW_W, 0).inner(crate::chrome::DIALOG_FRAME).width;
         let strip = crate::chrome::hint(KEYS.iter().map(|k| (k.label, k.word)), w as usize).len() as u16;
         // the field's box, the tabs, a blank row over the strip
         let fixed = 3 + lines(&tab_widths(), 2, w) + 1 + strip;
         let chips = if self.tab == Some(Group::Panes) { lines(&chip_widths(), 1, w) } else { 0 };
         let list = |n: u16| if n == 0 { 0 } else { 1 + n.min(ROWS) };
-        let full = crate::chrome::fit(screen, WIDTH, fixed + lines(&chip_widths(), 1, w) + list(ROWS));
+        let full = crate::chrome::fit(screen, crate::chrome::WINDOW_W, fixed + lines(&chip_widths(), 1, w) + list(ROWS));
         if self.help.is_some() {
             return full;
         }
         let note = self.note.as_ref().map_or(0, |(_, t)| crate::menu::wrap(t, w as usize).len() as u16);
-        let r = crate::chrome::fit(screen, WIDTH, fixed + chips + note + list(n.min(ROWS as usize) as u16));
+        let r = crate::chrome::fit(screen, crate::chrome::WINDOW_W, fixed + chips + note + list(n.min(ROWS as usize) as u16));
         Rect { y: full.y, ..r }
     }
 

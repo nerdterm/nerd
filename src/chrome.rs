@@ -68,19 +68,21 @@ pub fn dialog(buf: &mut Buffer, r: Rect, title: Option<&str>, border: Color, the
     r.inner(DIALOG_FRAME)
 }
 
-/// Narrowest a window is drawn: a title and a key strip read badly in less.
-pub const MIN_W: u16 = 40;
+/// Each window type's width, frame included (docs/menus.md): a one-line field, most windows, the wide tables.
+pub const FIELD_W: u16 = 48;
+pub const WINDOW_W: u16 = 68;
+pub const WIDE_W: u16 = 80;
 
 /// The most a window may take: the screen less 1/16 at each side and 1/10 above and below.
 pub fn limits(screen: Rect) -> (u16, u16) {
     (screen.width - screen.width / 16 * 2, screen.height - screen.height / 10 * 2)
 }
 
-/// The window, centred, for `content_w` x `content_h` cells inside the frame, with the blank row and
-/// the close button under them: at least `MIN_W` wide, at most `limits`.
-pub fn fit(screen: Rect, content_w: u16, content_h: u16) -> Rect {
+/// The window, centred, `w` wide with its frame and tall enough for `content_h` rows inside it, the blank row and
+/// the close button under them: at most `limits`.
+pub fn fit(screen: Rect, w: u16, content_h: u16) -> Rect {
     let (max_w, max_h) = limits(screen);
-    let w = content_w.saturating_add(2 * DIALOG_FRAME.horizontal).max(MIN_W).min(max_w);
+    let w = w.min(max_w);
     let h = content_h.saturating_add(2 * DIALOG_FRAME.vertical + 2).min(max_h);
     Rect::new(screen.x + (screen.width - w) / 2, screen.y + (screen.height - h) / 2, w, h)
 }
@@ -450,10 +452,9 @@ mod tests {
     #[test]
     fn a_window_fits_its_content_within_the_screen_margins() {
         let big = Rect::new(0, 0, 200, 60);
-        let r = fit(big, 50, 10);
-        assert_eq!((r.width, r.height), (54, 14), "content, the frame, the blank row and the close button");
+        let r = fit(big, 54, 10);
+        assert_eq!((r.width, r.height), (54, 14), "its width; the content, the frame, the blank row and the close button");
         assert_eq!((r.x, r.y), ((200 - 54) / 2, (60 - 14) / 2), "centred");
-        assert_eq!(fit(big, 3, 1).width, 40, "never narrower than 40");
         let r = fit(Rect::new(0, 0, 80, 30), 500, 500);
         assert_eq!((r.width, r.height, r.x, r.y), (70, 24, 5, 3), "less 1/16 at each side and 1/10 above and below");
     }
@@ -514,7 +515,7 @@ mod tests {
             (r.width, r.height)
         };
         drop(draws);
-        assert_eq!(picker.rect(big).width, 2 + 50 + 4, "the widest item");
+        assert_eq!(picker.rect(big).width, WINDOW_W, "the window's width, whatever its items");
         let before = picker.rect(big);
         picker.key(KeyEvent::from(KeyCode::Char('z')));
         assert_eq!(picker.rect(big), before, "typing does not resize a list");
@@ -535,5 +536,63 @@ mod tests {
         keys.key(KeyEvent::from(KeyCode::Char('z')));
         assert_eq!(keys.rect(big), r, "typing a search does not resize Keys and mouse");
         assert_eq!(size(&|b, s| keys.draw(b, s, &theme)), (r.width, r.height));
+    }
+
+    #[test]
+    fn each_window_type_has_its_own_width() {
+        use crate::menu::{Confirm, Picker, PickerItem, Prompt};
+        let theme = Theme::dark();
+        let screen = Rect::new(0, 0, 160, 45);
+        let width = |draw: &dyn Fn(&mut Buffer)| {
+            let mut buf = Buffer::empty(screen);
+            draw(&mut buf);
+            frame(&buf).0.width
+        };
+        let item = |label: &str, detail: &str| PickerItem { label: label.into(), detail: detail.into(), id: 0 };
+        let picker = Picker::new("Open worktree", vec![item("main", &"/a/long/path".repeat(10))]);
+        let confirm = Confirm::new("Close pane", "word ".repeat(40));
+        let hook = Confirm::new("Install the hook", "x").table(vec![vec!["Agent".into(), "Settings file".into(), "Resumes with".into()], vec!["Copilot CLI".into(), "~/.config/opencode/plugins/nerd.js".into(), "opencode --session <id>".into()]]);
+        let settings = crate::settings::Settings::new(&crate::config::Config::default());
+        let keys = crate::keyshelp::KeysHelp::new(crate::config::Prefix::Off);
+        let space = crate::space_picker::SpacePicker::new(PathBuf::from("/"));
+        let sessions = crate::clients::Sessions::new(Vec::new(), None);
+        let panel = crate::panel::Open::new((true, "p".into()), "id".into(), "Panel".into());
+        let servers = crate::server_list::tests::fixture(true);
+        let plugins = crate::plugin_list::PluginList::new(Vec::new(), Default::default());
+        let messages = crate::messages::Messages::new();
+        let mail = crate::messages::tests::view();
+        let wide_buttons = Confirm::new("Remove plugin", "x").does("remove plugin").other(" [d] remove it and its data ");
+        let isolation = crate::isolation_ui::IsolationWin { home: true, ..crate::isolation_ui::tests::grouped() };
+        let accounts = crate::isolation_ui::Accounts::for_name("scout");
+        let mut providers = crate::isolation_ui::tests::grouped();
+        providers.view = Some(crate::isolation_ui::View { agent: "fake".into(), draft: None, scroll: 0, empty: false, last: Default::default() });
+        type Draw<'a> = Box<dyn Fn(&mut Buffer) + 'a>;
+        let windows: Vec<(&str, u16, Draw)> = vec![
+            ("Prompt", FIELD_W, Box::new(|b| Prompt::new("Rename tab", "x").draw(b, screen, &theme))),
+            ("Prompt with a note", FIELD_W, Box::new(|b| Prompt::new("Rename pane", "x").note(&"a note ".repeat(20)).draw(b, screen, &theme))),
+            ("Confirm", WINDOW_W, Box::new(|b| { confirm.draw(b, screen, &theme); })),
+            ("Confirm with a table", WINDOW_W, Box::new(|b| { hook.draw(b, screen, &theme); })),
+            ("Confirm with wide buttons", WINDOW_W, Box::new(|b| { wide_buttons.draw(b, screen, &theme); })),
+            ("Search", WINDOW_W, Box::new(|b| { crate::find::Find::new().draw(b, screen, &theme); })),
+            ("Settings", WINDOW_W, Box::new(|b| { settings.draw(b, screen, &theme); })),
+            ("Keys and mouse", WINDOW_W, Box::new(|b| keys.draw(b, screen, &theme))),
+            ("New space", WINDOW_W, Box::new(|b| { space.draw(b, screen, &theme); })),
+            ("Picker", WINDOW_W, Box::new(|b| { picker.draw(b, screen, &theme); })),
+            ("Session history", WINDOW_W, Box::new(|b| { sessions.draw(b, screen, &theme); })),
+            ("Plugin panel", WINDOW_W, Box::new(|b| { panel.draw(b, screen, &theme, None); })),
+            ("Servers", WIDE_W, Box::new(|b| { servers.draw(b, screen, &theme); })),
+            ("Plugins", WIDE_W, Box::new(|b| { plugins.draw(b, screen, &theme); })),
+            ("Messages", WIDE_W, Box::new(|b| { messages.draw(b, screen, &theme, &mail, &crate::messages::tests::verdict); })),
+            ("Choose providers", WIDE_W, Box::new(|b| { providers.draw(b, screen, &theme); })),
+            ("Isolation", WIDE_W, Box::new(|b| { isolation.draw(b, screen, &theme); })),
+            ("Accounts", WIDE_W, Box::new(|b| { accounts.draw(b, screen, &theme, &[]); })),
+        ];
+        for (name, want, draw) in &windows {
+            assert_eq!(width(draw.as_ref()), *want, "{name}");
+        }
+        let mut buf = Buffer::empty(screen);
+        let row = picker.draw(&mut buf, screen, &theme)[0];
+        let text: String = (row.x..row.right()).map(|x| buf[(x, row.y)].symbol()).collect();
+        assert!(text.starts_with(" main …") && text.ends_with("/a/long/path"), "a long second column is cut with … and keeps its end: {text:?}");
     }
 }

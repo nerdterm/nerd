@@ -208,18 +208,15 @@ impl IsolationWin {
 
     pub fn draw(&self, buf: &mut Buffer, screen: Rect, theme: &Theme) -> Drawn<Click> {
         if let Some(v) = &self.view {
-            let width = crate::chrome::limits(screen).0.saturating_sub(2 * crate::chrome::DIALOG_FRAME.horizontal) as usize;
-            let lines = self.view_lines(v, width, theme);
-            let r = crate::messages::fit(screen, &lines, DONE.len() + 1 + BACK.len());
+            let r = crate::chrome::fit(screen, crate::chrome::WIDE_W, u16::MAX);
+            let lines = self.view_lines(v, r.width.saturating_sub(2 * crate::chrome::DIALOG_FRAME.horizontal) as usize, theme);
+            let r = crate::chrome::fit(screen, r.width, lines.len() as u16);
             let d = crate::messages::draw(buf, r, "Choose providers", theme, &lines, v.scroll, &[(DONE.to_string(), Click::Done)], BACK);
             v.last.set(d.rows.saturating_sub(d.room));
             return d;
         }
-        let lines = self.lines(theme);
-        let buttons = self.buttons();
-        let bottom = buttons.iter().map(|(b, _)| b.chars().count() + 1).sum::<usize>() + CANCEL.len();
-        let r = crate::messages::fit(screen, &lines, bottom);
-        crate::messages::draw(buf, r, self.title(), theme, &lines, 0, &buttons, CANCEL)
+        let (r, lines) = crate::messages::fit(screen, self.lines(theme));
+        crate::messages::draw(buf, r, self.title(), theme, &lines, 0, &self.buttons(), CANCEL)
     }
 
     fn click(&mut self, c: Click) -> Out {
@@ -433,11 +430,8 @@ impl Accounts {
     }
 
     pub fn draw(&self, buf: &mut Buffer, screen: Rect, theme: &Theme, accounts: &[Account]) -> Drawn<Click> {
-        let lines = self.lines(accounts, theme);
-        let buttons = Self::buttons();
-        let bottom = buttons.iter().map(|(b, _)| b.chars().count() + 1).sum::<usize>() + crate::messages::CLOSE.len();
-        let r = crate::messages::fit(screen, &lines, bottom);
-        crate::messages::draw(buf, r, "Accounts", theme, &lines, 0, &buttons, crate::messages::CLOSE)
+        let (r, lines) = crate::messages::fit(screen, self.lines(accounts, theme));
+        crate::messages::draw(buf, r, "Accounts", theme, &lines, 0, &Self::buttons(), crate::messages::CLOSE)
     }
 
     fn click(&mut self, c: Click) -> Out {
@@ -472,7 +466,7 @@ impl Accounts {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
@@ -494,7 +488,7 @@ mod tests {
     }
 
     /// `fake` has the providers alpha (a.dev) and beta (b.dev, c.dev); the pane is set to only claude.
-    fn grouped() -> IsolationWin {
+    pub(crate) fn grouped() -> IsolationWin {
         let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
         let net = AgentNetwork { net: crate::agents::Network::Internet { hosts: s(&["a.dev", "b.dev", "c.dev"]), ports: vec![443] }, providers: vec![("alpha".into(), s(&["a.dev"])), ("beta".into(), s(&["b.dev", "c.dev"]))] };
         IsolationWin {
@@ -736,5 +730,43 @@ mod tests {
         let accounts = [Account { name: "scout".into(), uid: 502 }];
         assert_eq!(w.key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE), &accounts), Out::Remove("scout".into()));
         assert_eq!(w.key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE), &[]), Out::None, "nothing admitted under that name");
+    }
+
+    /// The frame and the rows inside it, as drawn on a 160 × 45 screen.
+    fn inside<H: Clone>(draw: impl Fn(&mut Buffer, Rect) -> Drawn<H>) -> (Drawn<H>, Vec<String>) {
+        let screen = Rect::new(0, 0, 160, 45);
+        let mut buf = Buffer::empty(screen);
+        let d = draw(&mut buf, screen);
+        let rows = (d.frame.y..d.frame.bottom()).map(|y| (d.frame.x..d.frame.right()).map(|x| buf[(x, y)].symbol()).collect()).collect();
+        (d, rows)
+    }
+
+    #[test]
+    fn isolation_wraps_its_text_and_its_chips_and_every_chip_keeps_its_click() {
+        let names = ["claude", "codex", "qwen", "gemini", "cursor", "copilot", "opencode", "pi", "another-agent", "and-one-more"];
+        let w = IsolationWin { providers: names.map(String::from).to_vec(), home: true, pick: Some(Isolation { files: Files::Folder, network: Network::Open }), ..pane() };
+        let (d, rows) = inside(|b, s| w.draw(b, s, &Theme::dark()));
+        assert_eq!(d.frame.width, crate::chrome::WIDE_W);
+        for p in names {
+            assert!(d.hits.iter().any(|(_, c)| *c == Click::Provider(p.into())), "{p} has a click: {rows:#?}");
+        }
+        let chips: Vec<&String> = rows.iter().filter(|r| r.contains(" claude ") || r.contains(" and-one-more ")).collect();
+        assert_eq!(chips.len(), 2, "the first and the last line of chips: {rows:#?}");
+        let col = |r: &str, at: usize| r[..at].chars().count();
+        let next = chips[1].char_indices().skip(1).find(|(_, c)| !c.is_whitespace()).map(|(i, _)| col(chips[1], i));
+        assert_eq!(next, chips[0].find("claude").map(|i| col(chips[0], i)), "the second line of chips starts under the first chip: {rows:#?}");
+        let at = rows.iter().position(|r| r.contains("though not dot files, ~/Library or ~/bin;")).unwrap_or_else(|| panic!("{rows:#?}"));
+        assert!(rows[at + 1].starts_with("│ limit. "), "the long note wraps, nothing cut: {rows:#?}");
+    }
+
+    #[test]
+    fn accounts_wraps_a_command_under_its_indent() {
+        let w = Accounts { name: "scout".into(), owner: "ann".into() };
+        let (d, rows) = inside(|b, s| w.draw(b, s, &Theme::dark(), &[]));
+        assert_eq!(d.frame.width, crate::chrome::WIDE_W);
+        let at = rows.iter().position(|r| r.contains("sudo sysadminctl -addUser scout")).unwrap_or_else(|| panic!("{rows:#?}"));
+        assert!(rows[at + 1].starts_with("│   ") && rows[at + 1].contains("interactive"), "the rest of it under the two spaces: {rows:#?}");
+        let at = rows.iter().position(|r| r.contains("act as scout at any time,")).unwrap_or_else(|| panic!("{rows:#?}"));
+        assert!(rows[at + 1].starts_with("│ without a password "), "prose wraps, nothing cut: {rows:#?}");
     }
 }

@@ -154,14 +154,12 @@ impl Settings {
         }
     }
 
-    /// Fits its widest row or hint, which the message line cuts rather than wraps, and the key strip under the list.
+    /// The message line under the list is cut rather than wrapped; the key strip under it wraps.
     pub fn rect(&self, screen: Rect) -> Rect {
-        let rows = ROWS.iter().map(|(_, label, item)| label.chars().count() + 4 + self.value(*item).chars().count());
-        let hints = [SCROLLBACK_HINT, CONFIG_HINT].map(|h| h.chars().count());
-        let widest = rows.chain(hints).max().unwrap_or(0) as u16;
-        let strip = hint_strip(crate::chrome::fit(screen, widest, 0).width.saturating_sub(4) as usize).len();
+        let w = crate::chrome::WINDOW_W;
+        let strip = hint_strip(crate::chrome::fit(screen, w, 0).width.saturating_sub(4) as usize).len();
         // the list, the message line, the key strip
-        crate::chrome::fit(screen, widest, (lines().len() + 1 + strip) as u16)
+        crate::chrome::fit(screen, w, (lines().len() + 1 + strip) as u16)
     }
 
     /// Draws the panel; returns each setting's row and its index into `ROWS`.

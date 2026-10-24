@@ -317,8 +317,14 @@ impl Prompt {
 
     /// One input line of a fixed width: the window must not resize while the text is typed.
     pub fn rect(&self, screen: Rect) -> Rect {
-        let w = (self.title.chars().count() as u16 + 2).max(self.note.chars().count() as u16).max(44);
-        crate::chrome::fit(screen, w, 1 + u16::from(!self.note.is_empty()))
+        let w = crate::chrome::FIELD_W;
+        let inner = crate::chrome::fit(screen, w, 0).width.saturating_sub(2 * crate::chrome::DIALOG_FRAME.horizontal) as usize;
+        crate::chrome::fit(screen, w, 1 + self.note_lines(inner).len() as u16)
+    }
+
+    /// The note wrapped to the field's width; none without a note.
+    fn note_lines(&self, width: usize) -> Vec<String> {
+        if self.note.is_empty() { Vec::new() } else { wrap(&self.note, width.max(1)) }
     }
 
     pub fn draw(&self, buf: &mut Buffer, screen: Rect, theme: &Theme) {
@@ -326,7 +332,9 @@ impl Prompt {
         if r.is_empty() {
             return;
         }
-        let content = crate::chrome::dialog(buf, r, Some(&self.title), theme.border_focus, theme, crate::chrome::Moat::All);
+        // the frame keeps a corner, a dash and a space each side of the title
+        let title = crate::slots::fit(&self.title, (r.width as usize).saturating_sub(5));
+        let content = crate::chrome::dialog(buf, r, Some(&title), theme.border_focus, theme, crate::chrome::Moat::All);
         let w = content.width as usize;
         if w == 0 || r.height < 5 {
             return;
@@ -349,8 +357,10 @@ impl Prompt {
             w,
             Style::default().fg(theme.text).bg(theme.ground),
         );
-        if !self.note.is_empty() && content.height > 1 {
-            buf.set_stringn(content.x, content.y + 1, &self.note, w, Style::default().fg(theme.faint).bg(theme.ground));
+        // the rows under the field, above the blank row and the buttons
+        let room = content.height.saturating_sub(3);
+        for (y, line) in (content.y + 1..).zip(self.note_lines(w)).take(room as usize) {
+            buf.set_stringn(content.x, y, &line, w, Style::default().fg(theme.faint).bg(theme.ground));
         }
     }
 
@@ -458,8 +468,6 @@ pub const FIELD_KEYS: &[(&str, &str, &str)] = &[
 
 const CONFIRM_YES_LABEL: &str = " [Enter] yes ";
 const CONFIRM_NO_LABEL: &str = " [Esc] no ";
-/// Upper bound on content width - with the border that's about 60 columns.
-const CONFIRM_MAX_WIDTH: u16 = 58;
 
 /// A button and what pressing it means; the label carries its own key hint.
 struct ConfirmButton {
@@ -581,9 +589,11 @@ impl Confirm {
 
     pub fn rect(&self, screen: Rect) -> Rect {
         let frame = 2 * crate::chrome::DIALOG_FRAME.horizontal;
-        let w = crate::chrome::fit(screen, self.content_width(screen), 0).width;
-        let rows = self.body_lines(w.saturating_sub(frame).max(1) as usize).len() + usize::from(!self.about.is_empty());
-        crate::chrome::fit(screen, self.content_width(screen), rows as u16)
+        let w = crate::chrome::WINDOW_W;
+        let inner = crate::chrome::fit(screen, w, 0).width.saturating_sub(frame).max(1) as usize;
+        // the rows of buttons past the first take room above the last
+        let rows = self.body_lines(inner).len() + usize::from(!self.about.is_empty()) + self.button_rows(inner).len() - 1;
+        crate::chrome::fit(screen, w, rows as u16)
     }
 
     /// Draws the dialog; returns where each button landed.
@@ -605,8 +615,9 @@ impl Confirm {
             return rects;
         }
 
+        let button_rows = self.button_rows(inner_w);
         let mut y = content.y;
-        let mut body_rows = r.height.saturating_sub(4) as usize;
+        let mut body_rows = r.height.saturating_sub(3 + button_rows.len() as u16) as usize;
         if !self.about.is_empty() && body_rows > 0 {
             buf.set_stringn(
                 content.x,
@@ -619,32 +630,49 @@ impl Confirm {
             body_rows -= 1;
         }
         let lines = self.body_lines(inner_w);
-        let header = lines.len().saturating_sub(self.table.len());
+        let header = wrap(&self.body, inner_w).len() + 1;
         for (i, line) in lines.iter().enumerate().take(body_rows) {
             let style = Style::default().fg(theme.text).bg(theme.ground);
             buf.set_stringn(content.x, y + i as u16, line, inner_w, if i == header && self.header && !self.table.is_empty() { style.add_modifier(Modifier::BOLD) } else { style });
         }
 
-        let btn_row = r.y + r.height - 2;
-        let total = self.buttons_width();
-        let mut x = content.x + (inner_w as u16).saturating_sub(total) / 2;
-        for (i, (b, at)) in self.buttons.iter().zip(rects.iter_mut()).enumerate() {
-            let len = b.label.chars().count() as u16;
-            let room = inner_w.saturating_sub((x - content.x) as usize);
-            if room == 0 {
-                break;
+        // A row of buttons wider than the window goes on below; each row is centred.
+        let first = (r.y + r.height).saturating_sub(1 + button_rows.len() as u16);
+        for (btn_row, row) in (first..).zip(&button_rows) {
+            let total = row.iter().map(|&i| self.buttons[i].label.chars().count() as u16 + 1).sum::<u16>().saturating_sub(1);
+            let mut x = content.x + (inner_w as u16).saturating_sub(total) / 2;
+            for &i in row {
+                let len = self.buttons[i].label.chars().count() as u16;
+                let room = inner_w.saturating_sub((x - content.x) as usize);
+                if room == 0 {
+                    break;
+                }
+                buf.set_stringn(x, btn_row, &self.buttons[i].label, room, self.button_style(i, theme));
+                rects[i] = Rect::new(x, btn_row, len.min(room as u16), 1);
+                x += len + 1;
             }
-            buf.set_stringn(x, btn_row, &b.label, room, self.button_style(i, theme));
-            *at = Rect::new(x, btn_row, len.min(room as u16), 1);
-            x += len + 1;
         }
         rects
     }
 
-    /// Every label, with one space between neighbours.
-    fn buttons_width(&self) -> u16 {
-        let labels: u16 = self.buttons.iter().map(|b| b.label.chars().count() as u16).sum();
-        labels + self.buttons.len().saturating_sub(1) as u16
+    /// The buttons in rows of at most `width` cells, one space apart: each row's indices.
+    fn button_rows(&self, width: usize) -> Vec<Vec<usize>> {
+        let mut rows: Vec<Vec<usize>> = Vec::new();
+        let mut used = 0;
+        for (i, b) in self.buttons.iter().enumerate() {
+            let len = b.label.chars().count();
+            match rows.last_mut() {
+                Some(row) if used + 1 + len <= width => {
+                    row.push(i);
+                    used += 1 + len;
+                }
+                _ => {
+                    rows.push(vec![i]);
+                    used = len;
+                }
+            }
+        }
+        rows
     }
 
     /// `y`/`n` pick directly, bypassing the selection.
@@ -734,17 +762,6 @@ impl Confirm {
         }
     }
 
-    fn content_width(&self, screen: Rect) -> u16 {
-        let buttons_w = self.buttons_width();
-        // The cap is for prose; buttons are never cut, since a cut label hides its key.
-        let avail = crate::chrome::limits(screen).0.saturating_sub(4).clamp(1, CONFIRM_MAX_WIDTH.max(buttons_w));
-        let title_w = self.title.chars().count() as u16 + 2;
-        let body_w =
-            (self.body.chars().count().max(self.about.chars().count()) as u16).min(CONFIRM_MAX_WIDTH);
-        // a table is not prose: it widens the dialog up to the screen rather than wrap a row
-        let table_w = (table_width(&self.table) as u16).min(crate::chrome::limits(screen).0.saturating_sub(4));
-        body_w.max(buttons_w).max(title_w).min(avail).max(table_w).max(1)
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -806,12 +823,11 @@ impl Picker {
         self.items.len() > SEARCH_FROM
     }
 
-    /// Fits every item, not the filtered ones, so it does not move while typing.
+    /// Counts every item, not the filtered ones, so it does not move while typing.
     pub fn rect(&self, screen: Rect) -> Rect {
-        let widest = self.items.iter().map(|i| 2 + i.label.chars().count() + if i.detail.is_empty() { 0 } else { 2 + i.detail.chars().count() }).max().unwrap_or(0);
         // the search row, then the rows, at least one for "no matches"
         let search = u16::from(self.searchable());
-        crate::chrome::fit(screen, widest.max(SEARCH.chars().count()) as u16, search + self.items.len().clamp(1, PICKER_ROWS) as u16)
+        crate::chrome::fit(screen, crate::chrome::WINDOW_W, search + self.items.len().clamp(1, PICKER_ROWS) as u16)
     }
 
     /// Draws the picker; returns the visible rows' rects, in `scroll..` order.
@@ -868,15 +884,7 @@ impl Picker {
                 let label_w = item.label.chars().count() + 2;
                 let room = inner_w.saturating_sub(label_w);
                 if room > 0 {
-                    let detail: String = item
-                        .detail
-                        .chars()
-                        .rev()
-                        .take(room)
-                        .collect::<Vec<_>>()
-                        .into_iter()
-                        .rev()
-                        .collect();
+                    let detail = elide(&item.detail, room);
                     let detail_style = if is_selected {
                         style
                     } else {
@@ -991,21 +999,34 @@ fn table_width(rows: &[Vec<String>]) -> usize {
     (0..n).map(|c| rows.iter().filter_map(|r| r.get(c)).map(|s| s.chars().count()).max().unwrap_or(0)).sum::<usize>() + 2 * n.saturating_sub(1)
 }
 
-/// Rows as aligned lines, columns two apart. Too wide for `width`, the last column goes, then the next,
-/// down to one; a row is cut at the edge, never wrapped.
+/// Rows as aligned lines, columns two apart. Too wide for `width`, the last column wraps under its own start, a word
+/// wider than half the line broken; where its room is narrower than a word it goes, then the next, down to one, cut at the edge.
 pub fn table_lines(rows: &[Vec<String>], width: usize) -> Vec<String> {
     let mut rows: Vec<Vec<String>> = rows.to_vec();
-    while table_width(&rows) > width && rows.iter().any(|r| r.len() > 1) {
+    let n = |rows: &[Vec<String>]| rows.iter().map(Vec::len).max().unwrap_or(0);
+    let widths = |rows: &[Vec<String>]| -> Vec<usize> { (0..n(rows)).map(|c| rows.iter().filter_map(|r| r.get(c)).map(|s| s.chars().count()).max().unwrap_or(0)).collect() };
+    // where the last column starts
+    let at = |rows: &[Vec<String>]| widths(rows).iter().rev().skip(1).map(|w| w + 2).sum::<usize>();
+    while table_width(&rows) > width && n(&rows) > 1 {
+        let last = n(&rows) - 1;
+        let word = rows.iter().filter_map(|r| r.get(last)).flat_map(|s| s.split_whitespace()).map(|w| w.chars().count()).max().unwrap_or(0);
+        if at(&rows) + word.min(width / 2) <= width {
+            break;
+        }
         for r in &mut rows {
             r.truncate(r.len().saturating_sub(1).max(1));
         }
     }
-    let n = rows.iter().map(Vec::len).max().unwrap_or(0);
-    let w: Vec<usize> = (0..n).map(|c| rows.iter().filter_map(|r| r.get(c)).map(|s| s.chars().count()).max().unwrap_or(0)).collect();
+    let (w, at, n) = (widths(&rows), at(&rows), n(&rows));
     rows.iter()
-        .map(|r| {
+        .flat_map(|r| {
             let line: String = r.iter().enumerate().map(|(c, s)| format!("{s:<0$}", w[c] + 2)).collect();
-            line.trim_end().chars().take(width).collect()
+            let parts = match r.get(n - 1) {
+                Some(last) if n > 1 && at + last.chars().count() > width => wrap(last, width - at),
+                _ => return vec![line.trim_end().chars().take(width).collect()],
+            };
+            let head: String = line.chars().take(at).collect();
+            parts.into_iter().enumerate().map(|(i, p)| if i == 0 { format!("{head}{p}") } else { format!("{}{p}", " ".repeat(at)) }).collect()
         })
         .collect()
 }
@@ -1131,14 +1152,15 @@ mod tests {
     const GEMINI: [&str; 3] = ["Gemini CLI", "~/.gemini/settings.json", "gemini --resume <id>"];
     const COPILOT: [&str; 3] = ["Copilot CLI", "~/.copilot/hooks/nerd.json", "copilot --resume <id>"];
     const CURSOR: [&str; 3] = ["Cursor", "~/.cursor/hooks.json", "no resume"];
+    const OPENCODE: [&str; 3] = ["OpenCode", "~/.config/opencode/plugins/nerd.js", "opencode --session <id>"];
 
     #[test]
     fn the_hook_dialog_lists_one_agent_a_row() {
         assert_eq!(
             hook_dialog(&[QWEN, CURSOR], 120),
             [
-                "nerd adds its hook to these agents, so it sees when they",
-                "work and when they wait for you.",
+                "nerd adds its hook to these agents, so it sees when they work",
+                "and when they wait for you.",
                 "",
                 "Agent      Settings file          Resumes with",
                 "Qwen Code  ~/.qwen/settings.json  qwen --resume <id>",
@@ -1156,6 +1178,17 @@ mod tests {
                 "Gemini CLI   ~/.gemini/settings.json     gemini --resume <id>",
                 "Copilot CLI  ~/.copilot/hooks/nerd.json  copilot --resume <id>",
             ]
+        );
+        assert_eq!(
+            hook_dialog(&[QWEN, OPENCODE], 120)[3..],
+            [
+                "Agent      Settings file                       Resumes with",
+                "Qwen Code  ~/.qwen/settings.json               qwen --resume",
+                "                                               <id>",
+                "OpenCode   ~/.config/opencode/plugins/nerd.js  opencode",
+                "                                               --session <id>",
+            ],
+            "a row too wide for the window wraps its last column under its own start"
         );
     }
 
@@ -1435,9 +1468,28 @@ mod tests {
             .labels(" [Enter] open a new Ghostty window ", " [Esc] stay here ")
             .other(" [d] never ask ");
         let rects = c.draw(&mut buf, screen, &theme());
-        for (i, (b, r)) in c.buttons.iter().zip(rects).enumerate() {
+        for (i, (b, r)) in c.buttons.iter().zip(&rects).enumerate() {
             assert_eq!(r.width as usize, b.label.chars().count(), "button {i} is cut: {:?}", b.label);
         }
+        let frame = c.rect(screen);
+        assert_eq!(frame.width, crate::chrome::WINDOW_W, "the window keeps its width");
+        assert!(rects[1].y == rects[0].y && rects[2].y == rects[0].y + 1, "the button that does not fit goes on a row of its own: {rects:?}");
+        assert!(rects.iter().all(|r| frame.contains((r.x, r.y).into()) && r.right() < frame.right()), "inside the frame: {rects:?}");
+        let at = |r: Rect| mouse(MouseEventKind::Down(MouseButton::Left), r.x, r.y);
+        assert_eq!(Confirm::new("inside tmux", "short").other(" [d] never ask ").mouse(at(rects[2]), screen, &rects), ConfirmOutcome::Other, "and answers a click there");
+    }
+
+    #[test]
+    fn a_prompt_wraps_its_note_and_cuts_a_long_title() {
+        let screen = Rect::new(0, 0, 100, 20);
+        let mut buf = Buffer::empty(screen);
+        let p = Prompt::new("Add from GitHub: https://github.com/<owner>/<repo>", "").note("A named pane can receive messages from other agents.");
+        p.draw(&mut buf, screen, &theme());
+        let r = p.rect(screen);
+        let row = |y: u16| (r.x..r.right()).map(|x| buf[(x, y)].symbol()).collect::<String>();
+        assert_eq!(r.width, crate::chrome::FIELD_W);
+        assert_eq!(row(r.y), "┌─ Add from GitHub: https://github.com/<owner… ┐");
+        assert_eq!((row(r.y + 2), row(r.y + 3)), ("│ A named pane can receive messages from other │".into(), "│ agents.                                      │".into()));
     }
 
     #[test]

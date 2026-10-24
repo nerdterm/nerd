@@ -203,7 +203,7 @@ impl PluginList {
             }
         }
         let offered = catalog.entries.into_iter().filter(|e| !list.iter().any(|i| i.name == e.name)).collect();
-        Self { list, offered, fetched: catalog.fetched, stars, changed, view: crate::panel::View::new(ROWS, false), job: None }
+        Self { list, offered, fetched: catalog.fetched, stars, changed, view: crate::panel::View::new(ROWS, false, crate::chrome::WIDE_W), job: None }
     }
 
     /// The window read afresh, with the same row chosen.
@@ -222,7 +222,7 @@ impl PluginList {
     }
 
     fn content(&self, screen: Rect, theme: &Theme, selected: Option<usize>) -> crate::panel::Content {
-        let w = crate::panel::inner(screen);
+        let w = self.view.inner(screen);
         let ground = Style::default().bg(theme.ground);
         let text = ground.fg(theme.text);
         let muted = ground.fg(theme.muted);
@@ -266,9 +266,7 @@ impl PluginList {
                 Some(at)
             })
             .collect();
-        // Rows may be wider than the wrapped text: the window grows to them, up to the screen.
-        let room = crate::chrome::limits(screen).0.saturating_sub(2 * crate::chrome::DIALOG_FRAME.horizontal) as usize;
-        let cells = |texts: &[String; 6], style: [Style; 6]| -> crate::panel::Spans { (0..6).map(|i| (xs[i], fit(&texts[i], widths[i].min(room.saturating_sub(xs[i]))), style[i])).collect() };
+        let cells = |texts: &[String; 6], style: [Style; 6]| -> crate::panel::Spans { (0..6).map(|i| (xs[i], fit(&texts[i], widths[i].min(w.saturating_sub(xs[i]))), style[i])).collect() };
         if !cols.is_empty() {
             head.push(cells(&titles.map(String::from), [muted; 6]));
         }
@@ -338,9 +336,15 @@ impl PluginList {
         // "turn on" is a cell shorter than "turn off": counted as the longer, the window stays put when it flips.
         let labels = |acts: Vec<(char, String, Act)>| -> Vec<String> { acts.into_iter().enumerate().map(|(i, (k, label, _))| if i == 0 { format!(" [Enter] {label} ") } else { format!(" [{k}] {label} ") }).collect() };
         // Counted with and without a fetch's buttons, so starting one does not resize the window.
-        let own = rows.iter().map(|r| crate::panel::bottom_w(&labels(self.own_actions(&r.id))) + usize::from(self.own_actions(&r.id).first().is_some_and(|a| a.2 == Act::On)));
-        let now = rows.iter().map(|r| crate::panel::bottom_w(&labels(self.actions(&r.id))));
-        let widest = all.iter().flatten().map(|l| crate::slots::cells(l)).chain(own).chain(now).max().unwrap_or(0);
+        let lines = |mut b: Vec<String>, on: bool| {
+            if on && let Some(first) = b.first_mut() {
+                first.push(' ');
+            }
+            crate::panel::button_lines(&b, w).len()
+        };
+        let own = rows.iter().map(|r| lines(labels(self.own_actions(&r.id)), self.own_actions(&r.id).first().is_some_and(|a| a.2 == Act::On)));
+        let now = rows.iter().map(|r| lines(labels(self.actions(&r.id)), false));
+        let button_lines = own.chain(now).max().unwrap_or(1);
         let body = selected
             .and_then(|i| {
                 let mine = job.is_some_and(|j| rows.get(i).is_some_and(|r| r.id == j.row()));
@@ -356,9 +360,9 @@ impl PluginList {
             .take(body_h)
             .map(|l| vec![(0, l, text)])
             .collect();
-        let full = (widest, rows.len());
+        let full = rows.len();
         let buttons = selected.and_then(|i| rows.get(i)).map(|r| labels(self.actions(&r.id))).unwrap_or_default();
-        crate::panel::Content { head, rows, body, body_h, full, buttons, ..Default::default() }
+        crate::panel::Content { head, rows, body, body_h, full, buttons, button_lines }
     }
 
     /// What the row with this id offers, first the one Enter does: a key, its words, and the act.

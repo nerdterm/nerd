@@ -106,10 +106,42 @@ pub fn draw<H: Clone>(buf: &mut Buffer, r: Rect, title: &str, theme: &Theme, lin
     d
 }
 
-/// A window sized to its lines and its bottom row.
-pub fn fit<H>(screen: Rect, lines: &[Line<H>], bottom: usize) -> Rect {
-    let w = lines.iter().map(width).chain([bottom]).max().unwrap_or(0);
-    crate::chrome::fit(screen, w as u16, lines.len() as u16)
+/// A wide window for `lines`, and the lines wrapped to its width.
+pub fn fit<H: Clone>(screen: Rect, lines: Vec<Line<H>>) -> (Rect, Vec<Line<H>>) {
+    let w = crate::chrome::fit(screen, crate::chrome::WIDE_W, 0).width.saturating_sub(2 * crate::chrome::DIALOG_FRAME.horizontal) as usize;
+    let lines = wrap(lines, w);
+    (crate::chrome::fit(screen, crate::chrome::WIDE_W, lines.len() as u16), lines)
+}
+
+/// `lines` in at most `width` cells. Text alone wraps between words under its own indent; a line of several parts,
+/// such as chips, breaks between them and goes on under its second part, each keeping its click.
+pub fn wrap<H: Clone>(lines: Vec<Line<H>>, width: usize) -> Vec<Line<H>> {
+    let mut out = Vec::new();
+    for line in lines {
+        if self::width(&line) <= width {
+            out.push(line);
+        } else if let [(text, style, hit)] = &line[..] {
+            let indent = text.len() - text.trim_start_matches(' ').len();
+            for part in crate::menu::wrap(&text[indent..], width.saturating_sub(indent).max(1)) {
+                out.push(vec![(format!("{}{part}", " ".repeat(indent)), *style, hit.clone())]);
+            }
+        } else {
+            let under = line.first().map_or(0, |s| cells(&s.0));
+            let mut x = 0;
+            let mut row: Line<H> = Vec::new();
+            for seg in line {
+                if !row.is_empty() && x + cells(&seg.0) > width && x > under {
+                    out.push(std::mem::take(&mut row));
+                    row.push((" ".repeat(under), Style::default(), None));
+                    x = under;
+                }
+                x += cells(&seg.0);
+                row.push(seg);
+            }
+            out.push(row);
+        }
+    }
+    out
 }
 
 pub const CLOSE: &str = " [Esc] close ";
@@ -454,7 +486,7 @@ impl Messages {
             return self.draw_message(buf, screen, theme, m);
         }
         self.drawn.replace(None);
-        let r = crate::chrome::fit(screen, u16::MAX, u16::MAX);
+        let r = crate::chrome::fit(screen, crate::chrome::WIDE_W, u16::MAX);
         let w = r.width.saturating_sub(2 * crate::chrome::DIALOG_FRAME.horizontal) as usize;
         let (lines, at) = self.lines(v, verdict, w, theme);
         if let Some(at) = at.filter(|_| !self.shown.replace(true)) {
@@ -469,7 +501,7 @@ impl Messages {
     fn draw_message(&self, buf: &mut Buffer, screen: Rect, theme: &Theme, m: &Message) -> Drawn<Click> {
         self.drawn.replace(Some(m.id.clone()));
         let g = Style::default().bg(theme.ground);
-        let r = crate::chrome::fit(screen, u16::MAX, u16::MAX);
+        let r = crate::chrome::fit(screen, crate::chrome::WIDE_W, u16::MAX);
         let w = r.width.saturating_sub(2 * crate::chrome::DIALOG_FRAME.horizontal) as usize;
         let room = r.height.saturating_sub(2 * crate::chrome::DIALOG_FRAME.vertical + 2) as usize;
         let verb = if m.state == State::Held(Hold::RouteRequest) { " asks to write to " } else { " → " };
@@ -1203,7 +1235,7 @@ fn waiting_row(m: &Message, keys: bool, theme: &Theme) -> Vec<Line<Click>> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::app::{MailColumn, RouteView, Traffic};
     use crate::mail::{Step, Via};
@@ -1266,7 +1298,7 @@ mod tests {
         MailView { on: true, mode: Mode::Open, broken: false, columns, routes, traffic, today: waiting.clone(), waiting }
     }
 
-    fn verdict(_: &str, _: &str) -> Verdict {
+    pub(crate) fn verdict(_: &str, _: &str) -> Verdict {
         Verdict { action: Action::Allow, why: "open mode".into(), route: None }
     }
 

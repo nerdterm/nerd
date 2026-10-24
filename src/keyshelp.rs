@@ -140,12 +140,21 @@ impl KeysHelp {
 
     /// Fits the whole list, not the filtered part, so it does not move while typing; a longer list scrolls.
     pub fn rect(&self, screen: Rect) -> Rect {
-        let all = rows(self.prefix);
-        let (keys, desc) = all.iter().fold((0, 0), |(k, d), r| (k.max(r.1.chars().count()), d.max(r.2.chars().count())));
-        let widest = (3 + keys + desc) as u16;
-        let strip = hint(crate::chrome::fit(screen, widest, 0).width.saturating_sub(4) as usize).len();
+        let w = crate::chrome::WINDOW_W;
+        let width = crate::chrome::fit(screen, w, 0).width.saturating_sub(4) as usize;
+        let room = self.desc_room(width);
+        let list: usize = Self::lines_for(self.prefix, "").iter().map(|l| if let Line::Bind(_, d) = l { crate::menu::wrap(d, room).len() } else { 1 }).sum();
         // the search field, the list, the key strip
-        crate::chrome::fit(screen, widest, (1 + Self::lines_for(self.prefix, "").len() + strip) as u16)
+        crate::chrome::fit(screen, w, (1 + list + hint(width).len()) as u16)
+    }
+
+    /// The widest keys, and the cells a description has after them on a line `width` wide.
+    fn keys_w(&self) -> usize {
+        rows(self.prefix).iter().map(|r| r.1.chars().count()).max().unwrap_or(0)
+    }
+
+    fn desc_room(&self, width: usize) -> usize {
+        width.saturating_sub(3 + self.keys_w())
     }
 
     /// A section heading is included only when something in it matched.
@@ -207,12 +216,17 @@ impl KeysHelp {
             return;
         }
 
-        let keys_w = rows(self.prefix).iter().map(|r| r.1.chars().count()).max().unwrap_or(0) as u16;
+        let dx = inner.x + 3 + self.keys_w() as u16;
+        let room = self.desc_room(width);
 
         for line in lines.iter().skip(offset).take(page) {
+            if y >= bottom {
+                break;
+            }
             match line {
                 Line::Head(h) => {
                     buf.set_stringn(inner.x, y, *h, width, Style::default().fg(theme.muted));
+                    y += 1;
                 }
                 Line::Bind(keys, desc) => {
                     buf.set_stringn(
@@ -222,19 +236,18 @@ impl KeysHelp {
                         width.saturating_sub(2),
                         Style::default().fg(theme.muted),
                     );
-                    let dx = inner.x + 3 + keys_w;
-                    if dx < inner.right() {
-                        buf.set_stringn(
-                            dx,
-                            y,
-                            *desc,
-                            (inner.right() - dx) as usize,
-                            Style::default().fg(theme.text),
-                        );
+                    // A long description wraps under itself, never under the keys.
+                    for part in crate::menu::wrap(desc, room) {
+                        if y >= bottom {
+                            break;
+                        }
+                        if dx < inner.right() {
+                            buf.set_stringn(dx, y, &part, room, Style::default().fg(theme.text));
+                        }
+                        y += 1;
                     }
                 }
             }
-            y += 1;
         }
     }
 
