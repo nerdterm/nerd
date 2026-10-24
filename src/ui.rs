@@ -579,22 +579,11 @@ fn tab_item(app: &App, index: usize, t: &crate::app::Tab, active: bool) -> TabIt
     TabItem { index, name: t.label(index), active, badges }
 }
 
-const SEARCH_BUTTON: &str = "Search";
-
 /// The top row's segments in `[from, end)`: the plugins', the battery, then the clock; returns what a click reaches.
 fn draw_segments(buf: &mut Buffer, app: &App, from: u16, end: u16, y: u16) -> Vec<(Rect, crate::mouse::SegmentHit)> {
     use crate::mouse::SegmentHit;
     let theme = &app.theme;
     let mut hits = Vec::new();
-    // the Search button holds the right end; the segments below give way to it first
-    let end = if end >= from + SEARCH_BUTTON.len() as u16 {
-        let x = end - SEARCH_BUTTON.len() as u16;
-        buf.set_string(x, y, SEARCH_BUTTON, Style::default().fg(theme.accent));
-        hits.push((Rect::new(x, y, SEARCH_BUTTON.len() as u16, 1), SegmentHit::Search));
-        x.saturating_sub(3)
-    } else {
-        end
-    };
     // the clock keeps its place, then the battery before it; the plugins' segments drop first
     // the date goes first when the row is short: the time alone stays, and its click with it
     let fits = |s: &str| end >= from + crate::slots::cells(s) as u16;

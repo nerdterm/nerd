@@ -764,10 +764,6 @@ impl App {
                 self.save_cfg();
                 self.dirty = true;
             }
-            Action::Segment(crate::mouse::SegmentHit::Search) => {
-                self.overlay = self.find_overlay();
-                self.dirty = true;
-            }
             Action::Segment(crate::mouse::SegmentHit::Clock) => {
                 use crate::config::Clock;
                 self.cfg.clock = if self.cfg.clock == Clock::Time { Clock::Date } else { Clock::Time };

@@ -50,7 +50,7 @@ Every window except a context menu is drawn through `chrome::dialog`, and `chrom
 
 ## Search
 
-**Search…** in the main menu, the `Search` button on the top row and `⌥`+`O` open one window over what nerd already
+**Search…** in the main menu and `⌥`+`O` open one window over what nerd already
 has. The field has a frame of its own at the top. Type to filter; every word must match. Nothing is listed before a
 letter is typed: the sidebar already lists the panes. Each result is one line, its name on the left and one value on
 the right (a key, a setting's value, a folder, a pane's place); a name, place or value is cut at 512 bytes. Search
