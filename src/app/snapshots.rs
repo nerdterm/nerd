@@ -176,6 +176,50 @@ fn golden_search_window() {
     });
 }
 
+/// The menu button, cell by cell, in the open sidebar and in the rail, quiet and with its badge: any change to
+/// where it stands or how the badge meets the border lines shows here.
+#[test]
+fn golden_the_menu_button_against_the_border_lines() {
+    let mut out = String::new();
+    let theme = crate::render::Theme::dark();
+    for (tag, sidebar, marked) in [("open, quiet", true, false), ("open, badge", true, true), ("rail, quiet", false, false), ("rail, badge", false, true)] {
+        let mut app = one_space();
+        app.sidebar = sidebar;
+        app.update_available = marked;
+        if crate::session::tests::INSTANCE.with_borrow(Option::is_none) {
+            crate::session::tests::INSTANCE.set(Some(String::new()));
+        }
+        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 12)).unwrap();
+        term.draw(|f| {
+            crate::ui::frame(f, &mut app);
+        })
+        .unwrap();
+        let buf = term.backend().buffer().clone();
+        // the border the badge meets: the open sidebar's right edge at 33, the rail's edges at 0 and 4
+        let (strokes, edges): (u16, &[u16]) = if sidebar { (32, &[33]) } else { (2, &[0, 4]) };
+        for &x in edges {
+            assert!(["\u{2510}", "\u{250c}"].contains(&buf[(x, 2)].symbol()), "{tag}: a border corner at {x}");
+        }
+        assert_eq!(buf[(strokes, 0)].symbol(), "\u{2261}", "{tag}: the strokes stay in cell {strokes}");
+        if marked {
+            assert_eq!((buf[(strokes, 0)].fg, buf[(strokes, 0)].bg), (theme.ground, theme.warn), "{tag}: dark strokes on the badge");
+            assert_eq!((buf[(strokes - 1, 0)].symbol(), buf[(strokes - 1, 0)].fg), ("\u{2590}", theme.warn), "{tag}: the right half of the cell before");
+            assert_eq!((buf[(strokes + 1, 0)].symbol(), buf[(strokes + 1, 0)].fg), ("\u{258c}", theme.warn), "{tag}: the left half of the cell after");
+            if sidebar {
+                assert_eq!(strokes + 1, 33, "{tag}: the badge's right half sits in the border's cell, ending on its line");
+            } else {
+                assert_eq!((strokes - 1, strokes + 1), (1, 3), "{tag}: centred between the rail's borders");
+            }
+        } else {
+            assert_eq!(buf[(strokes, 0)].fg, theme.muted, "{tag}: quiet strokes");
+            assert!([strokes - 1, strokes + 1].iter().all(|&x| buf[(x, 0)].symbol() == " "), "{tag}: nothing beside them");
+        }
+        out += &format!("== {tag}\n{}", dump(&buf, Rect::new(0, 0, 40, 3)));
+    }
+    crate::session::tests::INSTANCE.set(None);
+    crate::hook::tests::golden("ui/menu-button.txt", &out);
+}
+
 /// An agent pane with no process behind it, in `state`, with `subs` subagents running.
 pub(crate) fn agent_pane(app: &App, id: PaneId, state: AgentState, subs: usize) -> Pane {
     use std::os::fd::IntoRawFd;
