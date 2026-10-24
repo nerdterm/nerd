@@ -242,11 +242,6 @@ pub fn draw(f: &mut Frame, app: &App, view: &mut ViewState, geometry: &[crate::a
         let menu = Rect::new(side.right().saturating_sub(2), top.y, 1, 1);
         let marked = menu_marked(app);
         let button = draw_menu(f.buffer_mut(), menu.x, menu.y, marked, &theme);
-        // The server this session shows, after the wordmark and a cell short of the menu.
-        let at = side.x + TEXT_INSET + if logo { LOGO_COLS } else { 4 } + 1;
-        if let Some(l) = server_label(button.x.saturating_sub(at + 1) as usize) {
-            f.buffer_mut().set_string(at, top.y, l, Style::default().fg(theme.muted));
-        }
         let (waiting, mail, spaces) = sidebar_data(app);
         let hits = crate::sidebar::draw(f.buffer_mut(), side, &waiting, &mail, &spaces, app.focus == crate::app::Focus::Sidebar, &theme);
         view.hits.sidebar_rows = hits.panes;
