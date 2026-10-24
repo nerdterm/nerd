@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.17.1](https://github.com/nerdterm/nerd/compare/v0.17.0...v0.17.1) (2026-10-24)
+
+
+### Fixed
+
+* each window type has a fixed width and scrolls when too tall ([#130](https://github.com/nerdterm/nerd/issues/130)) ([fa0d437](https://github.com/nerdterm/nerd/commit/fa0d4376f922addb21ef84217a6f358caf910c35))
+* no server name beside the logo ([#127](https://github.com/nerdterm/nerd/issues/127)) ([4b6e769](https://github.com/nerdterm/nerd/commit/4b6e769261113d028ae5654b797a385af51a6b42))
+* the menu button's badge ends on the border lines and its strokes never move ([#126](https://github.com/nerdterm/nerd/issues/126)) ([8600ac0](https://github.com/nerdterm/nerd/commit/8600ac02251ccef144a08e0f50802391d7df0af8))
+* the terminal gets its cursor back when nerd's screen goes down ([#121](https://github.com/nerdterm/nerd/issues/121)) ([566a809](https://github.com/nerdterm/nerd/commit/566a809342ca0b03e0becdc5c5a7214d8be7d707))
+* the top row has no Search button ([#124](https://github.com/nerdterm/nerd/issues/124)) ([5cedf38](https://github.com/nerdterm/nerd/commit/5cedf38c5c00a690a16cfe0d6114e476a1738f51))
+
 ## [0.17.0](https://github.com/nerdterm/nerd/compare/v0.16.0...v0.17.0) (2026-10-23)
 
 
