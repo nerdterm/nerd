@@ -708,7 +708,7 @@ fn golden_the_current_server_on_the_top_row() {
             }),
             ("sidebar, a long name cut", 120, "a-server-name-of-thirty-two-ch", |_| {}),
             ("rail, a long name cut", 120, "a-server-name-of-thirty-two-ch", |a| a.sidebar = false),
-            ("number only", 120, "", |_| {}),
+            ("number only", 120, "", |a| a.sidebar = false),
             ("narrow, the machine kept", 40, "work", |a| {
                 a.sidebar = false;
                 a.caps.machine = Some("a-machine-with-a-long-name".into());

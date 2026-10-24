@@ -74,7 +74,7 @@ nerd
 - Click **≡** at the top of the sidebar for the main menu: the file tree, new spaces, settings, plugins and the rest.
 - Right-click a pane and choose **Isolation…** to limit what its program can reach.
 - Close the window whenever you like. `nerd` brings it back; `nerd --new` starts another server with a desktop of its own.
-- **Servers…** in the main menu lists every server on this Mac, the one you are on first, and opens, renames, updates, stops and removes them; the sidebar's top row names the server you are on. Machines you add to `remotes` in config.json are listed there too, over ssh, when you open them.
+- **Servers…** in the main menu lists every server on this Mac, the one you are on first, and opens, renames, updates, stops and removes them. Machines you add to `remotes` in config.json are listed there too, over ssh, when you open them.
 
 ### Supported agents
 

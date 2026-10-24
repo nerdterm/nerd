@@ -106,8 +106,8 @@ from (turning a plugin on, removing, installing, updating).
   comes back to the window once answered.
 - A session from another Mac sees only the server's own Mac, with no machines, no New server… and no Open. A session
   attached from inside a pane only reads: every action but Open on a machine's server is refused with a notice.
-- The server this session shows is named on the top row: after the wordmark over the sidebar, or, with the sidebar
-  collapsed, at the right beside the machine badge, cut short when narrow.
+- With the sidebar collapsed, the top row names the server this session shows at the right, beside the machine
+  badge, cut short when narrow.
 
 ## Messages, isolation and accounts
 
