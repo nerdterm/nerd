@@ -1083,6 +1083,11 @@ impl Tty {
         p.process(&self.out.lock().unwrap());
         p.screen().contents()
     }
+    fn cursor_hidden(&self) -> bool {
+        let mut p = vt100::Parser::new(TTY.1, TTY.0, 0);
+        p.process(&self.out.lock().unwrap());
+        p.screen().hide_cursor()
+    }
     fn until(&self, what: &str) -> String {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
@@ -1222,9 +1227,16 @@ fn t_at_the_question_takes_the_server_over() {
 #[test]
 fn esc_at_the_question_starts_nothing() {
     let (env, _daemon, mut first, mut tty) = asked("ask-esc");
+    assert!(tty.cursor_hidden(), "the question hides the cursor");
     tty.press(b"\x1b");
     let status = tty.exit();
     assert!(status.success(), "{status}");
+    // The pty reader may still be draining the last bytes.
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while tty.cursor_hidden() {
+        assert!(Instant::now() < deadline, "the terminal has its cursor back");
+        std::thread::sleep(Duration::from_millis(50));
+    }
     assert!(!instance(&env, "2").exists(), "no server was made");
     assert_still_shown(&env, &mut first);
     let _ = std::fs::remove_dir_all(&env.dir);

@@ -371,7 +371,7 @@ fn tui_down(mouse_on: bool) {
     if mouse_on {
         let _ = execute!(out, DisableMouseCapture);
     }
-    let _ = execute!(out, LeaveAlternateScreen);
+    let _ = execute!(out, LeaveAlternateScreen, crossterm::cursor::Show);
     let _ = out.write_all(&crate::pointer::osc(crate::pointer::DEFAULT));
     // the terminal gets its own background back
     let _ = out.write_all(b"\x1b]111\x07");
@@ -1295,7 +1295,6 @@ fn choose(lines: impl Fn() -> Vec<String>, buttons: &[(&str, crossterm::event::K
     let tui = Tui::up(true)?;
     let mut out = std::io::stdout();
     let chosen = choose_wait(&mut out, lines, buttons, cfg, appearance);
-    let _ = execute!(out, crossterm::cursor::Show);
     drop(tui);
     // Motion reports still queued would otherwise reach ssh's password prompt or the session.
     let _ = nix::sys::termios::tcflush(std::io::stdin(), nix::sys::termios::FlushArg::TCIFLUSH);
