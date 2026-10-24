@@ -736,7 +736,7 @@
                 │ Opened 22:10 on Mar 13 from MacBook-Air.local over ssh           │                
                 │ (sshd-session). Its terminal closed or the link dropped at 08:05 │                
                 │ on Mar 14.                                                       │                
-                │                                                                  │                
+                │ lines 6–13 of 16                                                 │                
                 │                           [Esc] close                            │                
                 └──────────────────────────────────────────────────────────────────┘                
                                                                                                     
@@ -902,7 +902,9 @@
 26:85-99 Reset Reset NONE
 27:0-14 Reset Reset NONE
 27:15-15 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
-27:16-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+27:16-17 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+27:18-33 Rgb(116, 121, 127) Rgb(19, 20, 23) NONE
+27:34-83 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
 27:84-84 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
 27:85-99 Reset Reset NONE
 28:0-14 Reset Reset NONE

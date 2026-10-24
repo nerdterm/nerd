@@ -2232,6 +2232,41 @@ mod tests {
     }
 
     #[test]
+    fn the_main_menu_taller_than_the_screen_scrolls_to_its_last_item() {
+        use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
+        let app = with_one_space();
+        let Overlay::Menu(mut menu, _) = app.global_menu((33, 1)) else { panic!("a menu") };
+        let (screen, theme) = (Rect::new(0, 0, 160, 24), crate::render::Theme::dark());
+        let shown = |menu: &crate::menu::Menu<Action>| {
+            let mut buf = ratatui::buffer::Buffer::empty(screen);
+            menu.draw(&mut buf, screen, &theme);
+            crate::app::snapshots::dump(&buf, screen).lines().take(24).collect::<Vec<_>>().join("\n")
+        };
+        let last = "Stop this server…";
+        let top = shown(&menu);
+        assert!(!top.contains(last) && top.contains("lines 1–") && top.contains(&format!(" of {} ", menu.items.len())), "{top}");
+        let at = menu.rect(screen);
+        let wheel = |menu: &mut crate::menu::Menu<Action>, kind| _ = menu.mouse(MouseEvent { kind, column: at.x + 3, row: at.y + 3, modifiers: crossterm::event::KeyModifiers::NONE }, screen);
+        for _ in 0..10 {
+            wheel(&mut menu, MouseEventKind::ScrollDown);
+        }
+        let end = shown(&menu);
+        assert!(end.contains(last) && end.contains(&format!("of {} ", menu.items.len())) && end.contains(&format!("–{} of", menu.items.len())), "the wheel reaches the end: {end}");
+        let y = end.lines().position(|l| l.contains(last)).unwrap() as u16;
+        let click = MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), column: at.x + 3, row: y, modifiers: crossterm::event::KeyModifiers::NONE };
+        assert_eq!(menu.mouse(click, screen), crate::menu::Outcome::Chosen(Action::StopServer), "and a click on it chooses it");
+        menu.key(KeyEvent::from(KeyCode::Home));
+        assert!(!shown(&menu).contains(last) && shown(&menu).contains("lines 1–"), "Home");
+        menu.key(KeyEvent::from(KeyCode::End));
+        assert!(shown(&menu).contains(last), "End");
+        assert_eq!(menu.key(KeyEvent::from(KeyCode::Enter)), crate::menu::Outcome::Chosen(Action::StopServer), "End selects the last item");
+        let Overlay::Menu(fits, _) = app.global_menu((33, 1)) else { panic!("a menu") };
+        let mut buf = ratatui::buffer::Buffer::empty(Rect::new(0, 0, 160, 60));
+        fits.draw(&mut buf, Rect::new(0, 0, 160, 60), &theme);
+        assert!(!crate::app::snapshots::dump(&buf, buf.area).contains("lines "), "a menu that fits says nothing");
+    }
+
+    #[test]
     fn search_lists_every_main_menu_item_once_with_its_key_and_reads_plugins_and_help_only_when_asked() {
         crate::session::tests::with_temp_state_dir("search-commands", || {
             let mut app = with_one_space();

@@ -5,6 +5,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 
 use crate::app::IsolationTarget;
+use crate::chrome::Scroll;
 use crate::messages::{Drawn, Line, chip};
 use crate::agents::AgentNetwork;
 use crate::policy::{Account, Chosen, Files, Isolation, Network, entries};
@@ -67,17 +68,16 @@ pub struct IsolationWin {
     pub notes: Vec<String>,
     /// The pane's folder (a tab's or space's: the space's) is the home folder itself.
     pub home: bool,
+    pub scroll: Scroll,
 }
 
-/// Choose providers for one agent: what is ticked (None: all), the first line shown, and whether done found nothing ticked.
+/// Choose providers for one agent: what is ticked (None: all), the lines shown, and whether done found nothing ticked.
 #[derive(Clone, Debug, PartialEq)]
 pub struct View {
     pub agent: String,
     pub draft: Option<Vec<String>>,
-    pub scroll: usize,
+    pub scroll: Scroll,
     pub empty: bool,
-    /// The last line that can be first, from the last draw: keys stop where the wheel does.
-    pub last: std::cell::Cell<usize>,
 }
 
 const CANCEL: &str = " [Esc] cancel ";
@@ -211,12 +211,10 @@ impl IsolationWin {
             let r = crate::chrome::fit(screen, crate::chrome::WIDE_W, u16::MAX);
             let lines = self.view_lines(v, r.width.saturating_sub(2 * crate::chrome::DIALOG_FRAME.horizontal) as usize, theme);
             let r = crate::chrome::fit(screen, r.width, lines.len() as u16);
-            let d = crate::messages::draw(buf, r, "Choose providers", theme, &lines, v.scroll, &[(DONE.to_string(), Click::Done)], BACK);
-            v.last.set(d.rows.saturating_sub(d.room));
-            return d;
+            return crate::messages::draw(buf, r, "Choose providers", theme, &lines, &v.scroll, &[(DONE.to_string(), Click::Done)], BACK);
         }
         let (r, lines) = crate::messages::fit(screen, self.lines(theme));
-        crate::messages::draw(buf, r, self.title(), theme, &lines, 0, &self.buttons(), CANCEL)
+        crate::messages::draw(buf, r, self.title(), theme, &lines, &self.scroll, &self.buttons(), CANCEL)
     }
 
     fn click(&mut self, c: Click) -> Out {
@@ -236,7 +234,7 @@ impl IsolationWin {
             }
             Click::Choose(agent) => {
                 let draft = self.chosen.iter().find(|(a, _)| *a == agent).and_then(|(_, gs)| gs.clone());
-                self.view = Some(View { agent, draft, scroll: 0, empty: false, last: Default::default() });
+                self.view = Some(View { agent, draft, scroll: Scroll::default(), empty: false });
             }
             Click::All | Click::Group(_) | Click::Done => self.view_click(c),
             Click::Save(restart) => return Out::Save(self.pick.clone(), restart),
@@ -278,9 +276,7 @@ impl IsolationWin {
             match crate::keys::normalize(k).code {
                 Enter => self.view_click(Click::Done),
                 Esc => self.view = None,
-                Up => v.scroll = v.scroll.saturating_sub(1),
-                Down => v.scroll = (v.scroll + 1).min(v.last.get()),
-                _ => {}
+                code => _ = v.scroll.key(code),
             }
             return Out::None;
         }
@@ -288,7 +284,10 @@ impl IsolationWin {
             Enter => self.click(Click::Save(false)),
             Char('r') if self.inherit.is_none() => self.click(Click::Save(true)),
             Esc => Out::Close,
-            _ => Out::None,
+            code => {
+                self.scroll.key(code);
+                Out::None
+            }
         }
     }
 
@@ -296,12 +295,14 @@ impl IsolationWin {
         use crossterm::event::MouseEventKind::{ScrollDown, ScrollUp};
         if let Some(v) = self.view.as_mut() {
             match (ev.kind, pressed(ev, d)) {
-                (ScrollUp, _) => v.scroll = v.scroll.saturating_sub(3),
-                (ScrollDown, _) => v.scroll = (v.scroll + 3).min(v.last.get()),
+                (ScrollUp | ScrollDown, _) => _ = v.scroll.wheel(ev.kind),
                 (_, Err(_)) => self.view = None,
                 (_, Ok(Some(c))) => _ = self.click(c),
                 (_, Ok(None)) => {}
             }
+            return Out::None;
+        }
+        if self.scroll.wheel(ev.kind) {
             return Out::None;
         }
         match pressed(ev, d) {
@@ -343,11 +344,12 @@ pub struct Accounts {
     /// The account the commands are written for.
     pub name: String,
     owner: String,
+    scroll: Scroll,
 }
 
 impl Default for Accounts {
     fn default() -> Self {
-        Accounts { name: "agent".into(), owner: std::env::var("USER").unwrap_or_else(|_| "you".into()) }
+        Accounts { name: "agent".into(), owner: std::env::var("USER").unwrap_or_else(|_| "you".into()), scroll: Scroll::default() }
     }
 }
 
@@ -431,7 +433,7 @@ impl Accounts {
 
     pub fn draw(&self, buf: &mut Buffer, screen: Rect, theme: &Theme, accounts: &[Account]) -> Drawn<Click> {
         let (r, lines) = crate::messages::fit(screen, self.lines(accounts, theme));
-        crate::messages::draw(buf, r, "Accounts", theme, &lines, 0, &Self::buttons(), crate::messages::CLOSE)
+        crate::messages::draw(buf, r, "Accounts", theme, &lines, &self.scroll, &Self::buttons(), crate::messages::CLOSE)
     }
 
     fn click(&mut self, c: Click) -> Out {
@@ -452,11 +454,17 @@ impl Accounts {
             Char('c') => self.click(Click::Copy),
             Char('x') if accounts.iter().any(|a| a.name == self.name) => Out::Remove(self.name.clone()),
             Esc => Out::Close,
-            _ => Out::None,
+            code => {
+                self.scroll.key(code);
+                Out::None
+            }
         }
     }
 
     pub fn mouse(&mut self, ev: crossterm::event::MouseEvent, d: &Drawn<Click>) -> Out {
+        if self.scroll.wheel(ev.kind) {
+            return Out::None;
+        }
         match pressed(ev, d) {
             Err(out) => out,
             Ok(Some(c)) => self.click(c),
@@ -484,6 +492,7 @@ pub(crate) mod tests {
             view: None,
             notes: vec!["Codex: run it with --sandbox danger-full-access".into()],
             home: false,
+            scroll: Scroll::default(),
         }
     }
 
@@ -577,6 +586,22 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn choose_providers_scrolls_as_every_window() {
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let many: Vec<(String, Vec<String>)> = (0..60).map(|i| (format!("p{i:02}"), s(&[&format!("h{i}.dev")]))).collect();
+        let hosts = many.iter().flat_map(|(_, h)| h.clone()).collect();
+        let net = AgentNetwork { net: crate::agents::Network::Internet { hosts, ports: vec![443] }, providers: many };
+        let mut w = IsolationWin { groups: vec![("fake".into(), net)], ..grouped() };
+        w.click(Click::Provider("fake".into()));
+        w.click(Click::Choose("fake".into()));
+        let (screen, theme, w) = (Rect::new(0, 0, 160, 24), Theme::dark(), std::cell::RefCell::new(w));
+        crate::chrome::tests::scrolls("Choose providers", screen, false, &|b| _ = w.borrow().draw(b, screen, &theme), &|k| _ = w.borrow_mut().key(KeyEvent::new(k, KeyModifiers::NONE)), &|kind| {
+            let d = w.borrow().draw(&mut Buffer::empty(screen), screen, &theme);
+            w.borrow_mut().mouse(MouseEvent { kind, column: 80, row: 12, modifiers: KeyModifiers::NONE }, &d);
+        });
+    }
+
+    #[test]
     fn keys_scroll_the_view_no_further_than_the_wheel() {
         let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
         let many: Vec<(String, Vec<String>)> = (0..60).map(|i| (format!("p{i:02}"), s(&[&format!("h{i}.dev")]))).collect();
@@ -586,15 +611,16 @@ pub(crate) mod tests {
         w.click(Click::Provider("fake".into()));
         w.click(Click::Choose("fake".into()));
         shown(&w);
-        let last = w.view.as_ref().unwrap().last.get();
-        assert!(last > 0, "60 providers do not fit 40 rows");
         let key = |w: &mut IsolationWin, c| _ = w.key(KeyEvent::new(c, KeyModifiers::NONE));
+        key(&mut w, KeyCode::End);
+        let last = w.view.as_ref().unwrap().scroll.get();
+        assert!(last > 0, "60 providers do not fit 40 rows");
         for _ in 0..200 {
             key(&mut w, KeyCode::Down);
         }
-        assert_eq!(w.view.as_ref().unwrap().scroll, last);
+        assert_eq!(w.view.as_ref().unwrap().scroll.get(), last);
         key(&mut w, KeyCode::Up);
-        assert_eq!(w.view.as_ref().unwrap().scroll, last - 1, "one Up moves the view at once");
+        assert_eq!(w.view.as_ref().unwrap().scroll.get(), last - 1, "one Up moves the view at once");
     }
 
     #[test]
@@ -710,7 +736,7 @@ pub(crate) mod tests {
 
     #[test]
     fn the_accounts_window_writes_the_commands_for_the_name() {
-        let w = Accounts { name: "scout".into(), owner: "ann".into() };
+        let w = Accounts { name: "scout".into(), owner: "ann".into(), scroll: Scroll::default() };
         let c = w.commands();
         assert_eq!(c[0], "sudo sysadminctl -addUser scout -fullName \"scout agent\" -shell /bin/zsh -home /Users/scout -password - interactive");
         assert!(!c.iter().any(|l| l.contains("sudoers") || l.contains("NOPASSWD")), "the commands to copy carry no sudoers line: {c:?}");
@@ -761,7 +787,7 @@ pub(crate) mod tests {
 
     #[test]
     fn accounts_wraps_a_command_under_its_indent() {
-        let w = Accounts { name: "scout".into(), owner: "ann".into() };
+        let w = Accounts { name: "scout".into(), owner: "ann".into(), scroll: Scroll::default() };
         let (d, rows) = inside(|b, s| w.draw(b, s, &Theme::dark(), &[]));
         assert_eq!(d.frame.width, crate::chrome::WIDE_W);
         let at = rows.iter().position(|r| r.contains("sudo sysadminctl -addUser scout")).unwrap_or_else(|| panic!("{rows:#?}"));

@@ -61,6 +61,8 @@ pub struct Menu<A> {
     pub selected: usize,
     /// Recomputed from this every frame: the screen may have resized while open.
     anchor: (u16, u16),
+    /// Taller than the screen, the items scroll as a window's do.
+    scroll: crate::chrome::Scroll,
 }
 
 impl<A: Copy> Menu<A> {
@@ -70,6 +72,7 @@ impl<A: Copy> Menu<A> {
             items,
             selected,
             anchor,
+            scroll: Default::default(),
         }
     }
 
@@ -100,8 +103,10 @@ impl<A: Copy> Menu<A> {
         // rows run border to border so the selected one's highlight does too; the padding is in the label
         let pad = crate::chrome::DIALOG_FRAME.horizontal;
         let w = r.width.saturating_sub(2) as usize;
-        let rows = r.height.saturating_sub(2) as usize;
-        for (i, item) in self.items.iter().enumerate().take(rows) {
+        let rows = self.shown(r);
+        let from = self.scroll.follow(self.selected, rows, self.items.len());
+        self.scroll.draw(buf, r, r.y + 1 + rows as u16, theme);
+        for (i, item) in self.items.iter().enumerate().skip(from).take(rows) {
             let selected = i == self.selected && item.enabled;
             let style = if item.label.is_empty() && !item.enabled {
                 Style::default().fg(theme.border).bg(theme.ground)
@@ -118,7 +123,7 @@ impl<A: Copy> Menu<A> {
             } else {
                 std::iter::repeat_n(' ', (pad - 1) as usize).chain(item.label.chars()).chain(std::iter::repeat(' ')).take(w).collect()
             };
-            let y = r.y + 1 + i as u16;
+            let y = r.y + 1 + (i - from) as u16;
             buf.set_stringn(r.x + 1, y, &line, w, style);
             if item.mark {
                 let x = r.x + pad + item.label.chars().count() as u16 + 1;
@@ -143,6 +148,12 @@ impl<A: Copy> Menu<A> {
             }
             Down => {
                 self.step(1);
+                Outcome::None
+            }
+            code @ (PageUp | PageDown | Home | End) => {
+                if let Some(i) = self.scroll.pick(code, self.selected, self.items.len()) {
+                    self.land(i, matches!(code, PageDown | Home));
+                }
                 Outcome::None
             }
             Enter => self.choose(self.selected),
@@ -178,6 +189,15 @@ impl<A: Copy> Menu<A> {
                 }
                 at.map_or(Outcome::None, |i| self.choose(i))
             }
+            // Taller than the screen, three lines a notch and the selection along; else the selection moves.
+            ScrollUp | ScrollDown if self.scroll.hides() => {
+                self.scroll.wheel(ev.kind);
+                let to = self.scroll.within(self.selected);
+                if to != self.selected {
+                    self.land(to, to > self.selected);
+                }
+                Outcome::None
+            }
             ScrollUp => {
                 self.step(-1);
                 Outcome::None
@@ -187,6 +207,21 @@ impl<A: Copy> Menu<A> {
                 Outcome::None
             }
             _ => Outcome::None,
+        }
+    }
+
+    /// The items that fit in `r`: one row less for the position while any is hidden.
+    fn shown(&self, r: Rect) -> usize {
+        let rows = r.height.saturating_sub(2) as usize;
+        if self.items.len() > rows { rows.saturating_sub(1) } else { rows }
+    }
+
+    /// Selects the item at `i`, or the nearest one that can be chosen: first onward when `down`, else back.
+    fn land(&mut self, i: usize, down: bool) {
+        let enabled = |j: &usize| self.items[*j].enabled;
+        let near = if down { (i..self.items.len()).find(enabled).or_else(|| (0..i).rev().find(enabled)) } else { (0..=i).rev().find(enabled).or_else(|| (i..self.items.len()).find(enabled)) };
+        if let Some(j) = near {
+            self.selected = j;
         }
     }
 
@@ -215,6 +250,8 @@ impl<A: Copy> Menu<A> {
         let inside = col > r.x && col + 1 < r.x + r.width && row > r.y && row + 1 < r.y + r.height;
         inside
             .then(|| (row - r.y - 1) as usize)
+            .filter(|&i| i < self.shown(r))
+            .map(|i| self.scroll.get() + i)
             .filter(|&i| i < self.items.len())
     }
 
@@ -495,6 +532,7 @@ pub struct Confirm {
     click_yes: bool,
     /// When it opened: a click already on its way when it popped up must not land on yes.
     since: std::time::Instant,
+    scroll: crate::chrome::Scroll,
 }
 
 /// How long a click-only question ignores clicks on yes after it opens.
@@ -517,6 +555,7 @@ impl Confirm {
             other_key: None,
             click_yes: false,
             since: std::time::Instant::now(),
+            scroll: Default::default(),
         }
     }
 
@@ -631,13 +670,15 @@ impl Confirm {
         }
         let lines = self.body_lines(inner_w);
         let header = wrap(&self.body, inner_w).len() + 1;
-        for (i, line) in lines.iter().enumerate().take(body_rows) {
+        let from = self.scroll.place(body_rows, lines.len());
+        for (i, line) in lines.iter().enumerate().skip(from).take(body_rows) {
             let style = Style::default().fg(theme.text).bg(theme.ground);
-            buf.set_stringn(content.x, y + i as u16, line, inner_w, if i == header && self.header && !self.table.is_empty() { style.add_modifier(Modifier::BOLD) } else { style });
+            buf.set_stringn(content.x, y + (i - from) as u16, line, inner_w, if i == header && self.header && !self.table.is_empty() { style.add_modifier(Modifier::BOLD) } else { style });
         }
 
         // A row of buttons wider than the window goes on below; each row is centred.
         let first = (r.y + r.height).saturating_sub(1 + button_rows.len() as u16);
+        self.scroll.draw(buf, r, first.saturating_sub(1), theme);
         for (btn_row, row) in (first..).zip(&button_rows) {
             let total = row.iter().map(|&i| self.buttons[i].label.chars().count() as u16 + 1).sum::<u16>().saturating_sub(1);
             let mut x = content.x + (inner_w as u16).saturating_sub(total) / 2;
@@ -721,13 +762,17 @@ impl Confirm {
                 self.selected = (self.selected + 1) % self.buttons.len();
                 ConfirmOutcome::None
             }
-            _ => ConfirmOutcome::None,
+            code => {
+                self.scroll.key(code);
+                ConfirmOutcome::None
+            }
         }
     }
 
     /// `buttons`: where the last frame's `draw` put them.
     pub fn mouse(&mut self, ev: crossterm::event::MouseEvent, screen: Rect, buttons: &[Rect]) -> ConfirmOutcome {
         use crossterm::event::MouseEventKind::*;
+        self.scroll.wheel(ev.kind);
         if !matches!(ev.kind, Down(_)) {
             return ConfirmOutcome::None;
         }
@@ -790,7 +835,7 @@ pub struct Picker {
     query: String,
     /// Index into the filtered list, not into `items` - its length changes on every keystroke.
     selected: usize,
-    scroll: usize,
+    scroll: crate::chrome::Scroll,
 }
 
 impl Picker {
@@ -800,7 +845,7 @@ impl Picker {
             items,
             query: String::new(),
             selected: 0,
-            scroll: 0,
+            scroll: Default::default(),
         }
     }
 
@@ -830,7 +875,7 @@ impl Picker {
         crate::chrome::fit(screen, crate::chrome::WINDOW_W, search + self.items.len().clamp(1, PICKER_ROWS) as u16)
     }
 
-    /// Draws the picker; returns the visible rows' rects, in `scroll..` order.
+    /// Draws the picker; returns the visible rows' rects, in order from the first shown.
     pub fn draw(&self, buf: &mut Buffer, screen: Rect, theme: &Theme) -> Vec<Rect> {
         let r = self.rect(screen).intersection(buf.area);
         let mut rows = Vec::new();
@@ -860,12 +905,14 @@ impl Picker {
         }
 
         let rows_shown = r.height.saturating_sub(4 + search) as usize;
+        let from = self.scroll.follow(self.selected, rows_shown, filtered.len());
+        self.scroll.draw(buf, r, r.y + 1 + search + rows_shown as u16, theme);
         for i in 0..rows_shown {
-            let Some(&idx) = filtered.get(self.scroll + i) else {
+            let Some(&idx) = filtered.get(from + i) else {
                 break;
             };
             let item = &self.items[idx];
-            let is_selected = self.scroll + i == self.selected;
+            let is_selected = from + i == self.selected;
             let row_y = r.y + 1 + search + i as u16;
             let style = if is_selected {
                 theme.cursor()
@@ -914,6 +961,9 @@ impl Picker {
             Enter => return self.choose(),
             Up => self.step(-1),
             Down => self.step(1),
+            code @ (PageUp | PageDown | Home | End) => {
+                self.selected = self.scroll.pick(code, self.selected, self.filtered_indices().len()).unwrap_or(0);
+            }
             Char('n') if k.modifiers.contains(KeyModifiers::CONTROL) => self.step(1),
             Char('p') if k.modifiers.contains(KeyModifiers::CONTROL) => self.step(-1),
             Backspace => {
@@ -937,7 +987,7 @@ impl Picker {
                 let at = (ev.column, ev.row).into();
                 for (i, row) in rows.iter().enumerate() {
                     if row.contains(at) {
-                        self.selected = self.scroll + i;
+                        self.selected = self.scroll.get() + i;
                         return self.choose();
                     }
                 }
@@ -947,16 +997,12 @@ impl Picker {
                 }
                 PickerOutcome::None
             }
-            ScrollUp => {
-                self.scroll = self.scroll.saturating_sub(1);
+            kind => {
+                if self.scroll.wheel(kind) {
+                    self.selected = self.scroll.within(self.selected);
+                }
                 PickerOutcome::None
             }
-            ScrollDown => {
-                let n = self.filtered_indices().len();
-                self.scroll = (self.scroll + 1).min(n.saturating_sub(PICKER_ROWS));
-                PickerOutcome::None
-            }
-            _ => PickerOutcome::None,
         }
     }
 
@@ -973,22 +1019,11 @@ impl Picker {
             return;
         }
         self.selected = (self.selected as isize + delta).rem_euclid(n as isize) as usize;
-        self.ensure_visible();
-    }
-
-    fn ensure_visible(&mut self) {
-        if self.selected < self.scroll {
-            self.scroll = self.selected;
-        } else if self.selected >= self.scroll + PICKER_ROWS {
-            self.scroll = self.selected + 1 - PICKER_ROWS;
-        }
     }
 
     fn clamp_selected(&mut self) {
         let n = self.filtered_indices().len();
         self.selected = self.selected.min(n.saturating_sub(1));
-        self.scroll = self.scroll.min(self.selected);
-        self.ensure_visible();
     }
 }
 

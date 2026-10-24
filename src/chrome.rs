@@ -139,6 +139,128 @@ pub fn button(buf: &mut Buffer, r: Rect, label: &str, theme: &Theme) -> Rect {
     Rect { height: inner.height.saturating_sub(2), ..inner }
 }
 
+/// A window's content taller than its room (docs/menus.md): the first line shown, and the lines shown and all of
+/// them as the last frame drew them, which the keys and the wheel go by.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Scroll {
+    from: std::cell::Cell<usize>,
+    shown: std::cell::Cell<usize>,
+    of: std::cell::Cell<usize>,
+}
+
+impl Scroll {
+    pub fn get(&self) -> usize {
+        self.from.get()
+    }
+
+    pub fn set(&self, from: usize) {
+        self.from.set(from);
+    }
+
+    /// The first of `of` lines to draw in `shown` rows.
+    pub fn place(&self, shown: usize, of: usize) -> usize {
+        self.shown.set(shown);
+        self.of.set(of);
+        self.from.set(self.from.get().min(of.saturating_sub(shown)));
+        self.from.get()
+    }
+
+    /// As `place`, with row `at` of a list in view.
+    pub fn follow(&self, at: usize, shown: usize, of: usize) -> usize {
+        self.from.set(self.from.get().min(at).max((at + 1).saturating_sub(shown)));
+        self.place(shown, of)
+    }
+
+    pub fn page(&self) -> usize {
+        self.shown.get().max(1)
+    }
+
+    /// The last frame left lines out.
+    pub fn hides(&self) -> bool {
+        self.of.get() > self.shown.get()
+    }
+
+    fn by(&self, n: isize) {
+        let last = self.of.get().saturating_sub(self.shown.get());
+        self.from.set(self.from.get().saturating_add_signed(n).min(last));
+    }
+
+    /// Up and Down a line, Page Up and Page Down a page, Home and End to the ends; false for any other key.
+    pub fn key(&self, code: crossterm::event::KeyCode) -> bool {
+        use crossterm::event::KeyCode::*;
+        let page = self.page() as isize;
+        match code {
+            Up => self.by(-1),
+            Down => self.by(1),
+            PageUp => self.by(-page),
+            PageDown => self.by(page),
+            Home => self.from.set(0),
+            End => self.by(isize::MAX),
+            _ => return false,
+        }
+        true
+    }
+
+    /// The wheel, three lines a notch; false for any other event.
+    pub fn wheel(&self, kind: crossterm::event::MouseEventKind) -> bool {
+        use crossterm::event::MouseEventKind::*;
+        match kind {
+            ScrollUp => self.by(-3),
+            ScrollDown => self.by(3),
+            _ => return false,
+        }
+        true
+    }
+
+    /// The row Page Up, Page Down, Home or End chooses in a list of `n` from row `at`; None for any other key.
+    pub fn pick(&self, code: crossterm::event::KeyCode, at: usize, n: usize) -> Option<usize> {
+        use crossterm::event::KeyCode::*;
+        let last = n.checked_sub(1)?;
+        match code {
+            PageUp => Some(at.saturating_sub(self.page())),
+            PageDown => Some((at + self.page()).min(last)),
+            Home => Some(0),
+            End => Some(last),
+            _ => None,
+        }
+    }
+
+    /// Row `at` of a list, moved into the lines shown.
+    pub fn within(&self, at: usize) -> usize {
+        let from = self.from.get();
+        at.clamp(from, from + self.shown.get().max(1) - 1)
+    }
+
+    /// `<word> N–M of K` while anything is hidden.
+    pub fn hidden(&self, word: &str) -> Option<String> {
+        let (from, shown, of) = (self.from.get(), self.shown.get(), self.of.get());
+        (of > shown && shown > 0).then(|| format!("{word} {}–{} of {of}", from + 1, from + shown))
+    }
+
+    /// While anything is hidden, `lines N–M of K` on row `y` of window `r`: the row over its buttons.
+    pub fn draw(&self, buf: &mut Buffer, r: Rect, y: u16, theme: &Theme) {
+        if let Some(at) = self.hidden("lines") {
+            say(buf, r, y, &at, theme);
+        }
+    }
+}
+
+/// What a window hides, on row `y` of window `r`.
+pub fn say(buf: &mut Buffer, r: Rect, y: u16, text: &str, theme: &Theme) {
+    let inner = r.inner(DIALOG_FRAME);
+    if y >= inner.y && y < inner.bottom() {
+        buf.set_stringn(inner.x, y, text, inner.width as usize, Style::default().bg(theme.ground).fg(theme.faint));
+    }
+}
+
+/// What scrolls a window taller than the screen, as Keys and mouse lists it.
+pub const SCROLL_KEYS: &[(&str, &str)] = &[
+    ("wheel", "three lines"),
+    ("↑↓", "a line; in a list, the selection, and the list follows it"),
+    ("PgUp PgDn", "a page"),
+    ("Home End", "the start and the end"),
+];
+
 /// A button of the top bar: a filled shape with padding, one cell high. The active tab is the tab
 /// bar's cursor: filled with the accent while the keys are on the bar, its name in the accent while they are elsewhere.
 #[allow(clippy::too_many_arguments)]
@@ -251,7 +373,7 @@ fn parse_head(content: &str) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     fn tab(index: usize, name: &str, active: bool) -> TabItem {
@@ -565,7 +687,7 @@ mod tests {
         let isolation = crate::isolation_ui::IsolationWin { home: true, ..crate::isolation_ui::tests::grouped() };
         let accounts = crate::isolation_ui::Accounts::for_name("scout");
         let mut providers = crate::isolation_ui::tests::grouped();
-        providers.view = Some(crate::isolation_ui::View { agent: "fake".into(), draft: None, scroll: 0, empty: false, last: Default::default() });
+        providers.view = Some(crate::isolation_ui::View { agent: "fake".into(), draft: None, scroll: Default::default(), empty: false });
         type Draw<'a> = Box<dyn Fn(&mut Buffer) + 'a>;
         let windows: Vec<(&str, u16, Draw)> = vec![
             ("Prompt", FIELD_W, Box::new(|b| Prompt::new("Rename tab", "x").draw(b, screen, &theme))),
@@ -594,5 +716,168 @@ mod tests {
         let row = picker.draw(&mut buf, screen, &theme)[0];
         let text: String = (row.x..row.right()).map(|x| buf[(x, row.y)].symbol()).collect();
         assert!(text.starts_with(" main …") && text.ends_with("/a/long/path"), "a long second column is cut with … and keeps its end: {text:?}");
+    }
+
+    /// One window too tall for `screen` through the scrolling rule in docs/menus.md: `draw` draws it, `key` and `wheel`
+    /// send it input. `list`: Up and Down move a selection, which leads the scroll.
+    pub(crate) fn scrolls(name: &str, screen: Rect, list: bool, draw: &dyn Fn(&mut Buffer), key: &dyn Fn(crossterm::event::KeyCode), wheel: &dyn Fn(crossterm::event::MouseEventKind)) {
+        use crossterm::event::{KeyCode::*, MouseEventKind::{ScrollDown, ScrollUp}};
+        // the row saying what is hidden and its numbers, and where `[Esc]` is
+        let shot = || -> (usize, [usize; 3], (usize, usize), String) {
+            let mut buf = Buffer::empty(screen);
+            draw(&mut buf);
+            let text = crate::app::snapshots::dump(&buf, screen);
+            let rows: Vec<&str> = text.lines().take(screen.height as usize).collect();
+            let all = rows.join("\n");
+            let (y, row) = rows.iter().enumerate().find(|(_, r)| r.contains("│ lines ")).unwrap_or_else(|| panic!("{name}: nothing says what is hidden\n{all}"));
+            let n: Vec<usize> = row.split("│ lines ").nth(1).unwrap().split(|c: char| !c.is_ascii_digit()).filter(|s| !s.is_empty()).take(3).map(|s| s.parse().unwrap()).collect();
+            let b = rows.iter().rposition(|r| r.contains("[Esc]")).unwrap_or_else(|| panic!("{name}: no close button\n{all}"));
+            // right over a button; a help page's `[o] open` and the blank row under it come before its close
+            let blank = |r: &&str| r.trim_matches(|c| c == ' ' || c == '│').is_empty();
+            assert!(y < b && rows[y + 1].contains("] ") && rows[y + 1..=b].iter().all(|r| r.contains("] ") || blank(r)), "{name}: the row right over the buttons\n{all}");
+            (y, [n[0], n[1], n[2]], (b, rows[b].find("[Esc]").unwrap()), all)
+        };
+        let (y, [first, page, of], esc, all) = shot();
+        assert!(first == 1 && page < of, "{name}: the top, and something hidden\n{all}");
+        let after = |code| {
+            key(code);
+            shot()
+        };
+        let (at, n, keep, all) = after(End);
+        assert_eq!((at, n[1], n[2], keep), (y, of, of, esc), "{name}: End shows the last line; the row and the buttons stay\n{all}");
+        assert_eq!(after(Home).1[0], 1, "{name}: Home");
+        let (_, n, _, all) = after(PageDown);
+        if list {
+            assert!(n[0] > 1, "{name}: Page Down\n{all}");
+        } else {
+            assert_eq!(n[0], (page + 1).min(of - page + 1), "{name}: Page Down moves a page\n{all}");
+        }
+        assert_eq!(after(PageUp).1[0], 1, "{name}: Page Up");
+        wheel(ScrollDown);
+        let (_, n, keep, all) = shot();
+        assert_eq!((n[0], keep), (4, esc), "{name}: three lines a notch, the buttons stay\n{all}");
+        wheel(ScrollUp);
+        assert_eq!(shot().1[0], 1, "{name}: and back");
+        // a list's selection leads: the view moves once it passes the last row shown
+        key(Home);
+        let steps = if list { page } else { 1 };
+        for _ in 0..steps {
+            key(Down);
+        }
+        let (_, n, _, all) = shot();
+        // a row of Settings is more than a line under a heading
+        assert!(n[0] == 2 || list && n[0] > 2, "{name}: Down\n{all}");
+        for _ in 0..steps {
+            key(Up);
+        }
+        assert_eq!(shot().1[0], 1, "{name}: Up");
+    }
+
+    /// Nothing says what is hidden when nothing is.
+    pub(crate) fn fits(name: &str, screen: Rect, draw: &dyn Fn(&mut Buffer)) {
+        let mut buf = Buffer::empty(screen);
+        draw(&mut buf);
+        let text = crate::app::snapshots::dump(&buf, screen);
+        assert!(!text.contains("│ lines "), "{name}\n{text}");
+    }
+
+    fn key(code: crossterm::event::KeyCode) -> crossterm::event::KeyEvent {
+        crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE)
+    }
+
+    fn wheel(kind: crossterm::event::MouseEventKind, screen: Rect) -> crossterm::event::MouseEvent {
+        crossterm::event::MouseEvent { kind, column: screen.width / 2, row: screen.height / 2, modifiers: crossterm::event::KeyModifiers::NONE }
+    }
+
+    /// New space listing the folders of `/`.
+    fn root() -> crate::space_picker::SpacePicker {
+        let mut n = crate::space_picker::SpacePicker::new(std::path::PathBuf::from("/"));
+        for _ in 0..200 {
+            n.key(key(crossterm::event::KeyCode::Backspace));
+        }
+        n.paste("/");
+        n
+    }
+
+    const SHORT: Rect = Rect { x: 0, y: 0, width: 160, height: 24 };
+    const TALL: Rect = Rect { x: 0, y: 0, width: 160, height: 300 };
+
+    #[test]
+    fn every_window_too_tall_for_the_screen_scrolls_the_same_way() {
+        use crate::menu::{Confirm, Picker, PickerItem};
+        use std::cell::RefCell;
+        let theme = Theme::dark();
+        let s = SHORT;
+
+        let c = RefCell::new(Confirm::new("About", "word ".repeat(300)).info());
+        scrolls("Confirm", s, false, &|b| _ = c.borrow().draw(b, s, &theme), &|k| _ = c.borrow_mut().key(key(k)), &|w| _ = c.borrow_mut().mouse(wheel(w, s), s, &[]));
+        let table: Vec<Vec<String>> = (0..30).map(|i| vec![format!("agent {i}"), "~/.config/x".into()]).collect();
+        let c = RefCell::new(Confirm::new("Install the hook", "x").table(table).does("install"));
+        scrolls("Confirm with a table", s, false, &|b| _ = c.borrow().draw(b, s, &theme), &|k| _ = c.borrow_mut().key(key(k)), &|w| _ = c.borrow_mut().mouse(wheel(w, s), s, &[]));
+
+        let items = |n: usize| (0..n).map(|i| PickerItem { label: format!("item {i}"), detail: String::new(), id: i }).collect::<Vec<_>>();
+        let p = RefCell::new(Picker::new("Open worktree", items(40)));
+        scrolls("Picker", s, true, &|b| _ = p.borrow().draw(b, s, &theme), &|k| _ = p.borrow_mut().key(key(k)), &|w| _ = p.borrow_mut().mouse(wheel(w, s), s, &[]));
+
+        let n = RefCell::new(root());
+        scrolls("New space", s, true, &|b| _ = n.borrow().draw(b, s, &theme), &|k| _ = n.borrow_mut().key(key(k)), &|w| _ = n.borrow_mut().mouse(wheel(w, s), s, &[]));
+
+        let cfg = RefCell::new(crate::config::Config::default());
+        let st = RefCell::new(crate::settings::Settings::new(&cfg.borrow()));
+        scrolls("Settings", s, true, &|b| _ = st.borrow().draw(b, s, &theme), &|k| _ = st.borrow_mut().key(key(k), &mut cfg.borrow_mut()), &|w| _ = st.borrow_mut().mouse(wheel(w, s), s, &mut cfg.borrow_mut(), &[]));
+
+        let h = RefCell::new(crate::keyshelp::KeysHelp::new(crate::config::Prefix::Off));
+        scrolls("Keys and mouse", s, false, &|b| h.borrow().draw(b, s, &theme), &|k| _ = h.borrow_mut().key(key(k)), &|w| _ = h.borrow_mut().mouse(wheel(w, s), s));
+
+        let isolation = || crate::isolation_ui::IsolationWin { home: true, accounts: (0..12).map(|i| format!("acct{i}")).collect(), ..crate::isolation_ui::tests::grouped() };
+        let i = RefCell::new(isolation());
+        scrolls("Isolation", s, false, &|b| _ = i.borrow().draw(b, s, &theme), &|k| _ = i.borrow_mut().key(key(k)), &|w| {
+            let d = i.borrow().draw(&mut Buffer::empty(s), s, &theme);
+            i.borrow_mut().mouse(wheel(w, s), &d);
+        });
+
+        let a = RefCell::new(crate::isolation_ui::Accounts::for_name("scout"));
+        scrolls("Accounts", s, false, &|b| _ = a.borrow().draw(b, s, &theme, &[]), &|k| _ = a.borrow_mut().key(key(k), &[]), &|w| {
+            let d = a.borrow().draw(&mut Buffer::empty(s), s, &theme, &[]);
+            a.borrow_mut().mouse(wheel(w, s), &d);
+        });
+
+        let data = crate::panel::Data { kind: crate::panel::Kind::List, title: "Panel".into(), items: (0..40).map(|i| crate::panel::Item { id: format!("{i}"), label: format!("row {i}"), detail: String::new(), role: crate::slots::Role::Text, children: Vec::new(), opens: false }).collect(), lines: Vec::new() };
+        let o = RefCell::new(crate::panel::Open::new((true, "p".into()), "id".into(), "Panel".into()));
+        scrolls("Plugin panel", s, true, &|b| _ = o.borrow().draw(b, s, &theme, Some(&data)), &|k| _ = o.borrow_mut().key(key(k), s, Some(&data)), &|w| {
+            let d = o.borrow().draw(&mut Buffer::empty(s), s, &theme, Some(&data));
+            o.borrow_mut().mouse(wheel(w, s), s, Some(&data), &d);
+        });
+
+        // the same windows with room for everything
+        let t = TALL;
+        fits("Confirm", t, &|b| _ = Confirm::new("Close pane", "x").draw(b, t, &theme));
+        fits("Picker", t, &|b| _ = Picker::new("Open worktree", items(15)).draw(b, t, &theme));
+        fits("Settings", t, &|b| _ = crate::settings::Settings::new(&cfg.borrow()).draw(b, t, &theme));
+        fits("Keys and mouse", t, &|b| crate::keyshelp::KeysHelp::new(crate::config::Prefix::Off).draw(b, t, &theme));
+        fits("Isolation", t, &|b| _ = isolation().draw(b, t, &theme));
+        fits("Accounts", t, &|b| _ = crate::isolation_ui::Accounts::for_name("scout").draw(b, t, &theme, &[]));
+        let few = crate::panel::Data { items: data.items[..15].to_vec(), ..data.clone() };
+        fits("Plugin panel", t, &|b| _ = crate::panel::Open::new((true, "p".into()), "id".into(), "Panel".into()).draw(b, t, &theme, Some(&few)));
+    }
+
+    #[test]
+    fn a_picker_draws_its_selection_on_every_screen_height() {
+        use crate::menu::{Picker, PickerItem};
+        let theme = Theme::dark();
+        for h in 8..=40 {
+            let screen = Rect::new(0, 0, 160, h);
+            let mut p = Picker::new("Open worktree", (0..30).map(|i| PickerItem { label: format!("item {i}"), detail: String::new(), id: i }).collect());
+            let mut n = root();
+            for code in [crossterm::event::KeyCode::End, crossterm::event::KeyCode::Up, crossterm::event::KeyCode::PageUp, crossterm::event::KeyCode::Down] {
+                p.key(key(code));
+                n.key(key(code));
+                let lit = |rows: Vec<Rect>, buf: &Buffer| rows.is_empty() || rows.iter().any(|r| buf[(r.x, r.y)].bg == theme.cursor().bg.unwrap());
+                let mut buf = Buffer::empty(screen);
+                assert!(lit(p.draw(&mut buf, screen, &theme), &buf), "Picker at {h} rows after {code:?}: the selection is drawn");
+                let mut buf = Buffer::empty(screen);
+                assert!(lit(n.draw(&mut buf, screen, &theme), &buf), "New space at {h} rows after {code:?}: the selection is drawn");
+            }
+        }
     }
 }

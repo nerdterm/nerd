@@ -50,7 +50,7 @@ pub struct SpacePicker {
     rows: Vec<Row>,
     section: Section,
     selected: Option<usize>,
-    scroll: usize,
+    scroll: crate::chrome::Scroll,
     hint: Option<String>,
     /// Position, and what was there, so a double click still opens it even if the first click's
     /// descend emptied or reshuffled the list under the same screen spot.
@@ -77,7 +77,7 @@ impl SpacePicker {
             rows: Vec::new(),
             section: Section::Recent,
             selected: None,
-            scroll: 0,
+            scroll: Default::default(),
             hint: None,
             last_click: None,
             tab_cycle: None,
@@ -101,6 +101,11 @@ impl SpacePicker {
             Tab => self.tab(),
             Up => self.step(-1),
             Down => self.step(1),
+            code @ (PageUp | PageDown | Home | End) => {
+                if let Some(i) = self.scroll.pick(code, self.selected.unwrap_or(0), self.rows.len()) {
+                    self.selected = Some(i);
+                }
+            }
             Backspace => {
                 self.value.pop();
                 self.tab_cycle = None;
@@ -130,7 +135,7 @@ impl SpacePicker {
             Down(_) => {
                 let at = (ev.column, ev.row);
                 if let Some(i) = rows.iter().position(|r| r.contains(at.into())) {
-                    let idx = self.scroll + i;
+                    let idx = self.scroll.get() + i;
                     // Checked by screen position, before the row lookup below: a repeat click at
                     // the same spot still opens what was there even if the first click's descend
                     // emptied or reshuffled the list under it.
@@ -153,15 +158,12 @@ impl SpacePicker {
                 }
                 Outcome::None
             }
-            ScrollUp => {
-                self.scroll = self.scroll.saturating_sub(1);
+            kind => {
+                if self.scroll.wheel(kind) {
+                    self.selected = self.selected.map(|i| self.scroll.within(i));
+                }
                 Outcome::None
             }
-            ScrollDown => {
-                self.scroll = (self.scroll + 1).min(self.rows.len().saturating_sub(ROWS_SHOWN));
-                Outcome::None
-            }
-            _ => Outcome::None,
         }
     }
 
@@ -180,7 +182,7 @@ impl SpacePicker {
         (inner.x + col as u16, inner.y)
     }
 
-    /// Draws the dialog; returns the visible list rows' rects, in `scroll..` order.
+    /// Draws the dialog; returns the visible list rows' rects, in order from the first shown.
     pub fn draw(&self, buf: &mut Buffer, screen: Rect, theme: &Theme) -> Vec<Rect> {
         let r = self.rect(screen).intersection(buf.area);
         let mut out = Vec::new();
@@ -218,9 +220,14 @@ impl SpacePicker {
         y += 1;
 
         let rows_room = content.bottom().saturating_sub(y) as usize;
+        let from = match self.selected {
+            Some(at) => self.scroll.follow(at, rows_room, self.rows.len()),
+            None => self.scroll.place(rows_room, self.rows.len()),
+        };
+        self.scroll.draw(buf, r, content.bottom(), theme);
         for i in 0..rows_room {
-            let Some(row) = self.rows.get(self.scroll + i) else { break };
-            let is_selected = self.selected == Some(self.scroll + i);
+            let Some(row) = self.rows.get(from + i) else { break };
+            let is_selected = self.selected == Some(from + i);
             let style = if is_selected { theme.cursor() } else { Style::default().fg(theme.text).bg(theme.ground) };
             // The branch keeps its place; a path too long for the rest loses its middle.
             let path = middle(&row.display, inner_w.saturating_sub(row.branch.as_ref().map_or(0, |b| b.chars().count() + 2)).max(1));
@@ -244,7 +251,7 @@ impl SpacePicker {
     /// Empty, or the home folder as the field starts: the recent list; otherwise the typed parent's subfolders.
     fn recompute(&mut self) {
         self.selected = None;
-        self.scroll = 0;
+        self.scroll.set(0);
         if self.value.is_empty() || self.value == "~/" || self.value == start() {
             self.section = Section::Recent;
             self.rows = self.recent.clone();
@@ -295,13 +302,7 @@ impl SpacePicker {
             return;
         }
         let cur = self.selected.map(|i| i as isize).unwrap_or(if delta > 0 { -1 } else { 0 });
-        let next = (cur + delta).rem_euclid(n as isize) as usize;
-        self.selected = Some(next);
-        if next < self.scroll {
-            self.scroll = next;
-        } else if next >= self.scroll + ROWS_SHOWN {
-            self.scroll = next + 1 - ROWS_SHOWN;
-        }
+        self.selected = Some((cur + delta).rem_euclid(n as isize) as usize);
     }
 
     /// Common-prefix completion on the first Tab; a single match also adds the trailing `/`;

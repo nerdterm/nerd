@@ -1,7 +1,6 @@
 //! Main menu > Search…: one field over panes, menu commands, settings, plugins, files, help and pane text.
 //! The window only finds; each result acts through the code its origin uses, in `app::find`.
 
-use std::cell::Cell;
 use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
@@ -10,6 +9,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Block, Widget};
 
+use crate::chrome::Scroll;
 use crate::layout::PaneId;
 use crate::render::Theme;
 use crate::term::AgentState;
@@ -225,12 +225,11 @@ pub struct Find {
     hits: Vec<Hit>,
     /// Index into `rows()`, on a row that acts when there is one.
     selected: usize,
-    /// A help section shown in the window, and how far it is scrolled.
-    help: Option<(usize, usize)>,
-    /// How far the help page can scroll at the size last drawn.
-    help_max: Cell<usize>,
-    /// The first result row in view: it moves only to keep the chosen row in view, never under the pointer.
-    scroll: Cell<usize>,
+    /// A help section shown in the window.
+    help: Option<usize>,
+    page: Scroll,
+    /// The result rows in view: they move to keep the chosen row in view and by the wheel, never under the pointer.
+    scroll: Scroll,
     /// Plugins and Help were read; Files were walked. Once per window, on the first query that needs them.
     pub lazy: bool,
     pub files: bool,
@@ -269,8 +268,8 @@ pub const KEYS: &[Key] = &[
 /// The keys of a help page in the window: its field takes none.
 pub const HELP_KEYS: &[Key] = &[
     Key { code: KeyCode::Char('o'), label: "o", word: "open on nerdterm.dev", what: "open the page on nerdterm.dev", act: |f| f.page().map_or(Outcome::None, Outcome::Open) },
-    Key { code: KeyCode::Up, label: "↑↓", word: "", what: "scroll the page", act: |f| { f.scroll(-1); Outcome::None } },
-    Key { code: KeyCode::Down, label: "", word: "", what: "scroll the page", act: |f| { f.scroll(1); Outcome::None } },
+    Key { code: KeyCode::Up, label: "↑↓", word: "", what: "scroll the page", act: |f| { f.page.key(KeyCode::Up); Outcome::None } },
+    Key { code: KeyCode::Down, label: "", word: "", what: "scroll the page", act: |f| { f.page.key(KeyCode::Down); Outcome::None } },
     Key { code: KeyCode::Esc, label: "esc", word: "back", what: "back to the results", act: |f| { f.help = None; Outcome::None } },
 ];
 
@@ -279,7 +278,7 @@ const BACK: &str = " [Esc] back ";
 
 impl Find {
     pub fn new() -> Self {
-        Self { query: String::new(), tab: None, chip: Chip::All, hits: Vec::new(), selected: 0, help: None, help_max: Cell::new(0), scroll: Cell::new(0), lazy: false, files: false, files_note: None, text: None, text_note: None, note: None }
+        Self { query: String::new(), tab: None, chip: Chip::All, hits: Vec::new(), selected: 0, help: None, page: Scroll::default(), scroll: Scroll::default(), lazy: false, files: false, files_note: None, text: None, text_note: None, note: None }
     }
 
     pub fn add(&mut self, hits: Vec<Hit>) {
@@ -478,7 +477,7 @@ impl Find {
         self.set_tab(tabs[(at + d).rem_euclid(tabs.len() as isize) as usize]);
     }
 
-    /// The arrows wrap around the list; the wheel stops at its ends.
+    /// The arrows wrap around the list; the page keys stop at its ends.
     fn step(&mut self, d: isize, wrap: bool) {
         let acting: Vec<usize> = self.rows().iter().enumerate().filter(|(_, r)| r.acts()).map(|(i, _)| i).collect();
         if acting.is_empty() {
@@ -489,10 +488,13 @@ impl Find {
         self.selected = acting[if wrap { (at + d).rem_euclid(n) } else { (at + d).clamp(0, n - 1) } as usize];
     }
 
-    fn scroll(&mut self, d: isize) {
-        let max = self.help_max.get();
-        if let Some((_, s)) = self.help.as_mut() {
-            *s = (*s).min(max).saturating_add_signed(d).min(max);
+    /// A chosen row the wheel moved out of view: the nearest row in view that acts instead.
+    fn drag(&mut self) {
+        let rows = self.rows();
+        let to = self.scroll.within(self.selected);
+        let near = if to > self.selected { (to..rows.len()).find(|&i| rows[i].acts()) } else { (0..=to).rev().find(|&i| rows.get(i).is_some_and(Row::acts)) };
+        if to != self.selected && let Some(i) = near {
+            self.selected = i;
         }
     }
 
@@ -505,7 +507,8 @@ impl Find {
                 }
                 match hit.target {
                     Target::Help(s) => {
-                        self.help = Some((s, 0));
+                        self.help = Some(s);
+                        self.page.set(0);
                         Outcome::None
                     }
                     _ => {
@@ -528,13 +531,17 @@ impl Find {
     }
 
     fn page(&self) -> Option<String> {
-        self.help.and_then(|(s, _)| crate::help::sections().get(s)?.url.clone())
+        self.help.and_then(|s| crate::help::sections().get(s)?.url.clone())
     }
 
     pub fn key(&mut self, k: KeyEvent) -> Outcome {
         let chord = k.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
         if self.help.is_some() {
             let code = crate::keys::normalize(k).code;
+            if matches!(code, KeyCode::PageUp | KeyCode::PageDown | KeyCode::Home | KeyCode::End) {
+                self.page.key(code);
+                return Outcome::None;
+            }
             return HELP_KEYS.iter().find(|r| r.code == code && !(chord && matches!(code, KeyCode::Char(_)))).map_or(Outcome::None, |r| (r.act)(self));
         }
         match k.code {
@@ -548,6 +555,11 @@ impl Find {
                 self.query.pop();
                 self.note = None;
                 self.typed();
+                Outcome::None
+            }
+            code @ (KeyCode::PageUp | KeyCode::PageDown | KeyCode::Home | KeyCode::End) => {
+                let (page, n) = (self.scroll.page() as isize, self.rows().len() as isize);
+                self.step(match code { KeyCode::PageUp => -page, KeyCode::PageDown => page, KeyCode::Home => -n, _ => n }, false);
                 Outcome::None
             }
             code => KEYS.iter().find(|r| r.code == code).map_or(Outcome::None, |r| (r.act)(self)),
@@ -592,9 +604,18 @@ impl Find {
                 }
                 Outcome::None
             }
+            ScrollUp | ScrollDown if self.help.is_some() => {
+                self.page.wheel(ev.kind);
+                Outcome::None
+            }
+            // A list longer than its room scrolls three lines a notch; one that fits walks the selection.
+            ScrollUp | ScrollDown if !self.scroll.hides() => {
+                self.step(if ev.kind == ScrollUp { -3 } else { 3 }, false);
+                Outcome::None
+            }
             ScrollUp | ScrollDown => {
-                let d = if ev.kind == ScrollUp { -3 } else { 3 };
-                if self.help.is_some() { self.scroll(d) } else { self.step(d, false) }
+                self.scroll.wheel(ev.kind);
+                self.drag();
                 Outcome::None
             }
             _ => Outcome::None,
@@ -626,13 +647,16 @@ impl Find {
             return d;
         }
         match self.help {
-            Some((s, scroll)) => self.draw_help(buf, inner, s, scroll, theme, &mut d),
+            Some(s) => self.draw_help(buf, r, inner, s, theme, &mut d),
             None => self.draw_list(buf, inner, &rows, theme, &mut d),
+        }
+        if self.help.is_none() {
+            self.scroll.draw(buf, r, inner.bottom(), theme);
         }
         d
     }
 
-    fn draw_help(&self, buf: &mut Buffer, inner: Rect, s: usize, scroll: usize, theme: &Theme, d: &mut Drawn) {
+    fn draw_help(&self, buf: &mut Buffer, r: Rect, inner: Rect, s: usize, theme: &Theme, d: &mut Drawn) {
         let Some(sec) = crate::help::sections().get(s) else { return };
         let w = inner.width as usize;
         buf.set_stringn(inner.x, inner.y, &sec.name, w, Style::default().fg(theme.text).add_modifier(Modifier::BOLD));
@@ -646,10 +670,12 @@ impl Find {
         bottom = self.draw_note(buf, inner, bottom, inner.y + 2, theme);
         let lines: Vec<String> = sec.body.lines().flat_map(|l| if l.is_empty() { vec![String::new()] } else { crate::menu::wrap(l, w) }).collect();
         let rows = bottom.saturating_sub(1).saturating_sub(inner.y + 2) as usize;
-        self.help_max.set(lines.len().saturating_sub(rows));
-        for (y, line) in (inner.y + 2..bottom.saturating_sub(1)).zip(lines.iter().skip(scroll.min(self.help_max.get()))) {
+        let from = self.page.place(rows, lines.len());
+        for (y, line) in (inner.y + 2..bottom.saturating_sub(1)).zip(lines.iter().skip(from)) {
             buf.set_stringn(inner.x, y, line, w, Style::default().fg(theme.text));
         }
+        // over `[o] open on nerdterm.dev` when the page has one, else over the button
+        self.page.draw(buf, r, if sec.url.is_some() { bottom.saturating_sub(1) } else { inner.bottom() }, theme);
     }
 
     fn draw_list(&self, buf: &mut Buffer, inner: Rect, rows: &[Row], theme: &Theme, d: &mut Drawn) {
@@ -697,8 +723,7 @@ impl Find {
         // a blank row over the results and under them
         let (top, bottom) = (y + 1, bottom.saturating_sub(1));
         let visible = bottom.saturating_sub(top) as usize;
-        let skip = self.scroll.get().min(self.selected).max((self.selected + 1).saturating_sub(visible));
-        self.scroll.set(skip);
+        let skip = self.scroll.follow(self.selected, visible, rows.len());
         for ((i, row), y) in rows.iter().enumerate().skip(skip).zip(top..bottom) {
             let line = Rect::new(inner.x, y, inner.width, 1);
             match row {
@@ -986,22 +1011,24 @@ mod tests {
         let screen = Rect::new(0, 0, 120, 40);
         let mut f = Find::new();
         let at = crate::help::sections().iter().position(|s| s.name == "Privacy and security › What leaves nerd").unwrap();
-        f.help = Some((at, 0));
+        f.help = Some(at);
         for m in [KeyModifiers::ALT, KeyModifiers::CONTROL] {
             assert!(matches!(f.key(KeyEvent::new(KeyCode::Char('o'), m)), Outcome::None), "{m:?}+o");
         }
         let draw = |f: &Find| f.draw(&mut Buffer::empty(screen), screen, &Theme::dark());
         draw(&f);
-        let max = f.help_max.get();
+        f.key(key(KeyCode::End));
+        let max = f.page.get();
+        f.key(key(KeyCode::Home));
         assert!(max > crate::help::sections()[at].body.lines().count().saturating_sub(40), "wrapped lines count, not raw ones");
         for _ in 0..max + 20 {
             f.key(key(KeyCode::Down));
         }
-        assert_eq!(f.help, Some((at, max)), "the last wrapped line is reached and no further");
+        assert_eq!(f.page.get(), max, "the last wrapped line is reached and no further");
         let d = draw(&f);
         let wheel = MouseEvent { kind: MouseEventKind::ScrollDown, column: 5, row: 5, modifiers: KeyModifiers::NONE };
         f.mouse(wheel, screen, &d);
-        assert_eq!(f.help, Some((at, max)), "the wheel stops at the end");
+        assert_eq!(f.page.get(), max, "the wheel stops at the end");
     }
 
     #[test]
@@ -1061,11 +1088,14 @@ mod tests {
             f.mouse(MouseEvent { kind, column: 5, row: 5, modifiers: KeyModifiers::NONE }, screen, &d);
         };
         wheel(&mut f, MouseEventKind::ScrollUp);
-        assert_eq!(chosen(&f), "p0", "no wrap to the end");
-        for _ in 0..20 {
+        assert_eq!((chosen(&f).as_str(), f.scroll.get()), ("p0", 0), "no wrap to the end");
+        for _ in 0..30 {
             wheel(&mut f, MouseEventKind::ScrollDown);
         }
-        assert_eq!(chosen(&f), "p49", "no wrap to the top");
+        let d = f.draw(&mut Buffer::empty(screen), screen, &Theme::dark());
+        let rows: Vec<usize> = d.hits.iter().filter_map(|(_, c)| if let Click::Row(i) = c { Some(*i) } else { None }).collect();
+        assert_eq!((rows.last(), rows.first()), (Some(&listed(&f).len().saturating_sub(1)), Some(&f.selected)), "no wrap to the top; the chosen row came along to the first row shown");
+        f.selected = *rows.last().unwrap();
         let d = f.draw(&mut Buffer::empty(screen), screen, &Theme::dark());
         let (r, i) = d.hits.iter().find_map(|(r, c)| match c { Click::Row(i) if *i + 3 == f.selected => Some((*r, *i)), _ => None }).expect("rows above the chosen one are drawn");
         let out = f.mouse(MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), column: r.x, row: r.y, modifiers: KeyModifiers::NONE }, screen, &d);
@@ -1105,7 +1135,7 @@ mod tests {
         assert!(text_of(&buf).contains("Pane planner is closed"));
         f.paste("needle");
         assert_eq!((f.query.as_str(), &f.note), ("needle", &None));
-        f.help = Some((0, 0));
+        f.help = Some(0);
         f.note = Some((false, "opened".into()));
         let mut buf = Buffer::empty(screen);
         f.draw(&mut buf, screen, &Theme::dark());
@@ -1135,6 +1165,38 @@ mod tests {
         let file = row("isolation.rs");
         assert!(file.contains("…") && file.trim_end().trim_end_matches('│').trim_end().ends_with("deep/src"), "the folder, cut from the left: {file}");
         assert!(!text.contains('"') || text.matches('"').count() == 2, "no quotes but the pane text row's: {text}");
+    }
+
+    #[test]
+    fn the_list_and_a_help_page_scroll_as_every_window() {
+        let (screen, theme) = (Rect::new(0, 0, 160, 24), Theme::dark());
+        let mut list = Find::new();
+        list.add((0..50).map(|i| pane(i, 0, &format!("p{i}"), AgentState::Idle)).collect());
+        list.set_tab(Some(Group::Panes));
+        typed(&mut list, "p");
+        let mut page = Find::new();
+        page.help = crate::help::sections().iter().position(|s| s.name == "Privacy and security › What leaves nerd");
+        for (name, is_list, f) in [("Search", true, list), ("Search, a help page", false, page)] {
+            let f = std::cell::RefCell::new(f);
+            crate::chrome::tests::scrolls(name, screen, is_list, &|b| _ = f.borrow().draw(b, screen, &theme), &|k| _ = f.borrow_mut().key(key(k)), &|kind| {
+                let d = f.borrow().draw(&mut Buffer::empty(screen), screen, &theme);
+                f.borrow_mut().mouse(MouseEvent { kind, column: 80, row: 12, modifiers: KeyModifiers::NONE }, screen, &d);
+            });
+        }
+    }
+
+    #[test]
+    fn a_help_page_says_what_is_hidden_over_its_open_button() {
+        let screen = Rect::new(0, 0, 160, 24);
+        let mut f = Find::new();
+        f.help = crate::help::sections().iter().position(|s| s.name == "Privacy and security › What leaves nerd");
+        let mut buf = Buffer::empty(screen);
+        f.draw(&mut buf, screen, &Theme::dark());
+        let text = crate::app::snapshots::dump(&buf, screen);
+        let rows: Vec<&str> = text.lines().take(24).collect();
+        let at = |s: &str| rows.iter().position(|r| r.contains(s)).unwrap_or_else(|| panic!("{s}: {text}"));
+        let (lines, open, back) = (at("│ lines 1–"), at("[o] open on nerdterm.dev"), at("[Esc] back"));
+        assert_eq!((open, back), (lines + 1, lines + 3), "lines, [o] open, a blank row, [Esc] back: {text}");
     }
 
     #[test]

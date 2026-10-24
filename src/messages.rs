@@ -7,6 +7,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 
 use crate::app::{Card, MailAction, MailView};
+use crate::chrome::Scroll;
 use crate::layout::PaneId;
 use crate::mail::{Hold, Message, Party, State};
 use crate::policy::{Action, Mode, Scope, Verdict};
@@ -54,7 +55,7 @@ pub fn width<H>(l: &Line<H>) -> usize {
 
 /// The window `r` with `lines` from `scroll`, and `buttons` then `close` centred on its last row.
 #[allow(clippy::too_many_arguments)]
-pub fn draw<H: Clone>(buf: &mut Buffer, r: Rect, title: &str, theme: &Theme, lines: &[Line<H>], scroll: usize, buttons: &[(String, H)], close: &str) -> Drawn<H> {
+pub fn draw<H: Clone>(buf: &mut Buffer, r: Rect, title: &str, theme: &Theme, lines: &[Line<H>], scroll: &Scroll, buttons: &[(String, H)], close: &str) -> Drawn<H> {
     let mut d = Drawn::default();
     let r = r.intersection(buf.area);
     if r.is_empty() {
@@ -66,7 +67,7 @@ pub fn draw<H: Clone>(buf: &mut Buffer, r: Rect, title: &str, theme: &Theme, lin
         return d;
     }
     let room = inner.height.saturating_sub(2) as usize;
-    let from = scroll.min(lines.len().saturating_sub(room));
+    let from = scroll.place(room, lines.len());
     for (row, line) in lines.iter().skip(from).take(room).enumerate() {
         let y = inner.y + row as u16;
         let mut x = inner.x;
@@ -81,11 +82,8 @@ pub fn draw<H: Clone>(buf: &mut Buffer, r: Rect, title: &str, theme: &Theme, lin
             x = end;
         }
     }
+    scroll.draw(buf, r, inner.bottom() - 2, theme);
     let ground = Style::default().bg(theme.ground);
-    if lines.len() > room && room > 0 {
-        let at = format!("lines {}–{} of {}", from + 1, from + room, lines.len());
-        buf.set_stringn(inner.x, inner.bottom() - 2, at, inner.width as usize, ground.fg(theme.faint));
-    }
     let bottom = inner.bottom() - 1;
     let total = buttons.iter().map(|(b, _)| cells(b) + 1).sum::<usize>() + cells(close);
     let mut x = inner.x + (inner.width as usize).saturating_sub(total) as u16 / 2;
@@ -224,9 +222,9 @@ pub struct Messages {
     start: usize,
     /// The routes map's first column and first line.
     pan: Cell<(usize, usize)>,
-    scroll: Cell<usize>,
-    /// The first line of the shown message's text.
-    read: Cell<usize>,
+    scroll: Scroll,
+    /// The shown message's text.
+    read: Scroll,
     /// The message the last frame drew, None for the list: keys act on what was drawn only.
     drawn: std::cell::RefCell<Option<String>>,
     /// `at` was scrolled into view once.
@@ -492,9 +490,7 @@ impl Messages {
         if let Some(at) = at.filter(|_| !self.shown.replace(true)) {
             self.scroll.set(at.saturating_sub(1));
         }
-        let d = draw(buf, r, "Messages", theme, &lines, self.scroll.get(), &[], CLOSE);
-        self.scroll.set(self.scroll.get().min(d.rows.saturating_sub(d.room)));
-        d
+        draw(buf, r, "Messages", theme, &lines, &self.scroll, &[], CLOSE)
     }
 
     /// One waiting message: who to whom, why, its buttons on a line that stays, then its text, which scrolls.
@@ -525,19 +521,13 @@ impl Messages {
         lines.push(row);
         lines.push(vec![("─".repeat(w), g.fg(theme.border), None)]);
         let text = text_lines(&m.text, w);
-        let mut seen = room.saturating_sub(lines.len());
-        let more = text.len() > seen;
-        if more {
-            seen = seen.saturating_sub(1);
-        }
-        let from = self.read.get().min(text.len().saturating_sub(seen));
-        self.read.set(from);
+        let seen = room.saturating_sub(lines.len());
+        let from = self.read.place(seen, text.len());
         lines.extend(text.iter().skip(from).take(seen).map(|l| vec![(l.clone(), g.fg(theme.text), None)]));
-        if more {
-            lines.push(vec![(format!("lines {}–{} of {}", from + 1, from + seen, text.len()), g.fg(theme.faint), None)]);
-        }
         let title = if matches!(m.state, State::Held(_)) { "Held message" } else { "Message" };
-        draw(buf, r, title, theme, &lines, 0, &[], if self.alone { CLOSE } else { BACK })
+        let d = draw(buf, r, title, theme, &lines, &Scroll::default(), &[], if self.alone { CLOSE } else { BACK });
+        self.read.draw(buf, d.frame, d.close.y.saturating_sub(1), theme);
+        d
     }
 
     /// The routes map in the whole screen: the part of the grid from the pan, its position and the buttons that move it.
@@ -578,7 +568,7 @@ impl Messages {
         .filter(|b| b.0)
         .map(|b| (b.1.to_string(), b.2))
         .collect();
-        draw(buf, screen, "Routes map", theme, &lines, 0, &buttons, CLOSE)
+        draw(buf, screen, "Routes map", theme, &lines, &Scroll::default(), &buttons, CLOSE)
     }
 
     /// Every line of the window for an inside `w` cells wide, and the line of the row it opened on.
@@ -1010,10 +1000,10 @@ impl Messages {
         if view {
             match k.code {
                 Esc => return self.leave(),
-                Up => return self.read_by(-1),
-                Down => return self.read_by(1),
-                PageUp => return self.read_by(-10),
-                PageDown => return self.read_by(10),
+                Up | Down | PageUp | PageDown | Home | End => {
+                    self.read.key(k.code);
+                    return Out::None;
+                }
                 Char('a' | 'k' | 'n' | 'd' | 'h' | 'x' | 'r') => {}
                 _ => return Out::None,
             }
@@ -1044,22 +1034,11 @@ impl Messages {
                 self.open(id);
                 Out::None
             }
-            Up => self.scroll_by(-1),
-            Down => self.scroll_by(1),
-            PageUp => self.scroll_by(-10),
-            PageDown => self.scroll_by(10),
-            _ => Out::None,
+            code => {
+                self.scroll.key(code);
+                Out::None
+            }
         }
-    }
-
-    fn scroll_by(&mut self, by: isize) -> Out {
-        self.scroll.set(self.scroll.get().saturating_add_signed(by));
-        Out::None
-    }
-
-    fn read_by(&mut self, by: isize) -> Out {
-        self.read.set(self.read.get().saturating_add_signed(by));
-        Out::None
     }
 
     fn toggle(&mut self, name: String) {
@@ -1107,9 +1086,7 @@ impl Messages {
                     Some(Click::Reply(id)) => return Out::Reply(id),
                     _ => {}
                 },
-                ScrollUp => return self.read_by(-3),
-                ScrollDown => return self.read_by(3),
-                _ => {}
+                kind => _ = self.read.wheel(kind),
             }
             return Out::None;
         }
@@ -1134,9 +1111,10 @@ impl Messages {
                 }
                 Out::None
             }
-            ScrollUp => self.scroll_by(-3),
-            ScrollDown => self.scroll_by(3),
-            _ => Out::None,
+            kind => {
+                self.scroll.wheel(kind);
+                Out::None
+            }
         }
     }
 }
@@ -1717,6 +1695,20 @@ pub(crate) mod tests {
         let mut m = Messages::at(id.into());
         assert!(m.settle(v));
         m
+    }
+
+    #[test]
+    fn the_window_and_a_held_message_scroll_as_every_window() {
+        let (screen, theme) = (Rect::new(0, 0, 160, 24), Theme::dark());
+        let mut v = view();
+        v.waiting[0].text = "word ".repeat(2000);
+        for (name, m) in [("Messages", Messages::new()), ("Held message", shown_on("m1", &v))] {
+            let m = std::cell::RefCell::new(m);
+            crate::chrome::tests::scrolls(name, screen, false, &|b| _ = m.borrow().draw(b, screen, &theme, &v, &verdict), &|k| _ = m.borrow_mut().key(crossterm::event::KeyEvent::from(k), &v), &|kind| {
+                let d = m.borrow().draw(&mut Buffer::empty(screen), screen, &theme, &v, &verdict);
+                m.borrow_mut().mouse(crossterm::event::MouseEvent { kind, column: 80, row: 12, modifiers: crossterm::event::KeyModifiers::NONE }, &d);
+            });
+        }
     }
 
     #[test]

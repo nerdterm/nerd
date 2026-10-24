@@ -64,14 +64,13 @@ pub enum Hit {
 pub struct View {
     id: Option<String>,
     at: usize,
-    offset: usize,
+    list: crate::chrome::Scroll,
     pub query: String,
     pub open: HashSet<String>,
     rows: usize,
     pub filter: bool,
-    /// The first body line shown, and how many fit the last frame drawn: a detail's text scrolls on its own.
-    body: usize,
-    body_room: std::cell::Cell<usize>,
+    /// The body's lines: a detail's text scrolls on its own.
+    text: crate::chrome::Scroll,
     /// The window's width, frame included.
     width: u16,
 }
@@ -99,7 +98,7 @@ pub fn button_lines(buttons: &[String], w: usize) -> Vec<Vec<usize>> {
 impl View {
     /// `width`: the window's, frame included.
     pub fn new(rows: usize, filter: bool, width: u16) -> Self {
-        Self { id: None, at: 0, offset: 0, query: String::new(), open: HashSet::new(), rows, filter, body: 0, body_room: std::cell::Cell::new(usize::MAX), width }
+        Self { id: None, at: 0, list: Default::default(), query: String::new(), open: HashSet::new(), rows, filter, text: Default::default(), width }
     }
 
     /// The dialog's inner width on this screen.
@@ -163,7 +162,7 @@ impl View {
             y += 1;
         }
         let selected = self.selected(c);
-        let offset = self.offset.min(c.rows.len().saturating_sub(visible));
+        let offset = self.list.follow(selected, visible, c.rows.len());
         for (i, row) in c.rows.iter().enumerate().skip(offset).take(visible) {
             if y >= bottom {
                 break;
@@ -177,19 +176,23 @@ impl View {
             y += 1;
         }
         y += 1;
-        // Longer than its room, the body scrolls and its last line says where it is.
+        // Longer than its room, the body scrolls; the row over the buttons says where it is, else where the rows are.
         let room = bottom.saturating_sub(y) as usize;
         let scrolls = c.body.len() > room && room > 1;
         let shown = if scrolls { room - 1 } else { room };
-        self.body_room.set(shown);
-        let from = if scrolls { self.body.min(c.body.len() - shown) } else { 0 };
+        let from = self.text.place(shown, c.body.len());
         for line in c.body.iter().skip(from).take(shown) {
             put(buf, y, line);
             y += 1;
         }
-        if scrolls {
-            let at = format!("lines {}–{} of {}", from + 1, from + shown, c.body.len());
-            put(buf, y, &vec![(0, at, Style::default().bg(theme.ground).fg(theme.faint))]);
+        // the rows and the text both hidden: both on the one row
+        let at = match (self.list.hidden("rows"), scrolls.then(|| self.text.hidden("lines")).flatten()) {
+            (Some(rows), Some(lines)) => Some(format!("{rows} · {lines}")),
+            (Some(_), None) if c.body.len() < room => self.list.hidden("lines"),
+            (_, lines) => lines,
+        };
+        if let Some(at) = at {
+            crate::chrome::say(buf, r, bottom.saturating_sub(1), &at, theme);
         }
         // The buttons, then close, centred together line by line: `[Key] outcome` each, one cell apart.
         let text = Style::default().bg(theme.ground).fg(theme.text);
@@ -212,35 +215,20 @@ impl View {
         drawn
     }
 
-    /// Whether the body is longer than the room the last frame gave it.
-    fn body_scrolls(&self, c: &Content) -> bool {
-        c.body.len() > self.body_room.get()
-    }
-
-    /// Moves the body by `by` lines, never past its first or its last.
-    fn scroll_body(&mut self, by: isize, c: &Content) {
-        let last = c.body.len().saturating_sub(self.body_room.get().max(1));
-        self.body = (self.body.min(last) as isize + by).clamp(0, last as isize) as usize;
-    }
-
-    pub fn key(&mut self, k: crossterm::event::KeyEvent, screen: Rect, c: &Content) -> Hit {
+    pub fn key(&mut self, k: crossterm::event::KeyEvent, _screen: Rect, c: &Content) -> Hit {
         use crossterm::event::{KeyCode::*, KeyModifiers};
         let mut at = self.selected(c);
         let query = self.query.clone();
-        let page = self.body_room.get().min(c.body.len()).max(1) as isize;
         match k.code {
-            PageUp if self.body_scrolls(c) => self.scroll_body(-page, c),
-            PageDown if self.body_scrolls(c) => self.scroll_body(page, c),
-            Home if self.body_scrolls(c) => self.scroll_body(isize::MIN / 2, c),
-            End if self.body_scrolls(c) => self.scroll_body(isize::MAX / 2, c),
+            PageUp | PageDown | Home | End if self.text.hides() => _ = self.text.key(k.code),
             // With one row there is nothing to choose: the arrows read the text.
-            Up if c.rows.len() <= 1 && self.body_scrolls(c) => self.scroll_body(-1, c),
-            Down if c.rows.len() <= 1 && self.body_scrolls(c) => self.scroll_body(1, c),
+            Up | Down if c.rows.len() <= 1 && self.text.hides() => _ = self.text.key(k.code),
             Esc if self.filter && !self.query.is_empty() => self.query.clear(),
             Esc => return Hit::Close,
             Enter => return Hit::Enter(at),
             Up => at = at.saturating_sub(1),
             Down => at = (at + 1).min(c.rows.len().saturating_sub(1)),
+            PageUp | PageDown | Home | End => at = self.list.pick(k.code, at, c.rows.len()).unwrap_or(at),
             Backspace if self.filter => {
                 self.query.pop();
             }
@@ -249,16 +237,11 @@ impl View {
         }
         if self.query != query {
             // Other rows now: the first match is selected.
-            (self.id, self.at, self.offset) = (None, 0, 0);
+            (self.id, self.at) = (None, 0);
+            self.list.set(0);
             return Hit::None;
         }
         self.select(at, c);
-        let visible = self.geometry(screen, c).1;
-        if at < self.offset {
-            self.offset = at;
-        } else if visible > 0 && at >= self.offset + visible {
-            self.offset = at + 1 - visible;
-        }
         Hit::None
     }
 
@@ -280,24 +263,18 @@ impl View {
                 }
                 if self.geometry(screen, c).0.contains(at) { Hit::None } else { Hit::Close }
             }
-            // The wheel moves the text when it is longer than its room, else the rows.
-            ScrollUp if self.body_scrolls(c) => {
-                self.scroll_body(-3, c);
+            // The wheel moves the text when it is longer than its room, else the rows and the selection with them.
+            kind if self.text.hides() => {
+                self.text.wheel(kind);
                 Hit::None
             }
-            ScrollDown if self.body_scrolls(c) => {
-                self.scroll_body(3, c);
+            kind => {
+                if self.list.wheel(kind) && !c.rows.is_empty() {
+                    let at = self.list.within(self.selected(c));
+                    self.select(at, c);
+                }
                 Hit::None
             }
-            ScrollUp => {
-                self.offset = self.offset.saturating_sub(1);
-                Hit::None
-            }
-            ScrollDown => {
-                self.offset = (self.offset + 1).min(c.rows.len().saturating_sub(self.geometry(screen, c).1));
-                Hit::None
-            }
-            _ => Hit::None,
         }
     }
 }
@@ -524,6 +501,30 @@ mod tests {
 
     const SCREEN: Rect = Rect { x: 0, y: 0, width: 80, height: 24 };
 
+    #[test]
+    fn rows_and_text_both_hidden_say_so_on_one_row() {
+        let theme = Theme::dark();
+        let row = |i: usize| Row { id: format!("{i}"), base: Style::default(), spans: vec![(0, format!("row {i}"), Style::default())], parent: false };
+        let line = |i: usize| vec![(0, format!("line {i}"), Style::default())];
+        let c = Content { rows: (0..10).map(row).collect(), body: (0..30).map(line).collect(), body_h: 30, ..Content::default() };
+        let mut v = View::new(ROWS, false, crate::chrome::WINDOW_W);
+        let shown = |v: &View| {
+            let mut buf = Buffer::empty(SCREEN);
+            v.draw(&mut buf, SCREEN, &theme, "Panel", &c);
+            crate::app::snapshots::dump(&buf, SCREEN).lines().take(24).collect::<Vec<_>>().join("\n")
+        };
+        let at = shown(&v);
+        let place = at.lines().position(|l| l.contains("│ rows 1–1 of 10 · lines 1–")).unwrap_or_else(|| panic!("{at}"));
+        assert!(at.lines().nth(place + 1).is_some_and(|l| l.contains("[Esc] close")), "the row over the buttons: {at}");
+        v.key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE), SCREEN, &c);
+        assert!(shown(&v).contains("· lines 17–30 of 30"), "the keys read the text: {}", shown(&v));
+        let only_rows = Content { body: Vec::new(), body_h: 0, ..Content { rows: (0..30).map(row).collect(), ..Content::default() } };
+        let mut buf = Buffer::empty(SCREEN);
+        View::new(ROWS, false, crate::chrome::WINDOW_W).draw(&mut buf, SCREEN, &theme, "Panel", &only_rows);
+        let text = crate::app::snapshots::dump(&buf, SCREEN);
+        assert!(text.contains("│ lines 1–") && !text.contains("rows "), "rows alone keep the word lines: {text}");
+    }
+
     fn labels(d: &Data, o: &Open) -> Vec<String> {
         content(Some(d), &o.view, o.view.inner(SCREEN), &Theme::dark()).rows.iter().map(|r| r.spans[0].1.trim().to_string()).collect()
     }
@@ -585,7 +586,7 @@ mod tests {
         o.key(KeyEvent::from(KeyCode::Char('c')), SCREEN, Some(&d));
         assert_eq!(o.view.query, "c");
         assert_eq!(o.key(KeyEvent::from(KeyCode::Enter), SCREEN, Some(&d)), Outcome::Opened("c".into()));
-        assert!(o.view.query.is_empty() && o.view.offset == 0, "the filter and the scroll were the last place's");
+        assert!(o.view.query.is_empty() && o.view.list.get() == 0, "the filter and the scroll were the last place's");
         assert_eq!(o.view.selected(&content(Some(&d), &o.view, o.view.inner(SCREEN), &Theme::dark())), 2, "until the plugin answers, the chosen row stays lit");
         assert_eq!(o.view.selected(&content(Some(&list(&["x", "y"])), &o.view, o.view.inner(SCREEN), &Theme::dark())), 0, "and its answer starts at the top");
         assert_eq!(click_row(&mut o, &d, "c"), Outcome::Opened("c".into()), "a click opens it too");

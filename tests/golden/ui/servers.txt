@@ -17,7 +17,7 @@
      │ Build: nerd 0.15.0.                                                │     
      │ Open in another session: opening it here asks before taking it     │     
      │ over.                                                              │     
-     │                                                                    │     
+     │ lines 1–5 of 10                                                    │     
      │      [Enter] open…   [w] open in a new window…   [r] rename…       │     
      │               [u] update…   [s] stop…   [Esc] close                │     
      └────────────────────────────────────────────────────────────────────┘     
@@ -164,7 +164,9 @@
 17:76-79 Reset Reset NONE
 18:0-3 Reset Reset NONE
 18:4-4 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
-18:5-74 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+18:5-6 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+18:7-21 Rgb(116, 121, 127) Rgb(19, 20, 23) NONE
+18:22-74 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
 18:75-75 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
 18:76-79 Reset Reset NONE
 19:0-3 Reset Reset NONE
@@ -757,7 +759,7 @@
      │ Build: nerd 0.15.0.                                                │     
      │ Open in another session: opening it here asks before taking it     │     
      │ over.                                                              │     
-     │                                                                    │     
+     │ lines 1–6 of 8                                                     │     
      │      [Enter] rename…   [u] update…   [s] stop…   [Esc] close       │     
      └────────────────────────────────────────────────────────────────────┘     
                                                                                 
@@ -910,7 +912,9 @@
 18:76-79 Reset Reset NONE
 19:0-3 Reset Reset NONE
 19:4-4 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
-19:5-74 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+19:5-6 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+19:7-20 Rgb(116, 121, 127) Rgb(19, 20, 23) NONE
+19:21-74 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
 19:75-75 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
 19:76-79 Reset Reset NONE
 20:0-3 Reset Reset NONE

@@ -55,6 +55,13 @@ Every window except a context menu is drawn through `chrome::dialog`, and `chrom
   blank row and `[Esc] close`. At most the screen less 1/16 at each side and 1/10 above and below, which narrows a
   window on a small screen; a longer list scrolls. It is centred.
 - A window with a search or a filter is sized from its whole content, so it does not move while typing.
+- Content taller than its window scrolls one way in every window (`chrome::Scroll`): the wheel three lines, Up and Down
+  a line (where they move a selection, the selection leads and is always in view), Page Up and Page Down a page, Home
+  and End to the start and the end. While anything is hidden, the row over the buttons reads "lines N–M of K"; the
+  buttons never scroll. A panel whose rows and text are both hidden says both on that row ("rows N–M of K · lines
+  N–M of K"); a Search help page says it over **[o] open on nerdterm.dev**. A context menu taller than the screen
+  opens where it does and scrolls the same way, its last row saying what is hidden. Keys and mouse lists these keys
+  under "A window taller than the screen". The routes map pans instead.
 - The key strip is broken between keys into lines that fit the width (`chrome::hint`). A row of buttons wider than
   the window is broken the same way, close on the last line.
 - Section headers are sentence case; a rule between groups is drawn in the border colour.
@@ -66,7 +73,7 @@ has. The field has a frame of its own at the top. Type to filter; every word mus
 letter is typed: the sidebar already lists the panes. Each result is one line, its name on the left and one value on
 the right (a key, a setting's value, a folder, a pane's place); a name, place or value is cut at 512 bytes. Search
 keeps its top where its longest list would put it and grows downward with its results, up to 14 rows; more scroll, and the list moves only to keep the
-chosen row in view, never under the pointer. Groups are tabs: All, Panes, Commands, Settings, Plugins, Files, Help
+chosen row in view and with the wheel, never under the pointer. Groups are tabs: All, Panes, Commands, Settings, Plugins, Files, Help
 and Text; on a narrow window the tabs and the chips take more lines. All shows at most five rows of each group and a
 row that says how many more there are. Panes has chips for the agent states; a chip other than all lists the panes
 in that state. Search, a name field and New space take a paste's first line; every other window drops it; the pane
