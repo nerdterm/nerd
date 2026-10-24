@@ -114,6 +114,7 @@ pub struct Settings {
     message: Option<(bool, String)>,
     /// The window is attached from inside a pane: agent hooks are not changed from it.
     pub inside: bool,
+    scroll: crate::chrome::Scroll,
 }
 
 /// One key this screen answers: the handler dispatches on these rows and the strip prints them.
@@ -151,17 +152,16 @@ impl Settings {
             hook_installed: crate::hook::is_installed(),
             message: None,
             inside: false,
+            scroll: Default::default(),
         }
     }
 
-    /// Fits its widest row or hint, which the message line cuts rather than wraps, and the key strip under the list.
+    /// The message line under the list is cut rather than wrapped; the key strip under it wraps.
     pub fn rect(&self, screen: Rect) -> Rect {
-        let rows = ROWS.iter().map(|(_, label, item)| label.chars().count() + 4 + self.value(*item).chars().count());
-        let hints = [SCROLLBACK_HINT, CONFIG_HINT].map(|h| h.chars().count());
-        let widest = rows.chain(hints).max().unwrap_or(0) as u16;
-        let strip = hint_strip(crate::chrome::fit(screen, widest, 0).width.saturating_sub(4) as usize).len();
+        let w = crate::chrome::WINDOW_W;
+        let strip = hint_strip(crate::chrome::fit(screen, w, 0).width.saturating_sub(4) as usize).len();
         // the list, the message line, the key strip
-        crate::chrome::fit(screen, widest, (lines().len() + 1 + strip) as u16)
+        crate::chrome::fit(screen, w, (lines().len() + 1 + strip) as u16)
     }
 
     /// Draws the panel; returns each setting's row and its index into `ROWS`.
@@ -193,8 +193,9 @@ impl Settings {
         // A screen shorter than the list scrolls so the selected row stays in view.
         let all = lines();
         let room = bottom.saturating_sub(y) as usize;
-        let at = all.iter().position(|l| *l == Line::Row(self.selected)).unwrap_or(0);
-        for (y, line) in (y..).zip(all.iter().skip((at + 1).saturating_sub(room))) {
+        let from = self.scroll.follow(self.line(&all), room, all.len());
+        self.scroll.draw(buf, r, inner.bottom(), theme);
+        for (y, line) in (y..).zip(all.iter().skip(from)) {
             if y >= bottom {
                 break;
             }
@@ -225,9 +226,16 @@ impl Settings {
     pub fn key(&mut self, k: crossterm::event::KeyEvent, cfg: &mut Config) -> SettingsOutcome {
         // Settings has no text field, so every key here is a command.
         let k = crate::keys::normalize(k);
-        KEYS.iter()
+        if let Some(i) = self.scroll.pick(k.code, self.selected, ROWS.len()) {
+            self.selected = i;
+            self.reveal();
+            return SettingsOutcome::None;
+        }
+        let out = KEYS.iter()
             .find(|r| r.code == k.code)
-            .map_or(SettingsOutcome::None, |r| (r.act)(self, cfg))
+            .map_or(SettingsOutcome::None, |r| (r.act)(self, cfg));
+        self.reveal();
+        out
     }
 
     /// `rows`: where the last frame's `draw` put them.
@@ -259,15 +267,17 @@ impl Settings {
                     None => SettingsOutcome::None,
                 }
             }
-            ScrollUp => {
-                self.step(-3);
+            // A list longer than its room scrolls three lines a notch; one that fits walks the selection.
+            ScrollUp | ScrollDown if !self.scroll.hides() => {
+                self.step(if ev.kind == ScrollUp { -3 } else { 3 });
                 SettingsOutcome::None
             }
-            ScrollDown => {
-                self.step(3);
+            kind => {
+                if self.scroll.wheel(kind) {
+                    self.drag();
+                }
                 SettingsOutcome::None
             }
-            _ => SettingsOutcome::None,
         }
     }
 
@@ -443,6 +453,31 @@ impl Settings {
     fn step(&mut self, delta: isize) {
         let n = ROWS.len() as isize;
         self.selected = (self.selected as isize + delta).rem_euclid(n) as usize;
+    }
+
+    /// The selected row's line in `all`.
+    fn line(&self, all: &[Line]) -> usize {
+        all.iter().position(|l| *l == Line::Row(self.selected)).unwrap_or(0)
+    }
+
+    /// The heading over a row the keys select comes into view with it; the wheel leaves it.
+    fn reveal(&self) {
+        let all = lines();
+        let at = self.line(&all);
+        let head = (0..at).rev().take_while(|&i| !matches!(all[i], Line::Row(_))).last().unwrap_or(at);
+        self.scroll.follow(head, self.scroll.page(), all.len());
+    }
+
+    /// A selected row the wheel moved out of view: the nearest row in view instead.
+    fn drag(&mut self) {
+        let all = lines();
+        let at = self.line(&all);
+        let to = self.scroll.within(at);
+        let row = |l: &Line| if let Line::Row(i) = l { Some(*i) } else { None };
+        let near = if to > at { all[to..].iter().find_map(row) } else { all[..=to].iter().rev().find_map(row) };
+        if to != at && let Some(i) = near {
+            self.selected = i;
+        }
     }
 
 }

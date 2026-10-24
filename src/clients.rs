@@ -203,7 +203,7 @@ pub type Drawn = crate::panel::Drawn;
 
 impl Sessions {
     pub fn new(list: Vec<ClientRecord>, own: Option<String>) -> Self {
-        Self { list, own, view: crate::panel::View::new(ROWS as usize, false) }
+        Self { list, own, view: crate::panel::View::new(ROWS as usize, false, crate::chrome::WINDOW_W) }
     }
 
     fn rows(&self) -> Vec<Row> {
@@ -213,7 +213,7 @@ impl Sessions {
 
     /// The panel's content for this screen; `selected` picks the details. Details take the height of the longest, so selecting does not resize it.
     fn content(&self, screen: Rect, theme: &Theme, selected: Option<usize>) -> crate::panel::Content {
-        let w = crate::panel::inner(screen);
+        let w = self.view.inner(screen);
         let ground = Style::default().bg(theme.ground);
         let rows = self.rows();
         let (head, warn) = headline(&rows);

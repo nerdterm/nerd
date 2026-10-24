@@ -1676,7 +1676,7 @@ impl App {
         if let Some(crate::policy::Isolation { network: crate::policy::Network::Providers(p), .. }) = pick.as_mut() {
             *p = crate::policy::entries(&chosen);
         }
-        Overlay::Isolation(crate::isolation_ui::IsolationWin { target, about, pick, inherit, accounts, providers, groups, chosen, stale, view: None, notes, home })
+        Overlay::Isolation(crate::isolation_ui::IsolationWin { target, about, pick, inherit, accounts, providers, groups, chosen, stale, view: None, notes, home, scroll: Default::default() })
     }
 
     pub(super) fn isolation_outcome(&mut self, w: crate::isolation_ui::IsolationWin, out: crate::isolation_ui::Out) -> Overlay {

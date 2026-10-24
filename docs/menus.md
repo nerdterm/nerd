@@ -40,10 +40,28 @@ Every window except a context menu is drawn through `chrome::dialog`, and `chrom
 - The routes map is the one window that fills the screen, so a wide layout can be panned; it leaves the top row to
   nerd's logo, an image the terminal draws over any text.
 - The title is in the frame, never a row inside it. A context menu has no title.
-- The size fits the content: as wide as its widest line, key strip included, and at least 40 columns; as tall as
-  its rows, the strip, the blank row and `[Esc] close`. At most the screen less 1/16 at each side and 1/10 above
-  and below; a longer list scrolls. It is centred.
+- Each window type has one width, frame included, whatever it shows:
+  - 48 columns: a one-line field (Rename, a space's name, every prompt); the typed text scrolls inside it, a note
+    under it wraps and a long title is cut with "…".
+  - 68 columns: Confirm, Search, Settings, Keys and mouse, New space, every picker (Open worktree, Preset terminal,
+    Topology, Report period, a subagent's run), Session history and a plugin's panel.
+  - 80 columns: Servers, Plugins, Messages, Isolation, Choose providers and Accounts.
+
+  What does not fit is wrapped or cut, never widened: a body, a hint and a key's description wrap (the description
+  under itself, a table's last column under its own start, a command under its indent, a line of chips under its
+  first chip, each chip keeping its click); a picker's second column, a panel's row and the
+  right-hand columns of a table are cut with "…"; a folder's path in New space loses its middle to "…". Not sized
+  this way: the routes map, context menus and the notice card. A window is as tall as its rows, the strip, the
+  blank row and `[Esc] close`. At most the screen less 1/16 at each side and 1/10 above and below, which narrows a
+  window on a small screen; a longer list scrolls. It is centred.
 - A window with a search or a filter is sized from its whole content, so it does not move while typing.
+- Content taller than its window scrolls one way in every window (`chrome::Scroll`): the wheel three lines, Up and Down
+  a line (where they move a selection, the selection leads and is always in view), Page Up and Page Down a page, Home
+  and End to the start and the end. While anything is hidden, the row over the buttons reads "lines N–M of K"; the
+  buttons never scroll. A panel whose rows and text are both hidden says both on that row ("rows N–M of K · lines
+  N–M of K"); a Search help page says it over **[o] open on nerdterm.dev**. A context menu taller than the screen
+  opens where it does and scrolls the same way, its last row saying what is hidden. Keys and mouse lists these keys
+  under "A window taller than the screen". The routes map pans instead.
 - The key strip is broken between keys into lines that fit the width (`chrome::hint`). A row of buttons wider than
   the window is broken the same way, close on the last line.
 - Section headers are sentence case; a rule between groups is drawn in the border colour.
@@ -54,15 +72,14 @@ Every window except a context menu is drawn through `chrome::dialog`, and `chrom
 has. The field has a frame of its own at the top. Type to filter; every word must match. Nothing is listed before a
 letter is typed: the sidebar already lists the panes. Each result is one line, its name on the left and one value on
 the right (a key, a setting's value, a folder, a pane's place); a name, place or value is cut at 512 bytes. Search
-is the exception to the size rules above: it is 68 columns wide with its frame, keeps its top where its longest list
-would put it and grows downward with its results, up to 14 rows; more scroll, and the list moves only to keep the
-chosen row in view, never under the pointer. Groups are tabs: All, Panes, Commands, Settings, Plugins, Files, Help
-and Text; on a narrow window the tabs and the chips take more lines. All shows at most five rows of each group and a
-row that says how many more there are. Panes has chips for the agent states; a chip other than all lists the panes
-in that state. Search, a name field and New space take a paste's first line; every other window drops it; the pane
-search and the file tree's filter take it while they hold the keys, and the sidebar and the tab bar drop it. What a
-result says while the window stays (a pane that has closed, a refusal, a help page's address) is a line in the
-window above the keys, gone at the next letter typed; a longer note takes more rows.
+keeps its top where its longest list would put it and grows downward with its results, up to 14 rows; more scroll, and
+the list moves only to keep the chosen row in view and with the wheel, never under the pointer. Groups are tabs: All,
+Panes, Commands, Settings, Plugins, Files, Help and Text; on a narrow window the tabs and the chips take more lines. All
+shows at most five rows of each group and a row that says how many more there are. Panes has chips for the agent states;
+a chip other than all lists the panes in that state. Search, a name field and New space take a paste's first line; every
+other window drops it; the pane search and the file tree's filter take it while they hold the keys, and the sidebar and
+the tab bar drop it. What a result says while the window stays (a pane that has closed, a refusal, a help page's
+address) is a line in the window above the keys, gone at the next letter typed; a longer note takes more rows.
 
 - Panes: Enter or a click goes to the pane.
 - Commands: runs the menu item on the pane, tab or space it was listed for; a pane that has closed gives a notice and

@@ -85,6 +85,7 @@ fn rows(prefix: Prefix) -> Vec<(Option<&'static str>, &'static str, &'static str
     section("A confirmation", crate::menu::CONFIRM_KEYS.iter().map(|r| (r.0, r.2)).collect());
     section("A text field", crate::menu::FIELD_KEYS.iter().map(|r| (r.0, r.2)).collect());
     section("New space", crate::space_picker::KEYS.iter().map(|r| (r.0, r.2)).collect());
+    section("A window taller than the screen", crate::chrome::SCROLL_KEYS.to_vec());
     out
 }
 
@@ -101,17 +102,17 @@ pub struct Key {
 
 pub const KEYS: &[Key] = &[
     Key { code: crossterm::event::KeyCode::Up, label: "↑↓", word: "", what: "scroll the list",
-          act: |h| { h.scroll(-1); false } },
+          act: |h| { h.scroll.key(crossterm::event::KeyCode::Up); false } },
     Key { code: crossterm::event::KeyCode::Down, label: "", word: "", what: "scroll the list",
-          act: |h| { h.scroll(1); false } },
+          act: |h| { h.scroll.key(crossterm::event::KeyCode::Down); false } },
     Key { code: crossterm::event::KeyCode::PageUp, label: "PgUp PgDn", word: "", what: "a screen at a time",
-          act: |h| { h.scroll(-10); false } },
+          act: |h| { h.scroll.key(crossterm::event::KeyCode::PageUp); false } },
     Key { code: crossterm::event::KeyCode::PageDown, label: "", word: "", what: "a screen at a time",
-          act: |h| { h.scroll(10); false } },
+          act: |h| { h.scroll.key(crossterm::event::KeyCode::PageDown); false } },
     Key { code: crossterm::event::KeyCode::Home, label: "Home End", word: "", what: "the top and the bottom",
-          act: |h| { h.offset = 0; false } },
+          act: |h| { h.scroll.key(crossterm::event::KeyCode::Home); false } },
     Key { code: crossterm::event::KeyCode::End, label: "", word: "", what: "the top and the bottom",
-          act: |h| { h.offset = h.lines().len().saturating_sub(1); false } },
+          act: |h| { h.scroll.key(crossterm::event::KeyCode::End); false } },
     Key { code: crossterm::event::KeyCode::Char('/'), label: "/", word: "search", what: "filter the list",
           act: |h| { h.filtering = true; false } },
     Key { code: crossterm::event::KeyCode::Esc, label: "esc", word: "close", what: "clear the filter, then close",
@@ -120,7 +121,7 @@ pub const KEYS: &[Key] = &[
                   return true;
               }
               h.query.clear();
-              h.offset = 0;
+              h.scroll.set(0);
               false
           } },
 ];
@@ -129,23 +130,32 @@ pub struct KeysHelp {
     pub query: String,
     /// While typing, printable keys go into `query`, not `q`-to-close.
     filtering: bool,
-    offset: usize,
+    scroll: crate::chrome::Scroll,
     prefix: Prefix,
 }
 
 impl KeysHelp {
     pub fn new(prefix: Prefix) -> Self {
-        Self { query: String::new(), filtering: false, offset: 0, prefix }
+        Self { query: String::new(), filtering: false, scroll: Default::default(), prefix }
     }
 
     /// Fits the whole list, not the filtered part, so it does not move while typing; a longer list scrolls.
     pub fn rect(&self, screen: Rect) -> Rect {
-        let all = rows(self.prefix);
-        let (keys, desc) = all.iter().fold((0, 0), |(k, d), r| (k.max(r.1.chars().count()), d.max(r.2.chars().count())));
-        let widest = (3 + keys + desc) as u16;
-        let strip = hint(crate::chrome::fit(screen, widest, 0).width.saturating_sub(4) as usize).len();
+        let w = crate::chrome::WINDOW_W;
+        let width = crate::chrome::fit(screen, w, 0).width.saturating_sub(4) as usize;
+        let room = self.desc_room(width);
+        let list: usize = Self::lines_for(self.prefix, "").iter().map(|l| if let Line::Bind(_, d) = l { crate::menu::wrap(d, room).len() } else { 1 }).sum();
         // the search field, the list, the key strip
-        crate::chrome::fit(screen, widest, (1 + Self::lines_for(self.prefix, "").len() + strip) as u16)
+        crate::chrome::fit(screen, w, (1 + list + hint(width).len()) as u16)
+    }
+
+    /// The widest keys, and the cells a description has after them on a line `width` wide.
+    fn keys_w(&self) -> usize {
+        rows(self.prefix).iter().map(|r| r.1.chars().count()).max().unwrap_or(0)
+    }
+
+    fn desc_room(&self, width: usize) -> usize {
+        width.saturating_sub(3 + self.keys_w())
     }
 
     /// A section heading is included only when something in it matched.
@@ -197,9 +207,6 @@ impl KeysHelp {
         let bottom = crate::chrome::draw_hint(buf, inner, &hint(width), theme).max(y);
 
         let lines = self.lines();
-        // Filtering can shorten the list past the previous offset, leaving the window empty.
-        let page = bottom.saturating_sub(y) as usize;
-        let offset = self.offset.min(lines.len().saturating_sub(1));
         if lines.is_empty() {
             if y < bottom {
                 buf.set_stringn(inner.x, y, " no keys", width, Style::default().fg(theme.faint));
@@ -207,34 +214,33 @@ impl KeysHelp {
             return;
         }
 
-        let keys_w = rows(self.prefix).iter().map(|r| r.1.chars().count()).max().unwrap_or(0) as u16;
-
-        for line in lines.iter().skip(offset).take(page) {
+        let dx = inner.x + 3 + self.keys_w() as u16;
+        let room = self.desc_room(width);
+        // A heading, or the keys beside the first line of what they do: a long description wraps under itself.
+        let mut rows: Vec<(Option<&str>, String)> = Vec::new();
+        for line in &lines {
             match line {
-                Line::Head(h) => {
-                    buf.set_stringn(inner.x, y, *h, width, Style::default().fg(theme.muted));
-                }
+                Line::Head(h) => rows.push((None, h.to_string())),
                 Line::Bind(keys, desc) => {
-                    buf.set_stringn(
-                        inner.x + 2,
-                        y,
-                        *keys,
-                        width.saturating_sub(2),
-                        Style::default().fg(theme.muted),
-                    );
-                    let dx = inner.x + 3 + keys_w;
-                    if dx < inner.right() {
-                        buf.set_stringn(
-                            dx,
-                            y,
-                            *desc,
-                            (inner.right() - dx) as usize,
-                            Style::default().fg(theme.text),
-                        );
+                    for (i, part) in crate::menu::wrap(desc, room).into_iter().enumerate() {
+                        rows.push((Some(if i == 0 { keys } else { "" }), part));
                     }
                 }
             }
-            y += 1;
+        }
+        let page = bottom.saturating_sub(y) as usize;
+        let from = self.scroll.place(page, rows.len());
+        self.scroll.draw(buf, r, inner.bottom(), theme);
+        for ((keys, text), y) in rows.iter().skip(from).zip(y..bottom) {
+            match keys {
+                None => _ = buf.set_stringn(inner.x, y, text, width, Style::default().fg(theme.muted)),
+                Some(keys) => {
+                    buf.set_stringn(inner.x + 2, y, keys, width.saturating_sub(2), Style::default().fg(theme.muted));
+                    if dx < inner.right() {
+                        buf.set_stringn(dx, y, text, room, Style::default().fg(theme.text));
+                    }
+                }
+            }
         }
     }
 
@@ -250,20 +256,18 @@ impl KeysHelp {
                 Esc => {
                     self.filtering = false;
                     self.query.clear();
-                    self.offset = 0;
+                    self.scroll.set(0);
                 }
                 Enter => self.filtering = false,
                 Backspace => {
                     self.query.pop();
-                    self.offset = 0;
+                    self.scroll.set(0);
                 }
                 Char(c) => {
                     self.query.push(c);
-                    self.offset = 0;
+                    self.scroll.set(0);
                 }
-                Up => self.scroll(-1),
-                Down => self.scroll(1),
-                _ => {}
+                code => _ = self.scroll.key(code),
             }
             return false;
         }
@@ -281,21 +285,11 @@ impl KeysHelp {
                 let (r, at) = (self.rect(screen), (ev.column, ev.row).into());
                 !r.contains(at) || crate::chrome::close_rect(r).contains(at)
             }
-            ScrollUp => {
-                self.scroll(-3);
+            kind => {
+                self.scroll.wheel(kind);
                 false
             }
-            ScrollDown => {
-                self.scroll(3);
-                false
-            }
-            _ => false,
         }
-    }
-
-    fn scroll(&mut self, delta: isize) {
-        let last = self.lines().len().saturating_sub(1) as isize;
-        self.offset = (self.offset as isize + delta).clamp(0, last) as usize;
     }
 }
 
@@ -362,6 +356,7 @@ mod tests {
         assert_eq!(section("A confirmation"), ["enter", "y", "n, esc", "d", "←→ tab"]);
         assert_eq!(section("A text field"), ["enter", "esc", "←→ Home End", "ctrl+u"]);
         assert_eq!(section("New space"), ["tab", "↑↓", "enter", "esc"]);
+        assert_eq!(section("A window taller than the screen"), ["wheel", "↑↓", "PgUp PgDn", "Home End"]);
         assert!(!crate::keys::GLOBAL.iter().any(|g| g.what.contains("confirmations are off")));
     }
 
@@ -385,6 +380,7 @@ mod tests {
                 "A confirmation",
                 "A text field",
                 "New space",
+                "A window taller than the screen",
             ],
             "every area that answers a key has a section, and they come from its own table"
         );
@@ -496,23 +492,34 @@ mod tests {
         assert!(h.key(key(KeyCode::Esc)));
     }
 
+    /// Drawn on an 80x30 screen: the keys go by what the last frame showed.
+    fn drawn(h: &KeysHelp) -> String {
+        let screen = Rect::new(0, 0, 80, 30);
+        let mut buf = Buffer::empty(screen);
+        h.draw(&mut buf, screen, &theme());
+        crate::app::snapshots::dump(&buf, screen)
+    }
+
     #[test]
     fn scrolling_stops_at_both_ends() {
         let mut h = KeysHelp::new(Prefix::Off);
+        drawn(&h);
         h.key(key(KeyCode::Down));
-        assert_eq!(h.offset, 1);
+        assert_eq!(h.scroll.get(), 1);
         h.key(key(KeyCode::Up));
-        assert_eq!(h.offset, 0);
+        assert_eq!(h.scroll.get(), 0);
         h.key(key(KeyCode::Up));
-        assert_eq!(h.offset, 0, "didn't go past the start");
+        assert_eq!(h.scroll.get(), 0, "didn't go past the start");
 
         h.key(key(KeyCode::End));
-        let last = h.lines().len() - 1;
-        assert_eq!(h.offset, last);
+        let last = h.scroll.get();
+        assert!(last > 0 && drawn(&h).contains(&format!("of {} ", last + h.scroll.page())), "End shows the last page: {}", drawn(&h));
         h.key(key(KeyCode::PageDown));
-        assert_eq!(h.offset, last, "didn't go past the end");
+        assert_eq!(h.scroll.get(), last, "didn't go past the end");
+        h.key(key(KeyCode::PageUp));
+        assert_eq!(h.scroll.get(), last - h.scroll.page(), "a page up");
         h.key(key(KeyCode::Home));
-        assert_eq!(h.offset, 0);
+        assert_eq!(h.scroll.get(), 0);
     }
 
     #[test]
@@ -537,11 +544,12 @@ mod tests {
     #[test]
     fn filtering_resets_the_scroll() {
         let mut h = KeysHelp::new(Prefix::Off);
+        drawn(&h);
         h.key(key(KeyCode::End));
-        assert!(h.offset > 0);
+        assert!(h.scroll.get() > 0);
         h.key(key(KeyCode::Char('/')));
         h.key(key(KeyCode::Char('z')));
-        assert_eq!(h.offset, 0);
+        assert_eq!(h.scroll.get(), 0);
     }
 
     #[test]
@@ -553,10 +561,11 @@ mod tests {
         assert!(h.mouse(mouse(MouseEventKind::Down(MouseButton::Left), 0, 0), screen));
         assert!(!h.mouse(mouse(MouseEventKind::Down(MouseButton::Left), r.x + 1, r.y + 1), screen));
 
+        drawn(&h);
         h.mouse(mouse(MouseEventKind::ScrollDown, r.x + 1, r.y + 1), screen);
-        assert_eq!(h.offset, 3);
+        assert_eq!(h.scroll.get(), 3);
         h.mouse(mouse(MouseEventKind::ScrollUp, r.x + 1, r.y + 1), screen);
-        assert_eq!(h.offset, 0);
+        assert_eq!(h.scroll.get(), 0);
     }
 
     #[test]

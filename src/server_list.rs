@@ -146,7 +146,7 @@ fn sandbox_word(s: &str) -> &str {
 impl ServerList {
     /// `machines` only for a session that `connects`; `elsewhere` says why one does not.
     pub fn new(own: String, machines: Vec<RemoteEntry>, connects: bool, elsewhere: bool) -> Self {
-        let mut view = crate::panel::View::new(ROWS, false);
+        let mut view = crate::panel::View::new(ROWS, false, crate::chrome::WIDE_W);
         view.open.insert(MAC.into());
         let machines = if connects { machines.into_iter().map(|m| (m, Machine::Closed)).collect() } else { Vec::new() };
         Self { own, servers: None, machines, connects, elsewhere, view, switches: true, windows: true }
@@ -272,7 +272,7 @@ impl ServerList {
     }
 
     fn content(&self, screen: Rect, theme: &Theme, selected: Option<usize>) -> crate::panel::Content {
-        let w = crate::panel::inner(screen);
+        let w = self.view.inner(screen);
         let ground = Style::default().bg(theme.ground);
         let (text, muted, faint, warn) = (ground.fg(theme.text), ground.fg(theme.muted), ground.fg(theme.faint), ground.fg(theme.warn));
         let wrap = |s: &str| crate::menu::wrap(s, w);
@@ -336,9 +336,8 @@ impl ServerList {
         let titles = ["Server", "State", "Sessions", "Last used", "Sandbox", "Folders"];
         let widths: Vec<usize> = (0..6).map(|i| table.iter().map(|c| crate::slots::cells(&c.0[i])).chain([titles[i].len()]).max().unwrap_or(0)).collect();
         let xs: Vec<usize> = widths.iter().scan(0, |x, w| Some(std::mem::replace(x, *x + w + 2))).collect();
-        let room = crate::chrome::limits(screen).0.saturating_sub(2 * crate::chrome::DIALOG_FRAME.horizontal) as usize;
         let fit = |s: &str, n: usize| if crate::slots::cells(s) <= n { s.to_string() } else if n == 0 { String::new() } else { format!("{}…", s.chars().take(n - 1).collect::<String>()) };
-        let cells = |texts: &[String; 6], style: &[Style; 6]| -> crate::panel::Spans { (0..6).filter(|&i| xs[i] < room).map(|i| (xs[i], fit(&texts[i], widths[i].min(room - xs[i])), style[i])).collect() };
+        let cells = |texts: &[String; 6], style: &[Style; 6]| -> crate::panel::Spans { (0..6).filter(|&i| xs[i] < w).map(|i| (xs[i], fit(&texts[i], widths[i].min(w - xs[i])), style[i])).collect() };
         head.push(cells(&titles.map(String::from), &[muted; 6]));
 
         let line = |id: &str, label: String, style: Style| crate::panel::Row { id: id.into(), base: text, spans: vec![(0, label, style)], parent: false };
@@ -368,14 +367,14 @@ impl ServerList {
                 Ok(()) => clean(&r.host),
                 Err(e) => format!("not usable: {e}"),
             };
-            rows.push(crate::panel::Row { parent: true, spans: vec![(0, format!("{} {}", arrow(open), clean(&r.name)), text), (xs[1], fit(&host, room.saturating_sub(xs[1])), muted)], ..line(&id, String::new(), text) });
+            rows.push(crate::panel::Row { parent: true, spans: vec![(0, format!("{} {}", arrow(open), clean(&r.name)), text), (xs[1], fit(&host, w.saturating_sub(xs[1])), muted)], ..line(&id, String::new(), text) });
             if !open {
                 continue;
             }
             match m {
                 Machine::Closed => {}
                 Machine::Asking => rows.push(line(NOTE, format!("  asking {} for its servers…", clean(&r.name)), faint)),
-                Machine::Failed(e) => rows.push(line(NOTE, format!("  {}", fit(&clean(e), room.saturating_sub(2))), warn)),
+                Machine::Failed(e) => rows.push(line(NOTE, format!("  {}", fit(&clean(e), w.saturating_sub(2))), warn)),
                 Machine::Listed(list, _) if list.is_empty() => rows.push(line(NOTE, "  no servers; start one there with nerd".into(), faint)),
                 Machine::Listed(..) => take(&mut rows, &format!("r:{}:", r.name)),
             }
@@ -388,14 +387,10 @@ impl ServerList {
         let body_h = all.iter().map(Vec::len).max().unwrap_or(0);
         let labels = |id: &str| -> Vec<String> { self.actions(id).iter().enumerate().map(|(i, (k, l, _))| if i == 0 { format!(" [Enter] {l} ") } else { format!(" [{k}] {l} ") }).collect() };
         let bottoms: Vec<Vec<String>> = rows.iter().map(|r| labels(&r.id)).collect();
-        let widest = bottoms.iter().map(|b| crate::panel::bottom_w(b)).max().unwrap_or(0).min(room);
-        let spans_w = |l: &crate::panel::Spans| l.iter().map(|(x, t, _)| x + crate::slots::cells(t)).max().unwrap_or(0);
-        let inner = head.iter().chain(rows.iter().map(|r| &r.spans)).map(spans_w).chain(all.iter().flatten().map(|l| crate::slots::cells(l))).chain([widest]).max().unwrap_or(0);
-        let inner = inner.max(crate::chrome::MIN_W.saturating_sub(2 * crate::chrome::DIALOG_FRAME.horizontal) as usize).min(room);
-        let button_lines = bottoms.iter().map(|b| crate::panel::button_lines(b, inner).len()).max().unwrap_or(1);
+        let button_lines = bottoms.iter().map(|b| crate::panel::button_lines(b, w).len()).max().unwrap_or(1);
         let body = selected.and_then(|i| all.get(i)).cloned().unwrap_or_default().into_iter().map(|l| vec![(0, l, text)]).collect();
         let buttons = selected.and_then(|i| bottoms.get(i)).cloned().unwrap_or_default();
-        crate::panel::Content { head, rows, body, body_h, full: (widest, 0), buttons, button_lines }
+        crate::panel::Content { head, rows, body, body_h, full: 0, buttons, button_lines }
     }
 
     /// What the window says about the row with this id, unwrapped.

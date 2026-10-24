@@ -5,6 +5,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 
 use crate::app::IsolationTarget;
+use crate::chrome::Scroll;
 use crate::messages::{Drawn, Line, chip};
 use crate::agents::AgentNetwork;
 use crate::policy::{Account, Chosen, Files, Isolation, Network, entries};
@@ -67,17 +68,16 @@ pub struct IsolationWin {
     pub notes: Vec<String>,
     /// The pane's folder (a tab's or space's: the space's) is the home folder itself.
     pub home: bool,
+    pub scroll: Scroll,
 }
 
-/// Choose providers for one agent: what is ticked (None: all), the first line shown, and whether done found nothing ticked.
+/// Choose providers for one agent: what is ticked (None: all), the lines shown, and whether done found nothing ticked.
 #[derive(Clone, Debug, PartialEq)]
 pub struct View {
     pub agent: String,
     pub draft: Option<Vec<String>>,
-    pub scroll: usize,
+    pub scroll: Scroll,
     pub empty: bool,
-    /// The last line that can be first, from the last draw: keys stop where the wheel does.
-    pub last: std::cell::Cell<usize>,
 }
 
 const CANCEL: &str = " [Esc] cancel ";
@@ -208,18 +208,13 @@ impl IsolationWin {
 
     pub fn draw(&self, buf: &mut Buffer, screen: Rect, theme: &Theme) -> Drawn<Click> {
         if let Some(v) = &self.view {
-            let width = crate::chrome::limits(screen).0.saturating_sub(2 * crate::chrome::DIALOG_FRAME.horizontal) as usize;
-            let lines = self.view_lines(v, width, theme);
-            let r = crate::messages::fit(screen, &lines, DONE.len() + 1 + BACK.len());
-            let d = crate::messages::draw(buf, r, "Choose providers", theme, &lines, v.scroll, &[(DONE.to_string(), Click::Done)], BACK);
-            v.last.set(d.rows.saturating_sub(d.room));
-            return d;
+            let r = crate::chrome::fit(screen, crate::chrome::WIDE_W, u16::MAX);
+            let lines = self.view_lines(v, r.width.saturating_sub(2 * crate::chrome::DIALOG_FRAME.horizontal) as usize, theme);
+            let r = crate::chrome::fit(screen, r.width, lines.len() as u16);
+            return crate::messages::draw(buf, r, "Choose providers", theme, &lines, &v.scroll, &[(DONE.to_string(), Click::Done)], BACK);
         }
-        let lines = self.lines(theme);
-        let buttons = self.buttons();
-        let bottom = buttons.iter().map(|(b, _)| b.chars().count() + 1).sum::<usize>() + CANCEL.len();
-        let r = crate::messages::fit(screen, &lines, bottom);
-        crate::messages::draw(buf, r, self.title(), theme, &lines, 0, &buttons, CANCEL)
+        let (r, lines) = crate::messages::fit(screen, self.lines(theme));
+        crate::messages::draw(buf, r, self.title(), theme, &lines, &self.scroll, &self.buttons(), CANCEL)
     }
 
     fn click(&mut self, c: Click) -> Out {
@@ -239,7 +234,7 @@ impl IsolationWin {
             }
             Click::Choose(agent) => {
                 let draft = self.chosen.iter().find(|(a, _)| *a == agent).and_then(|(_, gs)| gs.clone());
-                self.view = Some(View { agent, draft, scroll: 0, empty: false, last: Default::default() });
+                self.view = Some(View { agent, draft, scroll: Scroll::default(), empty: false });
             }
             Click::All | Click::Group(_) | Click::Done => self.view_click(c),
             Click::Save(restart) => return Out::Save(self.pick.clone(), restart),
@@ -281,9 +276,7 @@ impl IsolationWin {
             match crate::keys::normalize(k).code {
                 Enter => self.view_click(Click::Done),
                 Esc => self.view = None,
-                Up => v.scroll = v.scroll.saturating_sub(1),
-                Down => v.scroll = (v.scroll + 1).min(v.last.get()),
-                _ => {}
+                code => _ = v.scroll.key(code),
             }
             return Out::None;
         }
@@ -291,7 +284,10 @@ impl IsolationWin {
             Enter => self.click(Click::Save(false)),
             Char('r') if self.inherit.is_none() => self.click(Click::Save(true)),
             Esc => Out::Close,
-            _ => Out::None,
+            code => {
+                self.scroll.key(code);
+                Out::None
+            }
         }
     }
 
@@ -299,12 +295,14 @@ impl IsolationWin {
         use crossterm::event::MouseEventKind::{ScrollDown, ScrollUp};
         if let Some(v) = self.view.as_mut() {
             match (ev.kind, pressed(ev, d)) {
-                (ScrollUp, _) => v.scroll = v.scroll.saturating_sub(3),
-                (ScrollDown, _) => v.scroll = (v.scroll + 3).min(v.last.get()),
+                (ScrollUp | ScrollDown, _) => _ = v.scroll.wheel(ev.kind),
                 (_, Err(_)) => self.view = None,
                 (_, Ok(Some(c))) => _ = self.click(c),
                 (_, Ok(None)) => {}
             }
+            return Out::None;
+        }
+        if self.scroll.wheel(ev.kind) {
             return Out::None;
         }
         match pressed(ev, d) {
@@ -346,11 +344,12 @@ pub struct Accounts {
     /// The account the commands are written for.
     pub name: String,
     owner: String,
+    scroll: Scroll,
 }
 
 impl Default for Accounts {
     fn default() -> Self {
-        Accounts { name: "agent".into(), owner: std::env::var("USER").unwrap_or_else(|_| "you".into()) }
+        Accounts { name: "agent".into(), owner: std::env::var("USER").unwrap_or_else(|_| "you".into()), scroll: Scroll::default() }
     }
 }
 
@@ -433,11 +432,8 @@ impl Accounts {
     }
 
     pub fn draw(&self, buf: &mut Buffer, screen: Rect, theme: &Theme, accounts: &[Account]) -> Drawn<Click> {
-        let lines = self.lines(accounts, theme);
-        let buttons = Self::buttons();
-        let bottom = buttons.iter().map(|(b, _)| b.chars().count() + 1).sum::<usize>() + crate::messages::CLOSE.len();
-        let r = crate::messages::fit(screen, &lines, bottom);
-        crate::messages::draw(buf, r, "Accounts", theme, &lines, 0, &buttons, crate::messages::CLOSE)
+        let (r, lines) = crate::messages::fit(screen, self.lines(accounts, theme));
+        crate::messages::draw(buf, r, "Accounts", theme, &lines, &self.scroll, &Self::buttons(), crate::messages::CLOSE)
     }
 
     fn click(&mut self, c: Click) -> Out {
@@ -458,11 +454,17 @@ impl Accounts {
             Char('c') => self.click(Click::Copy),
             Char('x') if accounts.iter().any(|a| a.name == self.name) => Out::Remove(self.name.clone()),
             Esc => Out::Close,
-            _ => Out::None,
+            code => {
+                self.scroll.key(code);
+                Out::None
+            }
         }
     }
 
     pub fn mouse(&mut self, ev: crossterm::event::MouseEvent, d: &Drawn<Click>) -> Out {
+        if self.scroll.wheel(ev.kind) {
+            return Out::None;
+        }
         match pressed(ev, d) {
             Err(out) => out,
             Ok(Some(c)) => self.click(c),
@@ -472,7 +474,7 @@ impl Accounts {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
@@ -490,11 +492,12 @@ mod tests {
             view: None,
             notes: vec!["Codex: run it with --sandbox danger-full-access".into()],
             home: false,
+            scroll: Scroll::default(),
         }
     }
 
     /// `fake` has the providers alpha (a.dev) and beta (b.dev, c.dev); the pane is set to only claude.
-    fn grouped() -> IsolationWin {
+    pub(crate) fn grouped() -> IsolationWin {
         let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
         let net = AgentNetwork { net: crate::agents::Network::Internet { hosts: s(&["a.dev", "b.dev", "c.dev"]), ports: vec![443] }, providers: vec![("alpha".into(), s(&["a.dev"])), ("beta".into(), s(&["b.dev", "c.dev"]))] };
         IsolationWin {
@@ -583,6 +586,22 @@ mod tests {
     }
 
     #[test]
+    fn choose_providers_scrolls_as_every_window() {
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let many: Vec<(String, Vec<String>)> = (0..60).map(|i| (format!("p{i:02}"), s(&[&format!("h{i}.dev")]))).collect();
+        let hosts = many.iter().flat_map(|(_, h)| h.clone()).collect();
+        let net = AgentNetwork { net: crate::agents::Network::Internet { hosts, ports: vec![443] }, providers: many };
+        let mut w = IsolationWin { groups: vec![("fake".into(), net)], ..grouped() };
+        w.click(Click::Provider("fake".into()));
+        w.click(Click::Choose("fake".into()));
+        let (screen, theme, w) = (Rect::new(0, 0, 160, 24), Theme::dark(), std::cell::RefCell::new(w));
+        crate::chrome::tests::scrolls("Choose providers", screen, false, &|b| _ = w.borrow().draw(b, screen, &theme), &|k| _ = w.borrow_mut().key(KeyEvent::new(k, KeyModifiers::NONE)), &|kind| {
+            let d = w.borrow().draw(&mut Buffer::empty(screen), screen, &theme);
+            w.borrow_mut().mouse(MouseEvent { kind, column: 80, row: 12, modifiers: KeyModifiers::NONE }, &d);
+        });
+    }
+
+    #[test]
     fn keys_scroll_the_view_no_further_than_the_wheel() {
         let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
         let many: Vec<(String, Vec<String>)> = (0..60).map(|i| (format!("p{i:02}"), s(&[&format!("h{i}.dev")]))).collect();
@@ -592,15 +611,16 @@ mod tests {
         w.click(Click::Provider("fake".into()));
         w.click(Click::Choose("fake".into()));
         shown(&w);
-        let last = w.view.as_ref().unwrap().last.get();
-        assert!(last > 0, "60 providers do not fit 40 rows");
         let key = |w: &mut IsolationWin, c| _ = w.key(KeyEvent::new(c, KeyModifiers::NONE));
+        key(&mut w, KeyCode::End);
+        let last = w.view.as_ref().unwrap().scroll.get();
+        assert!(last > 0, "60 providers do not fit 40 rows");
         for _ in 0..200 {
             key(&mut w, KeyCode::Down);
         }
-        assert_eq!(w.view.as_ref().unwrap().scroll, last);
+        assert_eq!(w.view.as_ref().unwrap().scroll.get(), last);
         key(&mut w, KeyCode::Up);
-        assert_eq!(w.view.as_ref().unwrap().scroll, last - 1, "one Up moves the view at once");
+        assert_eq!(w.view.as_ref().unwrap().scroll.get(), last - 1, "one Up moves the view at once");
     }
 
     #[test]
@@ -716,7 +736,7 @@ mod tests {
 
     #[test]
     fn the_accounts_window_writes_the_commands_for_the_name() {
-        let w = Accounts { name: "scout".into(), owner: "ann".into() };
+        let w = Accounts { name: "scout".into(), owner: "ann".into(), scroll: Scroll::default() };
         let c = w.commands();
         assert_eq!(c[0], "sudo sysadminctl -addUser scout -fullName \"scout agent\" -shell /bin/zsh -home /Users/scout -password - interactive");
         assert!(!c.iter().any(|l| l.contains("sudoers") || l.contains("NOPASSWD")), "the commands to copy carry no sudoers line: {c:?}");
@@ -736,5 +756,109 @@ mod tests {
         let accounts = [Account { name: "scout".into(), uid: 502 }];
         assert_eq!(w.key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE), &accounts), Out::Remove("scout".into()));
         assert_eq!(w.key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE), &[]), Out::None, "nothing admitted under that name");
+    }
+
+    /// The frame and the rows inside it, as drawn on a 160 × 45 screen.
+    fn inside<H: Clone>(draw: impl Fn(&mut Buffer, Rect) -> Drawn<H>) -> (Drawn<H>, Vec<String>) {
+        let screen = Rect::new(0, 0, 160, 45);
+        let mut buf = Buffer::empty(screen);
+        let d = draw(&mut buf, screen);
+        let rows = (d.frame.y..d.frame.bottom()).map(|y| (d.frame.x..d.frame.right()).map(|x| buf[(x, y)].symbol()).collect()).collect();
+        (d, rows)
+    }
+
+    /// pi names 36 provider groups; `chosen` of them are ticked.
+    fn pi(chosen: &[&str]) -> IsolationWin {
+        let many: Vec<(String, Vec<String>)> = (0..36).map(|i| (format!("group-{i:02}"), vec![format!("h{i}.dev")])).collect();
+        let net = AgentNetwork { net: crate::agents::Network::Internet { hosts: many.iter().flat_map(|(_, h)| h.clone()).collect(), ports: vec![443] }, providers: many };
+        let chosen: Vec<String> = chosen.iter().map(|c| c.to_string()).collect();
+        IsolationWin {
+            providers: vec!["claude".into(), "pi".into()],
+            groups: vec![("pi".into(), net)],
+            chosen: vec![("pi".into(), Some(chosen.clone()))],
+            pick: Some(Isolation { files: Files::Everything, network: Network::Providers(chosen.iter().map(|c| format!("pi/{c}")).collect()) }),
+            ..pane()
+        }
+    }
+
+    /// Clicks `label` where `screen` shows it; None when it is not drawn.
+    fn click_seen(w: &mut IsolationWin, screen: Rect, label: &str) -> Option<Out> {
+        let mut buf = Buffer::empty(screen);
+        let d = w.draw(&mut buf, screen, &Theme::dark());
+        let (x, y) = (0..screen.height).find_map(|y| {
+            let row: String = (0..screen.width).map(|x| buf[(x, y)].symbol()).collect();
+            row.find(label).map(|b| (row[..b].chars().count() as u16 + 1, y))
+        })?;
+        Some(w.mouse(MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), column: x, row: y, modifiers: KeyModifiers::NONE }, &d))
+    }
+
+    #[test]
+    fn a_long_provider_list_goes_on_under_the_text_after_its_label_and_its_link_keeps_its_click() {
+        let five = ["amazon-bedrock", "anthropic", "github-copilot", "openrouter", "vercel-ai"];
+        let (_, rows) = inside(|b, s| pi(&five).draw(b, s, &Theme::dark()));
+        let at = rows.iter().position(|r| r.contains("      pi: amazon-bedrock, anthropic, github-copilot, openrouter, vercel-ai")).unwrap_or_else(|| panic!("{rows:#?}"));
+        assert!(rows[at + 1].starts_with("│           [Choose providers…]"), "the link on the next line, under the text after \"pi: \": {rows:#?}");
+        let ten: Vec<String> = (0..10).map(|i| format!("group-{i:02}")).collect();
+        let mut w = pi(&ten.iter().map(String::as_str).collect::<Vec<_>>());
+        let (_, rows) = inside(|b, s| w.draw(b, s, &Theme::dark()));
+        let at = rows.iter().position(|r| r.contains("      pi: group-00, ")).unwrap_or_else(|| panic!("{rows:#?}"));
+        let shown: String = rows[at..at + 2].concat();
+        assert!(ten.iter().all(|g| shown.contains(g.as_str())) && !shown.contains('…'), "the whole list: {rows:#?}");
+        assert!(rows[at + 1].starts_with("│           group-") && rows[at + 2].starts_with("│           [Choose providers…]"), "under the text after \"pi: \": {rows:#?}");
+        let tall = Rect::new(0, 0, 160, 45);
+        assert_eq!(click_seen(&mut w, tall, "[Choose providers…]"), Some(Out::None));
+        assert!(w.view.as_ref().is_some_and(|v| v.agent == "pi"), "the link opens Choose providers");
+        w.view = None;
+        // on a short screen the link is below the fold until the window scrolls
+        let short = Rect::new(0, 0, 160, 16);
+        assert_eq!(click_seen(&mut w, short, "[Choose providers…]"), None, "hidden at first");
+        w.key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE));
+        assert_eq!(click_seen(&mut w, short, "[Choose providers…]"), Some(Out::None));
+        assert!(w.view.as_ref().is_some_and(|v| v.agent == "pi"), "and after scrolling");
+    }
+
+    #[test]
+    fn a_long_account_name_puts_its_button_under_the_indent() {
+        let long = "a-very-long-account-name-for-an-agent-that-runs-night-builds";
+        let accounts = [Account { name: long.into(), uid: 501 }, Account { name: "scout".into(), uid: 502 }];
+        for shown in [long, "scout"] {
+            let mut w = Accounts::for_name(shown);
+            let (d, rows) = inside(|b, s| w.draw(b, s, &Theme::dark(), &accounts));
+            let at = rows.iter().position(|r| r.contains(&format!("  {long}  uid 501"))).unwrap_or_else(|| panic!("{rows:#?}"));
+            let next = rows[at + 1].trim_start_matches('│');
+            assert!(next.starts_with("   [x] remove") || next.starts_with("    remove "), "{shown}: the button whole, under the indent: {rows:#?}");
+            let (x, y) = (d.frame.x + rows[at + 1].chars().position(|c| c == 'r').unwrap() as u16, d.frame.y + at as u16 + 1);
+            let click = MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), column: x, row: y, modifiers: KeyModifiers::NONE };
+            assert_eq!(w.mouse(click, &d), Out::Remove(long.into()), "{shown}: it keeps its click");
+        }
+    }
+
+    #[test]
+    fn isolation_wraps_its_text_and_its_chips_and_every_chip_keeps_its_click() {
+        let names = ["claude", "codex", "qwen", "gemini", "cursor", "copilot", "opencode", "pi", "another-agent", "and-one-more"];
+        let w = IsolationWin { providers: names.map(String::from).to_vec(), home: true, pick: Some(Isolation { files: Files::Folder, network: Network::Open }), ..pane() };
+        let (d, rows) = inside(|b, s| w.draw(b, s, &Theme::dark()));
+        assert_eq!(d.frame.width, crate::chrome::WIDE_W);
+        for p in names {
+            assert!(d.hits.iter().any(|(_, c)| *c == Click::Provider(p.into())), "{p} has a click: {rows:#?}");
+        }
+        let chips: Vec<&String> = rows.iter().filter(|r| r.contains(" claude ") || r.contains(" and-one-more ")).collect();
+        assert_eq!(chips.len(), 2, "the first and the last line of chips: {rows:#?}");
+        let col = |r: &str, at: usize| r[..at].chars().count();
+        let next = chips[1].char_indices().skip(1).find(|(_, c)| !c.is_whitespace()).map(|(i, _)| col(chips[1], i));
+        assert_eq!(next, chips[0].find("claude").map(|i| col(chips[0], i)), "the second line of chips starts under the first chip: {rows:#?}");
+        let at = rows.iter().position(|r| r.contains("though not dot files, ~/Library or ~/bin;")).unwrap_or_else(|| panic!("{rows:#?}"));
+        assert!(rows[at + 1].starts_with("│ limit. "), "the long note wraps, nothing cut: {rows:#?}");
+    }
+
+    #[test]
+    fn accounts_wraps_a_command_under_its_indent() {
+        let w = Accounts { name: "scout".into(), owner: "ann".into(), scroll: Scroll::default() };
+        let (d, rows) = inside(|b, s| w.draw(b, s, &Theme::dark(), &[]));
+        assert_eq!(d.frame.width, crate::chrome::WIDE_W);
+        let at = rows.iter().position(|r| r.contains("sudo sysadminctl -addUser scout")).unwrap_or_else(|| panic!("{rows:#?}"));
+        assert!(rows[at + 1].starts_with("│   ") && rows[at + 1].contains("interactive"), "the rest of it under the two spaces: {rows:#?}");
+        let at = rows.iter().position(|r| r.contains("act as scout at any time,")).unwrap_or_else(|| panic!("{rows:#?}"));
+        assert!(rows[at + 1].starts_with("│ without a password "), "prose wraps, nothing cut: {rows:#?}");
     }
 }
