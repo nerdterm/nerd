@@ -2207,7 +2207,7 @@ fn msg_strict() {
     let p1 = r#"msg "$HOME/a.out" '{"Send":{"to":"b","text":"hi"}}' '{"Send":{"to":"b","text":"","ask_route":true}}'"#;
     let (env, mut daemon) = msg_server("msg-strict", &[Some("a"), Some("b")], &[p1], Some(strict));
     let a = msg_lines(&env, "a.out", "held");
-    assert_eq!(a[1], serde_json::json!({"refused": "no route a → b, strict mode"}));
+    assert_eq!(a[1], serde_json::json!({"refused": "no route a → b, strict mode; may write to: you"}));
     assert_eq!(a[2]["held"]["why"], "asked the owner for a route to b");
     assert_eq!(msg_record(&env, a[2]["held"]["id"].as_str().unwrap())["state"], serde_json::json!({"held": "route_request"}));
     stop_and_wait(&env, &mut daemon);

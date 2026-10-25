@@ -81,6 +81,23 @@ fn send_prints_sent_and_exits_0() {
 }
 
 #[test]
+fn a_changed_list_is_said_on_stderr_beside_the_output() {
+    const SAID: &str = "whom this pane may write to changed; run nerd agents\n";
+    let f = fake("changed-send", &[HELLO, r#"{"sent":{"id":"ID1","state":"queued"},"reachable_changed":true}"#]);
+    let o = run(&f, &["send", "reader", "hi"], &[]);
+    assert_eq!((o.status.code(), out(&o).as_str(), err(&o).as_str()), (Some(0), "sent ID1\n", SAID));
+    let f = fake("changed-inbox", &[HELLO, r#"{"messages":[],"reachable_changed":true}"#]);
+    let o = run(&f, &["inbox"], &[]);
+    assert_eq!((out(&o).as_str(), err(&o).as_str()), ("no messages\n", SAID));
+    let f = fake("changed-wait", &[HELLO, "{\"reachable_changed\":true}\n{\"done\":{\"count\":0}}"]);
+    let o = run(&f, &["wait", "ID"], &[]);
+    assert_eq!((o.status.code(), err(&o).as_str()), (Some(0), SAID));
+    let f = fake("changed-show-error", &[HELLO, r#"{"error":"no message X for this pane","reachable_changed":true}"#]);
+    let o = run(&f, &["inbox", "--show", "X"], &[]);
+    assert_eq!((o.status.code(), err(&o)), (Some(1), format!("{SAID}refused: no message X for this pane\n")), "an error still carries the word");
+}
+
+#[test]
 fn held_exits_3_and_refused_exits_1() {
     let f = fake("held", &[HELLO, r#"{"held":{"id":"ID2","why":"route 1: a → b ask"}}"#]);
     let o = run(&f, &["send", "reader", "hi"], &[]);

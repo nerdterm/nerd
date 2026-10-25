@@ -32,6 +32,38 @@ pub(crate) enum SendReply {
     Sent { id: String },
     Held { id: String, why: String },
     Refused(String),
+    /// Refused because no pane has the name or a route forbids it, not for a limit.
+    Unreachable(String),
+}
+
+/// Whom a pane may write to: named panes and you, each "write" or "ask"; one left out may not be written to.
+pub(crate) struct Reach {
+    panes: Vec<(NamedPane, &'static str)>,
+    you: Option<&'static str>,
+}
+
+impl Reach {
+    fn may(&self, name: &str) -> Option<&'static str> {
+        if name == "you" { self.you } else { self.panes.iter().find(|(n, _)| n.name == name).map(|(_, m)| *m) }
+    }
+
+    /// "planner, reader (ask), you"
+    fn listed(&self) -> String {
+        let one = |name: &str, may: &str| if may == "ask" { format!("{name} (ask)") } else { name.to_string() };
+        let all: Vec<String> = self.panes.iter().map(|(n, m)| one(&n.name, m)).chain(self.you.map(|m| one("you", m))).collect();
+        if all.is_empty() { "nobody".into() } else { all.join(", ") }
+    }
+
+    /// Names, places and "write"/"ask"; agent states are left out, they change all the time.
+    fn digest(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        for (n, may) in &self.panes {
+            (&n.name, &n.space, &n.tab, may).hash(&mut h);
+        }
+        self.you.hash(&mut h);
+        h.finish()
+    }
 }
 
 /// A pane's `Wait`: its lines go out on `tx`, and dropping it ends the request.
@@ -74,6 +106,8 @@ pub struct MailState {
     trimmed_at: Option<Instant>,
     /// Per sender name, when its `reply_to` named no message it may answer (wall secs).
     bad_replies: HashMap<String, Vec<u64>>,
+    /// Per pane, a digest of whom it may write to as it last saw it.
+    seen_reachable: HashMap<PaneId, u64>,
 }
 
 impl MailState {
@@ -516,15 +550,38 @@ impl App {
                 Request::Send { to, text, reply_to, auto, ask_route } => match self.mail_send(pane, uid, SendReq { to, text, reply_to, auto, ask_route }, now) {
                     SendReply::Sent { id } => {
                         let state = self.mail.get(&id).and_then(|m| serde_json::to_value(&m.state).ok()).unwrap_or_else(|| json!("queued"));
-                        json!({ "sent": { "id": id, "state": state } })
+                        self.noted(pane, uid, now, json!({ "sent": { "id": id, "state": state } }))
                     }
-                    SendReply::Held { id, why } => json!({ "held": { "id": id, "why": why } }),
-                    SendReply::Refused(why) => json!({ "refused": why }),
+                    SendReply::Held { id, why } => self.noted(pane, uid, now, json!({ "held": { "id": id, "why": why } })),
+                    SendReply::Refused(why) => self.noted(pane, uid, now, json!({ "refused": why })),
+                    // Say who it may write to, so the agent's list is current again.
+                    SendReply::Unreachable(why) => match self.reachable(pane, uid, now) {
+                        Some(r) => {
+                            self.mail.seen_reachable.insert(pane, r.digest());
+                            json!({ "refused": format!("{why}; may write to: {}", r.listed()) })
+                        }
+                        None => json!({ "refused": why }),
+                    },
                 },
-                Request::Agents {} => self.agents_for(pane, uid, now),
-                Request::Inbox { all } => self.inbox(pane, all),
-                Request::Show { id } => self.show(pane, &id),
+                Request::Agents {} => {
+                    let r = self.reachable(pane, uid, now);
+                    if let Some(r) = &r {
+                        self.mail.seen_reachable.insert(pane, r.digest());
+                    }
+                    self.agents_for(pane, uid, r)
+                }
+                Request::Inbox { all } => {
+                    let v = self.inbox(pane, all);
+                    self.noted(pane, uid, now, v)
+                }
+                Request::Show { id } => {
+                    let v = self.show(pane, &id);
+                    self.noted(pane, uid, now, v)
+                }
                 Request::Wait { id, thread, count, timeout } => {
+                    if self.reachable_changed(pane, uid, now) {
+                        let _ = reply.send(line(json!({ "reachable_changed": true })));
+                    }
                     self.wait(pane, id, thread, count, timeout, reply);
                     return true;
                 }
@@ -576,7 +633,7 @@ impl App {
                 "all" if req.ask_route => return SendReply::Refused("a route is asked for one name".into()),
                 "all" => return self.broadcast(m, from, &sender, now),
                 name => match self.pane_by_name(name).filter(|_| policy::valid_address(name)) {
-                    None => return SendReply::Refused(format!("no pane is called {name} (the owner names one with Rename pane…)")),
+                    None => return SendReply::Unreachable(format!("no pane is called {name} (the owner names one with Rename pane…)")),
                     Some(p) if p == from => return SendReply::Refused("a pane cannot write to itself".into()),
                     Some(p) => self.party(p),
                 },
@@ -590,8 +647,13 @@ impl App {
             return SendReply::Held { id: r.id.clone(), why: format!("asked the owner for a route to {}", m.to.name()) };
         }
         let (state, out) = self.judge(&m, &sender, req.ask_route, now);
+        // A limit refuses only a name the pane may write to; a name it may not was refused by its route.
+        let unreachable = out.is_err() && req.reply_to.is_none() && !req.ask_route && self.reachable(from, uid, now).is_some_and(|r| r.may(m.to.name()).is_none());
         stamp(&mut m, state, now);
-        self.record(m, out, now)
+        match self.record(m, out, now) {
+            SendReply::Refused(why) if unreachable => SendReply::Unreachable(why),
+            r => r,
+        }
     }
 
     /// The state a pane's new message gets, and its answer: Ok(None) on its way, Ok(Some(why)) held, Err(why) refused.
@@ -691,17 +753,44 @@ impl App {
         }
     }
 
-    /// The named panes the caller may write to (or ask to), and you.
-    fn agents_for(&self, pane: PaneId, uid: u32, now: u64) -> Value {
-        let Some(sender) = self.sender_of(pane, uid) else { return json!({ "error": UNNAMED }) };
+    /// Whom the caller may write to; None for an unnamed caller.
+    fn reachable(&self, pane: PaneId, uid: u32, now: u64) -> Option<Reach> {
+        let sender = self.sender_of(pane, uid)?;
         let p = policy::current();
+        let may = |r: &Recipient| match policy::decide(&p, &sender, r, None, now).action {
+            Action::Allow => Some("write"),
+            Action::Ask => Some("ask"),
+            Action::No => None,
+        };
+        let panes = self.named_panes().into_iter().filter(|n| n.pane != pane).filter_map(|n| may(&recipient(&n)).map(|m| (n, m))).collect();
+        Some(Reach { panes, you: may(&Recipient::You) })
+    }
+
+    /// True once when whom the pane may write to changed since it last saw the list.
+    fn reachable_changed(&mut self, pane: PaneId, uid: u32, now: u64) -> bool {
+        let Some(d) = self.reachable(pane, uid, now).map(|r| r.digest()) else { return false };
+        match self.mail.seen_reachable.get_mut(&pane) {
+            Some(seen) if *seen != d => {
+                *seen = d;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// `v` with `reachable_changed` when the pane's list changed since it last saw it.
+    fn noted(&mut self, pane: PaneId, uid: u32, now: u64, mut v: Value) -> Value {
+        if self.reachable_changed(pane, uid, now) {
+            v["reachable_changed"] = json!(true);
+        }
+        v
+    }
+
+    /// The named panes the caller may write to (or ask to), and you.
+    fn agents_for(&self, pane: PaneId, uid: u32, r: Option<Reach>) -> Value {
+        let (Some(sender), Some(r)) = (self.sender_of(pane, uid), r) else { return json!({ "error": UNNAMED }) };
         let mut out = Vec::new();
-        for n in self.named_panes().into_iter().filter(|n| n.pane != pane) {
-            let may = match policy::decide(&p, &sender, &recipient(&n), None, now).action {
-                Action::Allow => "write",
-                Action::Ask => "ask",
-                Action::No => continue,
-            };
+        for (n, may) in r.panes {
             let state = match self.pane(n.pane) {
                 Some(x) if x.agent.is_some() => match x.term.state() {
                     crate::term::AgentState::Working => "working",
@@ -716,7 +805,9 @@ impl App {
             let place = format!("{}/{}", n.space, n.tab);
             out.push(json!({ "name": n.name, "agent": n.agent, "state": state, "place": place, "unread": self.mail.unread(n.pane), "session_name": null, "pane": n.pane, "may": may }));
         }
-        out.push(json!({ "name": "you", "agent": null, "state": "-", "place": "-", "unread": 0, "session_name": null, "pane": null, "may": "write" }));
+        if let Some(may) = r.you {
+            out.push(json!({ "name": "you", "agent": null, "state": "-", "place": "-", "unread": 0, "session_name": null, "pane": null, "may": may }));
+        }
         json!({ "agents": out, "me": sender.name })
     }
 
@@ -1426,7 +1517,7 @@ mod tests {
     fn id_of(r: &SendReply) -> String {
         match r {
             SendReply::Sent { id } | SendReply::Held { id, .. } => id.clone(),
-            SendReply::Refused(why) => panic!("refused: {why}"),
+            SendReply::Refused(why) | SendReply::Unreachable(why) => panic!("refused: {why}"),
         }
     }
 
@@ -1454,11 +1545,12 @@ mod tests {
             assert!(matches!(&held, SendReply::Held { why, .. } if why == "route 1: planner → reader ask"), "{held:?}");
             assert_eq!(app.mail.get(&id_of(&held)).unwrap().state, State::Held(Hold::Route));
             route(&mut app, "planner", "reader", Action::No);
-            assert_eq!(send(&mut app, 1, "reader", "third"), SendReply::Refused("route 1: planner → reader no".into()));
+            assert_eq!(send(&mut app, 1, "reader", "third"), SendReply::Unreachable("route 1: planner → reader no".into()));
             let refused = app.mail.msgs.last().unwrap();
             assert_eq!((refused.state.clone(), refused.text.as_str()), (State::Refused("route 1: planner → reader no".into()), ""), "a refused record keeps no text");
             assert_eq!(send(&mut app, 2, "reader", "hi"), SendReply::Refused(UNNAMED.into()));
-            assert_eq!(send(&mut app, 1, "nobody", "hi"), SendReply::Refused("no pane is called nobody (the owner names one with Rename pane…)".into()));
+            assert_eq!(send(&mut app, 1, "nobody", "hi"), SendReply::Unreachable("no pane is called nobody (the owner names one with Rename pane…)".into()));
+            // only an unknown name or a route lists whom it may write to; other refusals, even to that name, do not
             assert_eq!(send(&mut app, 1, "planner", "hi"), SendReply::Refused("a pane cannot write to itself".into()));
             assert_eq!(send(&mut app, 1, "reader", "\x07"), SendReply::Refused("an empty message".into()));
             assert_eq!(send(&mut app, 1, "reader", &"x".repeat(crate::mail::MESSAGE_BYTES + 1)), SendReply::Refused("text over 65536 bytes".into()));
@@ -1586,7 +1678,7 @@ mod tests {
         with_policy("mail-request", || {
             let mut app = app();
             app.mail_act(MailAction::SetMode(Mode::Strict), false).unwrap();
-            assert_eq!(send(&mut app, 1, "reader", "hi"), SendReply::Refused("no route planner → reader, strict mode".into()));
+            assert_eq!(send(&mut app, 1, "reader", "hi"), SendReply::Unreachable("no route planner → reader, strict mode".into()));
             let r = app.mail_send(1, policy::owner_uid(), SendReq { ask_route: true, ..req("reader", "") }, crate::hook::now());
             assert!(matches!(&r, SendReply::Held { why, .. } if why == "asked the owner for a route to reader"), "{r:?}");
             let id = id_of(&r);
@@ -1692,6 +1784,39 @@ mod tests {
     }
 
     #[test]
+    fn a_changed_list_is_said_once_and_a_refused_name_gets_the_list() {
+        with_policy("mail-reachable", || {
+            let mut app = app();
+            let send = |app: &mut App, to: &str, text: &str| ask(app, 1, Request::Send { to: to.into(), text: text.into(), reply_to: None, auto: false, ask_route: false }).remove(0);
+            let inbox = |app: &mut App| ask(app, 1, Request::Inbox { all: false }).remove(0);
+            route(&mut app, "planner", "reader", Action::Ask);
+            assert_eq!(inbox(&mut app).get("reachable_changed"), None, "a pane that never listed has nothing gone stale");
+            ask(&mut app, 1, Request::Agents {});
+            assert_eq!(inbox(&mut app).get("reachable_changed"), None, "nothing changed");
+            app.pane_mut(3).unwrap().label = Some("scout".into());
+            assert_eq!(inbox(&mut app)["reachable_changed"], json!(true), "a rename");
+            assert_eq!(inbox(&mut app).get("reachable_changed"), None, "once per change");
+            app.spaces[1].name = Some("lab".into());
+            assert_eq!(send(&mut app, "scout", "a")["reachable_changed"], json!(true), "a space renamed");
+            route(&mut app, "planner", "scout", Action::Ask);
+            let waited = ask(&mut app, 1, Request::Wait { id: "nope".into(), thread: false, count: 1, timeout: 1 });
+            assert_eq!(waited[0], json!({"reachable_changed": true}), "access changed, said before the wait's own lines");
+            route(&mut app, "planner", "scout", Action::No);
+            let r = send(&mut app, "scout", "b");
+            assert!(r["refused"].as_str().unwrap().ends_with("; may write to: you"), "{r}");
+            assert_eq!(r.get("reachable_changed"), None, "the refusal already showed the list");
+            let r = send(&mut app, "nobody", "c");
+            assert!(r["refused"].as_str().unwrap().starts_with("no pane is called nobody") && r["refused"].as_str().unwrap().ends_with("; may write to: you"), "{r}");
+            route(&mut app, "planner", "you", Action::Ask);
+            assert_eq!(inbox(&mut app)["reachable_changed"], json!(true), "a route to you");
+            assert_eq!(ask(&mut app, 1, Request::Agents {})[0]["agents"], json!([{"name": "you", "agent": null, "state": "-", "place": "-", "unread": 0, "session_name": null, "pane": null, "may": "ask"}]));
+            route(&mut app, "planner", "you", Action::No);
+            assert_eq!(ask(&mut app, 1, Request::Agents {})[0]["agents"], json!([]), "you is not listed when a route says no");
+            assert!(send(&mut app, "nobody", "d")["refused"].as_str().unwrap().ends_with("; may write to: nobody"));
+        });
+    }
+
+    #[test]
     fn inbox_and_show_never_hand_out_held_mail() {
         with_policy("mail-inbox", || {
             let mut app = app();
@@ -1748,7 +1873,7 @@ mod tests {
                         assert!(!why.is_empty(), "a held send says why");
                         kinds[1] += 1;
                     }
-                    SendReply::Refused(why) => {
+                    SendReply::Refused(why) | SendReply::Unreachable(why) => {
                         assert!(!why.is_empty(), "a refused send says why");
                         kinds[2] += 1;
                     }
@@ -1791,11 +1916,11 @@ mod tests {
         with_policy("mail-noback", || {
             let mut app = app();
             app.mail_act(MailAction::SetMode(Mode::Strict), false).unwrap();
-            assert!(matches!(send(&mut app, 1, "reader", "hi"), SendReply::Refused(_)));
+            assert!(matches!(send(&mut app, 1, "reader", "hi"), SendReply::Unreachable(_)));
             let refused = app.mail.msgs.last().unwrap().id.clone();
             assert_eq!(reply(&mut app, 3, &refused, "back"), SendReply::Refused(format!("message {refused} is not one this pane can answer")));
             assert!(matches!(app.mail.get(&refused).unwrap().state, State::Refused(_)), "not answered");
-            assert_eq!(send(&mut app, 3, "planner", "plain"), SendReply::Refused("no route reader → planner, strict mode".into()));
+            assert_eq!(send(&mut app, 3, "planner", "plain"), SendReply::Unreachable("no route reader → planner, strict mode".into()));
 
             app.mail_act(MailAction::SetMode(Mode::Open), false).unwrap();
             app.mail_act(MailAction::SetRoute { from: Scope::parse("planner").unwrap(), to: Scope::parse("reader").unwrap(), action: Some(Action::Ask), until: None }, false).unwrap();
@@ -1885,7 +2010,7 @@ mod tests {
             let held = copy(&app, 11);
             assert_eq!(app.mail.get(&held).unwrap().state, State::Held(Hold::Route));
             assert_eq!(reply(&mut app, 11, &held, "here"), SendReply::Refused(format!("message {held} is not one this pane can answer")), "a held copy opens no way back");
-            assert_eq!(send(&mut app, 10, "planner", "plain"), SendReply::Refused("no route w0 → planner, strict mode".into()), "only as a reply");
+            assert_eq!(send(&mut app, 10, "planner", "plain"), SendReply::Unreachable("no route w0 → planner, strict mode".into()), "only as a reply");
             route(&mut app, "w0", "planner", Action::No);
             let c = copy(&app, 10);
             assert_eq!(reply(&mut app, 10, &c, "again"), SendReply::Refused("route 3: w0 → planner no".into()), "an explicit No still wins");
