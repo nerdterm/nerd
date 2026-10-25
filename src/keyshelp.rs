@@ -21,6 +21,7 @@ const ROWS: &[(Option<&str>, &str, &str)] = &[
     (None, "drag", "on a border resizes, on text selects"),
     (None, "double click in a pane", "select a word"),
     (None, "double click in the tree", "open a file"),
+    (None, "click in New space's path", "put the caret there"),
     (None, "double click in New space", "open the folder"),
     (None, "triple click", "select a line in a pane"),
     (None, "wheel", "scroll pane history"),
@@ -355,7 +356,7 @@ mod tests {
         };
         assert_eq!(section("A confirmation"), ["enter", "y", "n, esc", "d", "←→ tab"]);
         assert_eq!(section("A text field"), ["enter", "esc", "←→ Home End", "ctrl+u"]);
-        assert_eq!(section("New space"), ["tab", "↑↓", "enter", "esc"]);
+        assert_eq!(section("New space"), ["tab", "←→", "↑↓", "enter", "esc"]);
         assert_eq!(section("A window taller than the screen"), ["wheel", "↑↓", "PgUp PgDn", "Home End"]);
         assert!(!crate::keys::GLOBAL.iter().any(|g| g.what.contains("confirmations are off")));
     }
