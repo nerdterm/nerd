@@ -1225,7 +1225,6 @@ fn scope_of(p: &Party) -> Scope {
     }
 }
 
-
 fn recipient(n: &NamedPane) -> Recipient {
     Recipient::Pane { name: n.name.clone(), space: n.space.clone(), tab: n.tab.clone(), uid: n.uid, agent: n.agent.clone() }
 }
