@@ -208,7 +208,16 @@ fn follow(c: &mut Conn, id: &str, secs: u64) -> Result<i32, String> {
             return Ok(2);
         } else if let Some(e) = v.get("error").and_then(Value::as_str) {
             return Err(format!("refused: {e}"));
+        } else {
+            note_changed(&v);
         }
+    }
+}
+
+/// The server's word that whom this pane may write to changed since it last saw the list.
+fn note_changed(v: &Value) {
+    if v.get("reachable_changed").and_then(Value::as_bool) == Some(true) {
+        eprintln!("whom this pane may write to changed; run nerd agents");
     }
 }
 
@@ -234,6 +243,7 @@ fn send_run(args: &[String]) -> Result<i32, String> {
     let mut c = open(None)?;
     let req = json!({"Send": {"to": a.to, "text": a.text, "reply_to": a.reply_to, "auto": a.reply_to.is_some(), "ask_route": a.ask_route}});
     let v = c.ask(req)?;
+    note_changed(&v);
     let (id, code) = if let Some(s) = v.get("sent") {
         let id = str_of(s, "id").to_string();
         println!("sent {id}");
@@ -310,8 +320,10 @@ pub fn inbox(args: &[String]) -> std::io::Result<()> {
             None => json!({"Inbox": {"all": all}}),
         })?;
         if let Some(e) = v.get("error").and_then(Value::as_str) {
+            note_changed(&v);
             return Err(format!("refused: {e}"));
         }
+        note_changed(&v);
         let msgs = v["messages"].as_array().map(Vec::as_slice).unwrap_or_default();
         if msgs.is_empty() {
             println!("no messages");
