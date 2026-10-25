@@ -107,7 +107,7 @@ impl Pty {
     pub fn waiting(id: usize, cols: u16, rows: u16, bell: Bell) -> Self {
         let (out_tx, output) = sync_channel(QUEUE);
         let (input, in_rx) = sync_channel(WRITES);
-        let until = Instant::now() + crate::broker::REPLY_TIMEOUT;
+        let until = Instant::now() + crate::broker::spawn_wait();
         let starting = Some(Starting { output: out_tx, input: in_rx, bell, until, exited: false });
         Self { id, master: None, cols, rows, child_pid: None, output, ended: false, input, stalled: false, replies_dropped: false, starting, wrapped: false }
     }
@@ -183,7 +183,7 @@ impl Pty {
     /// The broker answered something, so it is alive: the wait starts over.
     pub fn heard(&mut self) {
         if let Some(s) = self.starting.as_mut() {
-            s.until = Instant::now() + crate::broker::REPLY_TIMEOUT;
+            s.until = Instant::now() + crate::broker::spawn_wait();
         }
     }
 

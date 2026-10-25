@@ -18,7 +18,20 @@ use crate::bell::Bell;
 
 /// Whoever doesn't leave after SIGHUP gets SIGKILL.
 const GRACE: Duration = Duration::from_millis(250);
-pub const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
+const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
+/// Its connection ended: a pane still starting will never be answered.
+static GONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// How long a pane waits for its spawn's answer: under heavy load a live broker's fork and exec take seconds.
+pub fn spawn_wait() -> Duration {
+    static WAIT: OnceLock<Duration> = OnceLock::new();
+    // Test aid, like NERD_BROKER_DELAY_MS: a test of a silent broker waits less.
+    *WAIT.get_or_init(|| std::env::var("NERD_BROKER_WAIT_MS").ok().and_then(|s| s.parse().ok()).map_or(Duration::from_secs(30), Duration::from_millis))
+}
+
+pub fn gone() -> bool {
+    GONE.load(std::sync::atomic::Ordering::SeqCst)
+}
 
 #[derive(Serialize, Deserialize)]
 pub enum Req {
@@ -269,8 +282,11 @@ fn install(mine: UnixStream, exits: Sender<Exit>, notes: Sender<ExecNote>, spawn
     let (ps_tx, ps_rx) = channel();
     let b = Arc::new(Broker { req: Mutex::new(mine.try_clone()?), ps_reply: Mutex::new(ps_rx) });
     std::thread::spawn(move || {
-        replies(mine, spawns, ps_tx, exits, notes, bell);
+        // A clone, so `spawns` disconnects only after GONE is set.
+        replies(mine, spawns.clone(), ps_tx, exits, notes, bell.clone());
+        GONE.store(true, std::sync::atomic::Ordering::SeqCst);
         crate::log::warn("broker ended; new panes cannot launch");
+        bell.ring();
     });
     let _ = BROKER.set(b);
     Ok(())

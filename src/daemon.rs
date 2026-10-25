@@ -658,7 +658,9 @@ fn serve(started: &mut bool) -> std::io::Result<()> {
                         app.spawned(s);
                     }
                     Err(_) => {
-                        std::thread::sleep(until.saturating_duration_since(Instant::now()));
+                        if !crate::broker::gone() {
+                            std::thread::sleep(until.saturating_duration_since(Instant::now()));
+                        }
                         app.tick_spawns();
                     }
                 }
