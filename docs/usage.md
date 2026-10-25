@@ -62,13 +62,15 @@ The right Option key keeps typing the layout's symbols, such as — and €. ner
 |---|---|
 | Pane | goes to the pane |
 | Command | runs the menu item on the pane, tab or space it was listed for |
-| Setting | a switch that is on or off flips in its row; any other setting opens Settings on that row |
+| Setting | Scrollbars, File preview, Wrap long lines, Play a sound, Ring the terminal bell and Restore screens after a restart flip in their row; every other setting opens Settings on that row |
 | Plugin | an installed plugin turns on or off in its row; one only in the catalog opens Plugins |
 | File | shows the file in the file tree |
 | Help | shows the section in the window; `o` opens its page on nerdterm.dev |
 | Text | searches what every pane printed, on Enter; a line opens in the pane search, on that line |
 
-Files are read from the file tree's folder, or the space's folder when the tree is closed, from the second letter typed (the first on the Files tab). Desktop, Documents, Downloads, Library, Pictures, Movies and Music in the home folder, and other disks and network folders, are never entered from outside them. Anything that changes what a pane can reach (isolation, routes, providers) opens its own window and never changes in place.
+Files are read from the file tree's folder, or the space's folder when the tree is closed, from the second letter typed (the first on the Files tab). Desktop, Documents, Downloads, Library, Pictures, Movies and Music in the home folder, and other disks and network folders, are never entered from outside them.
+
+Anything that changes what a pane can reach (isolation, routes, providers) opens its own window and never changes in place.
 
 ## Commands
 

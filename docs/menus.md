@@ -84,8 +84,8 @@ address) is a line in the window above the keys, gone at the next letter typed; 
 - Panes: Enter or a click goes to the pane.
 - Commands: runs the menu item on the pane, tab or space it was listed for; a pane that has closed gives a notice and
   nothing else is touched. The item's own window replaces Search.
-- Settings: a setting that is on or off toggles in its row and Search stays; every other setting opens Settings on
-  that row.
+- Settings: Scrollbars, File preview, Wrap long lines, Play a sound, Ring the terminal bell and Restore screens after a
+  restart toggle in their row and Search stays; every other setting opens Settings on that row.
 - Plugins: an installed plugin turns on or off in its row; one only in the catalog opens the Plugins window.
 - Files: shows the file in the file tree. Names are read once per window, from the second letter typed, or the first
   on the Files tab; a link is listed by its own name and never followed. Desktop, Documents, Downloads, Library,
