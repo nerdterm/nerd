@@ -21,11 +21,11 @@ case $last in
     unset NERD_SOCKET NERD_INSTANCE
     export NERD_STATE_DIR="$dir/state" HOME="$dir"
     if [ "$mode" = lost ]; then
-        # The link drops a second in: the relay dies with no word, ssh exits 255.
+        # The link drops once the client has the armed marker: the relay dies with no word, ssh exits 255.
         "$dir/nerd" --relay "$id" <&0 &
         pid=$!
-        sleep 1
-        kill -9 $pid
+        while [ ! -e "$dir/armed" ] && kill -0 $pid 2>/dev/null; do sleep 0.05; done
+        kill -9 $pid 2>/dev/null
         : > "$dir/ended"
         exit 255
     fi

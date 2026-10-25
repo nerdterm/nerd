@@ -2077,7 +2077,12 @@ mod remote_tests {
             // As the real client: a relay that fails at once may close the pipe before Hello.
             let _ = hello().write_to(&mut stdin);
             let mut screen = Vec::new();
-            let seen = pump(Vec::new(), stdout, &mut screen, false, |_| {});
+            // The `lost` fake cuts the link only once the client has the marker.
+            let seen = pump(Vec::new(), stdout, &mut screen, false, |r| {
+                if r.armed {
+                    let _ = std::fs::write(self.dir.join("armed"), "");
+                }
+            });
             drop(stdin);
             let (exit, said) = finish(child, stderr);
             (seen, screen, exit, said)
