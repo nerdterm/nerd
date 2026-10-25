@@ -501,8 +501,8 @@ impl App {
     pub(crate) fn mail_hello(&self, pid: i32, started: Option<u64>, accepted: u64) -> Result<(PaneId, Option<String>), String> {
         let all = || self.spaces.iter().flat_map(|s| &s.tabs).flat_map(|t| t.panes.values());
         let panes: Vec<(PaneId, i32)> = all().filter_map(|p| Some((p.id, p.pty.child_pid? as i32))).collect();
-        let starting = all().any(|p| p.pty.starting());
-        let pane = crate::msock::identify(pid, started, accepted, &panes, starting, crate::transport::parent_pid)?;
+        let broker = all().any(|p| p.pty.starting()).then(crate::broker::pid).filter(|_| !crate::plugins::within_a_plugin(pid));
+        let pane = crate::msock::identify(pid, started, accepted, &panes, broker, crate::transport::parent_pid)?;
         Ok((pane, self.pane(pane).and_then(|p| p.label.clone()).filter(|l| policy::valid_address(l))))
     }
 

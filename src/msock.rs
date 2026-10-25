@@ -182,8 +182,9 @@ fn wall_micros() -> u64 {
 }
 
 /// The pane a peer runs in: its own pid or an ancestor's is a pane's child pid.
+/// `broker`: the broker's pid while some pane is starting; a process under it may be in that pane, so it is told to try again.
 // This narrows the pid-reuse window between connect and accept; it does not close it.
-pub(crate) fn identify(pid: i32, started: Option<u64>, accepted: u64, panes: &[(PaneId, i32)], starting: bool, parent: impl Fn(i32) -> Option<i32>) -> Result<PaneId, String> {
+pub(crate) fn identify(pid: i32, started: Option<u64>, accepted: u64, panes: &[(PaneId, i32)], broker: Option<i32>, parent: impl Fn(i32) -> Option<i32>) -> Result<PaneId, String> {
     if started.is_some_and(|s| s > accepted) {
         return Err("the sending process is gone".into());
     }
@@ -192,12 +193,15 @@ pub(crate) fn identify(pid: i32, started: Option<u64>, accepted: u64, panes: &[(
         if let Some((pane, _)) = panes.iter().find(|(_, child)| *child == p) {
             return Ok(*pane);
         }
+        if Some(p) == broker {
+            return Err(STARTING.into());
+        }
         match parent(p) {
             Some(pp) if pp > 1 => p = pp,
             _ => break,
         }
     }
-    Err(if starting { STARTING } else { OUTSIDE }.into())
+    Err(OUTSIDE.into())
 }
 
 /// One of the connections, and of the shared door's share; given back when its thread ends.
@@ -556,9 +560,9 @@ mod tests {
     fn a_recycled_pid_is_refused() {
         let parent = chain(&[(40, 30), (30, 1)]);
         let accepted = 1_000_000;
-        assert_eq!(identify(40, Some(accepted + 1), accepted, &[(3, 30)], false, &parent), Err("the sending process is gone".into()));
-        assert_eq!(identify(40, Some(accepted), accepted, &[(3, 30)], false, &parent), Ok(3));
-        assert_eq!(identify(40, None, accepted, &[(3, 30)], false, &parent), Ok(3), "another account's process cannot be read");
+        assert_eq!(identify(40, Some(accepted + 1), accepted, &[(3, 30)], None, &parent), Err("the sending process is gone".into()));
+        assert_eq!(identify(40, Some(accepted), accepted, &[(3, 30)], None, &parent), Ok(3));
+        assert_eq!(identify(40, None, accepted, &[(3, 30)], None, &parent), Ok(3), "another account's process cannot be read");
         let now = wall_micros();
         assert!(crate::transport::start_time(std::process::id() as i32).is_some_and(|s| s <= now), "this process started before now");
     }
@@ -568,23 +572,26 @@ mod tests {
         // nc 90 -> sh 80 -> sudo 70 (root) -> zsh 60 -> wrapper 50 (the pane's child) -> broker 10
         let parent = chain(&[(90, 80), (80, 70), (70, 60), (60, 50), (50, 10), (10, 1)]);
         let panes = [(1, 20), (7, 50)];
-        assert_eq!(identify(90, None, 0, &panes, false, &parent), Ok(7));
-        assert_eq!(identify(50, None, 0, &panes, false, &parent), Ok(7), "the pane's own child");
+        assert_eq!(identify(90, None, 0, &panes, None, &parent), Ok(7));
+        assert_eq!(identify(50, None, 0, &panes, None, &parent), Ok(7), "the pane's own child");
         assert_eq!(crate::transport::parent_pid(1), Some(0), "a root process is read, as sudo in the chain would be");
     }
 
     #[test]
     fn a_process_in_no_pane_is_refused() {
         let parent = chain(&[(90, 80), (80, 1)]);
-        assert_eq!(identify(90, None, 0, &[(1, 20)], false, &parent), Err(OUTSIDE.into()));
+        assert_eq!(identify(90, None, 0, &[(1, 20)], None, &parent), Err(OUTSIDE.into()));
         let long: Vec<(i32, i32)> = (0..40).map(|i| (1000 + i, 1001 + i)).collect();
-        assert_eq!(identify(1000, None, 0, &[(1, 1040)], false, chain(&long)), Err(OUTSIDE.into()), "at most 32 steps up");
+        assert_eq!(identify(1000, None, 0, &[(1, 1040)], None, chain(&long)), Err(OUTSIDE.into()), "at most 32 steps up");
     }
 
     #[test]
-    fn a_starting_pane_says_try_again() {
-        let parent = chain(&[(90, 80), (80, 1)]);
-        assert_eq!(identify(90, None, 0, &[(1, 20)], true, &parent), Err(STARTING.into()));
+    fn a_starting_pane_says_try_again_only_to_the_brokers_descendants() {
+        // nc 90 -> zsh 80 -> broker 10, the pane's child pid not yet known; nc 95 -> launchd
+        let parent = chain(&[(90, 80), (80, 10), (10, 1), (95, 1)]);
+        assert_eq!(identify(90, None, 0, &[(1, 20)], Some(10), &parent), Err(STARTING.into()));
+        assert_eq!(identify(95, None, 0, &[(1, 20)], Some(10), &parent), Err(OUTSIDE.into()), "outside nerd while a pane starts");
+        assert_eq!(identify(90, None, 0, &[(7, 80)], Some(10), &parent), Ok(7), "a started pane is found before the broker");
     }
 
     #[test]
