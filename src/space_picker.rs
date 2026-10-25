@@ -43,6 +43,10 @@ type TabCycle = (PathBuf, String, Vec<String>, Option<usize>);
 
 pub struct SpacePicker {
     value: String,
+    /// The caret, in chars.
+    cursor: usize,
+    /// The field's first char shown, as the last frame drew it: a click lands on what was seen.
+    field_from: std::cell::Cell<usize>,
     /// The active workspace's folder: where a relative path resolves from.
     base: PathBuf,
     /// Computed once, when the dialog opens.
@@ -60,6 +64,7 @@ pub struct SpacePicker {
 
 pub const KEYS: &[(&str, &str, &str)] = &[
     ("tab", "", "complete the folder name; again to cycle through the matches"),
+    ("←→", "", "move in the folder's path"),
     ("↑↓", "", "choose a folder from the list"),
     ("enter", "", "open the chosen folder, or the typed one, as a space"),
     ("esc", "", "close"),
@@ -70,8 +75,11 @@ const DOUBLE_CLICK: std::time::Duration = std::time::Duration::from_millis(350);
 
 impl SpacePicker {
     pub fn new(base: PathBuf) -> Self {
+        let value = start();
         let mut w = Self {
-            value: start(),
+            cursor: value.chars().count(),
+            field_from: Default::default(),
+            value,
             base,
             recent: recent_rows(),
             rows: Vec::new(),
@@ -87,7 +95,7 @@ impl SpacePicker {
     }
 
     pub fn key(&mut self, k: crossterm::event::KeyEvent) -> Outcome {
-        use crossterm::event::{KeyCode::*, KeyModifiers};
+        use crossterm::event::KeyCode::*;
         match k.code {
             Esc => return Outcome::Cancelled,
             Enter => {
@@ -106,26 +114,54 @@ impl SpacePicker {
                     self.selected = Some(i);
                 }
             }
-            Backspace => {
-                self.value.pop();
-                self.tab_cycle = None;
-                self.recompute();
+            _ => {
+                let before = self.value.clone();
+                if crate::menu::edit(&mut self.value, &mut self.cursor, k) && self.value != before {
+                    self.tab_cycle = None;
+                    self.recompute();
+                }
             }
-            Char(c) if !k.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.value.push(c);
-                self.tab_cycle = None;
-                self.recompute();
-            }
-            _ => {}
         }
         Outcome::None
     }
 
-    /// A pasted line, at the end as typing would put it.
+    /// A pasted line, trimmed, at the caret; a whole path replaces a field that holds no more than the start of `~/` or of the home folder.
     pub fn paste(&mut self, s: &str) {
-        self.value.push_str(s);
+        let s = s.trim();
+        let v = self.value.trim();
+        if s.starts_with(['/', '~']) && ("~/".starts_with(v) || start().starts_with(v)) {
+            self.value.clear();
+            self.cursor = 0;
+        }
+        crate::menu::insert(&mut self.value, &mut self.cursor, s);
         self.tab_cycle = None;
         self.recompute();
+    }
+
+    /// A new value with the caret at its end.
+    fn set(&mut self, value: String) {
+        self.cursor = value.chars().count();
+        self.value = value;
+    }
+
+    /// Screen cells the chars `a..b` of the field take: a wide char takes two, a combining mark none.
+    fn cols(&self, a: usize, b: usize) -> usize {
+        self.value.chars().skip(a).take(b.saturating_sub(a)).map(|c| crate::slots::cells(c.encode_utf8(&mut [0; 4]))).sum()
+    }
+
+    /// The field's first char shown when it is `w` cells wide: moves only as far as keeps the caret in view.
+    // ceiling: the caret steps by char, so a combining mark costs an extra key press; grapheme clusters would fix it.
+    fn field_from(&self, w: usize) -> usize {
+        let len = self.value.chars().count();
+        let mut from = self.field_from.get().min(self.cursor);
+        // the caret takes a cell of its own after the text before it
+        while from < self.cursor && self.cols(from, self.cursor) + 1 > w {
+            from += 1;
+        }
+        while from > 0 && self.cols(from - 1, len) < w {
+            from -= 1;
+        }
+        from
     }
 
     /// `rows`: where the last frame's `draw` put them.
@@ -147,12 +183,28 @@ impl SpacePicker {
                     let Some(row) = self.rows.get(idx) else { return Outcome::None };
                     let path = row.path.clone();
                     self.last_click = Some((at, path, std::time::Instant::now()));
-                    self.value = format!("{}/", row.display);
+                    self.set(format!("{}/", row.display));
                     self.tab_cycle = None;
                     self.recompute();
                     return Outcome::None;
                 }
                 let r = self.rect(screen);
+                let inner = r.inner(crate::chrome::DIALOG_FRAME);
+                if at.1 == inner.y && (inner.x..inner.right()).contains(&at.0) {
+                    let col = (at.0 - inner.x) as usize;
+                    let from = self.field_from(inner.width as usize);
+                    let (mut i, mut acc) = (from, 0);
+                    for c in self.value.chars().skip(from) {
+                        let w = crate::slots::cells(c.encode_utf8(&mut [0; 4]));
+                        if acc + w > col {
+                            break;
+                        }
+                        acc += w;
+                        i += 1;
+                    }
+                    self.cursor = i;
+                    return Outcome::None;
+                }
                 if !r.contains(at.into()) || crate::chrome::close_rect(r).contains(at.into()) {
                     return Outcome::Cancelled;
                 }
@@ -173,13 +225,11 @@ impl SpacePicker {
         crate::chrome::fit(screen, crate::chrome::WINDOW_W, ROWS_SHOWN as u16 + 3)
     }
 
-    /// The field's caret, for the terminal cursor: always at the end of the typed text.
+    /// The field's caret, for the terminal cursor.
     pub fn cursor(&self, screen: Rect) -> (u16, u16) {
         let inner = self.rect(screen).inner(crate::chrome::DIALOG_FRAME);
         let w = (inner.width as usize).max(1);
-        let len = self.value.chars().count();
-        let col = len.min(w.saturating_sub(1));
-        (inner.x + col as u16, inner.y)
+        (inner.x + self.cols(self.field_from(w), self.cursor) as u16, inner.y)
     }
 
     /// Draws the dialog; returns the visible list rows' rects, in order from the first shown.
@@ -197,7 +247,9 @@ impl SpacePicker {
         }
 
         let mut y = content.y;
-        let field: String = self.value.chars().chain(std::iter::repeat(' ')).take(inner_w).collect();
+        let from = self.field_from(inner_w);
+        self.field_from.set(from);
+        let field: String = self.value.chars().skip(from).chain(std::iter::repeat(' ')).take(inner_w).collect();
         buf.set_stringn(content.x, y, &field, inner_w, Style::default().fg(theme.text).bg(theme.ground));
         y += 1;
 
@@ -252,7 +304,7 @@ impl SpacePicker {
     fn recompute(&mut self) {
         self.selected = None;
         self.scroll.set(0);
-        if self.value.is_empty() || self.value == "~/" || self.value == start() {
+        if prefilled(&self.value) {
             self.section = Section::Recent;
             self.rows = self.recent.clone();
             self.hint = None;
@@ -310,7 +362,7 @@ impl SpacePicker {
     fn tab(&mut self) {
         if let Some((parent, fragment, matches, idx)) = self.tab_cycle.take() {
             let next = idx.map_or(0, |i| (i + 1) % matches.len());
-            self.value = join_display(&parent, &matches[next]);
+            self.set(join_display(&parent, &matches[next]));
             self.tab_cycle = Some((parent, fragment, matches, Some(next)));
             self.recompute();
             return;
@@ -321,13 +373,13 @@ impl SpacePicker {
             return;
         }
         if prefix.len() == 1 {
-            self.value = format!("{}/", join_display(&parent, &prefix[0]));
+            self.set(format!("{}/", join_display(&parent, &prefix[0])));
             self.recompute();
             return;
         }
         let lcp = common_prefix(&prefix);
         if lcp.chars().count() > fragment.chars().count() {
-            self.value = join_display(&parent, &lcp);
+            self.set(join_display(&parent, &lcp));
             self.recompute();
             return;
         }
@@ -385,6 +437,11 @@ fn common_prefix(names: &[String]) -> String {
         prefix.truncate(n);
     }
     prefix.into_iter().collect()
+}
+
+/// Nothing typed yet: empty, blank, or the home folder the field starts with.
+fn prefilled(value: &str) -> bool {
+    value.trim().is_empty() || value == "~/" || value == start()
 }
 
 /// The field's first value: the home folder, as the `paths` setting shows it.
@@ -602,6 +659,115 @@ mod tests {
             assert_eq!(w.mouse(at, screen, &rows), Outcome::None, "the first click descends");
             assert!(w.rows.is_empty(), "the leaf folder has no subfolders to show");
             assert_eq!(w.mouse(at, screen, &rows), Outcome::Open(want), "the second click still opens what was clicked");
+        });
+    }
+
+    #[test]
+    fn the_caret_moves_and_typing_and_deleting_happen_at_it() {
+        with_temp_home(|home| {
+            let mut w = SpacePicker::new(home.to_path_buf());
+            w.set("~/dév/x".into());
+            w.key(key(KeyCode::Left));
+            w.key(key(KeyCode::Left));
+            assert_eq!(w.cursor, 5, "two to the left of the end, in chars");
+            w.key(key(KeyCode::Backspace));
+            assert_eq!(w.value, "~/dé/x", "the char before the caret goes, a non-ASCII one before it intact");
+            type_str(&mut w, "v2");
+            assert_eq!(w.value, "~/dév2/x");
+            w.key(key(KeyCode::Delete));
+            assert_eq!((w.value.as_str(), w.cursor), ("~/dév2x", 6), "Delete takes the char after the caret");
+            for _ in 0..10 {
+                w.key(key(KeyCode::Right));
+            }
+            assert_eq!(w.cursor, 7, "stops at the end");
+            w.key(key(KeyCode::Home));
+            assert_eq!(w.cursor, 7, "Home stays the list's");
+        });
+    }
+
+    #[test]
+    fn a_click_on_the_field_puts_the_caret_there_and_a_long_path_scrolls() {
+        with_temp_home(|home| {
+            let mut w = SpacePicker::new(home.to_path_buf());
+            let screen = Rect::new(0, 0, 80, 24);
+            let inner = w.rect(screen).inner(crate::chrome::DIALOG_FRAME);
+            let click = |x: u16| MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), column: x, row: inner.y, modifiers: KeyModifiers::NONE };
+            w.set("~/abc".into());
+            w.draw(&mut Buffer::empty(screen), screen, &Theme::dark());
+            assert_eq!(w.mouse(click(inner.x + 3), screen, &[]), Outcome::None);
+            assert_eq!(w.cursor, 3);
+            assert_eq!(w.cursor(screen), (inner.x + 3, inner.y));
+            w.mouse(click(inner.right() - 1), screen, &[]);
+            assert_eq!(w.cursor, 5, "past the end: at the end");
+
+            let long = format!("~/{}", "a".repeat(100));
+            w.set(long.clone());
+            let field = |w: &SpacePicker| {
+                let mut buf = Buffer::empty(screen);
+                w.draw(&mut buf, screen, &Theme::dark());
+                (inner.x..inner.right()).map(|x| buf[(x, inner.y)].symbol().to_string()).collect::<String>()
+            };
+            let from = 102 + 1 - inner.width as usize;
+            assert_eq!(field(&w), format!("{} ", &long[from..]), "the end in view, the caret after it");
+            assert_eq!(w.cursor(screen), (inner.right() - 1, inner.y));
+            w.mouse(click(inner.x + 2), screen, &[]);
+            assert_eq!(w.cursor, from + 2, "the char clicked, in the scrolled text");
+            assert_eq!(w.cursor(screen), (inner.x + 2, inner.y), "the text does not move under the click");
+            w.key(key(KeyCode::Char('Z')));
+            assert_eq!(w.value.chars().nth(from + 2), Some('Z'));
+            for _ in 0..200 {
+                w.key(key(KeyCode::Left));
+            }
+            assert!(field(&w).starts_with("~/a"), "scrolled back to the start");
+            assert_eq!(w.cursor(screen), (inner.x, inner.y));
+        });
+    }
+
+    #[test]
+    fn a_pasted_path_is_trimmed_and_replaces_only_the_prefilled_field() {
+        with_temp_home(|home| {
+            let mut w = SpacePicker::new(home.to_path_buf());
+            w.paste(" ~/dev/projects/x \n");
+            assert_eq!(w.value, "~/dev/projects/x", "replaces the ~/ it opened with");
+            assert_eq!(w.cursor, 16);
+
+            w.set("   ".into());
+            w.paste("/Users/me/x");
+            assert_eq!(w.value, "/Users/me/x", "a blank field too");
+
+            let mut w = SpacePicker::new(home.to_path_buf());
+            w.paste(" dev ");
+            assert_eq!(w.value, "~/dev", "a relative name goes at the caret");
+
+            w.set("~/a/b".into());
+            w.key(key(KeyCode::Left));
+            w.paste("~x");
+            assert_eq!(w.value, "~/a/~xb", "typed text is kept: inserted at the caret");
+
+            w.set("~".into());
+            w.paste("~/dev/x");
+            assert_eq!(w.value, "~/dev/x", "a ~/ cut short by Backspace is still only the start");
+        });
+    }
+
+    #[test]
+    fn the_caret_counts_screen_cells_for_wide_chars_and_combining_marks() {
+        with_temp_home(|home| {
+            let mut w = SpacePicker::new(home.to_path_buf());
+            let screen = Rect::new(0, 0, 80, 24);
+            let inner = w.rect(screen).inner(crate::chrome::DIALOG_FRAME);
+            let click = |x: u16| MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), column: x, row: inner.y, modifiers: KeyModifiers::NONE };
+            // "~/日本/" then "й" written as и + a combining breve, as Finder may store it
+            w.set("~/日本/и\u{306}x".into());
+            w.draw(&mut Buffer::empty(screen), screen, &Theme::dark());
+            assert_eq!(w.cursor(screen), (inner.x + 9, inner.y), "2 + 4 + 1 + 1 + 0 + 1 cells");
+            w.mouse(click(inner.x + 4), screen, &[]);
+            assert_eq!(w.cursor, 3, "the cell right of 日 is 本");
+            w.mouse(click(inner.x + 7), screen, &[]);
+            assert_eq!(w.cursor, 5, "the cell of и");
+            w.mouse(click(inner.x + 8), screen, &[]);
+            assert_eq!(w.cursor, 7, "the cell of x: after и and its mark");
+            assert_eq!(w.cursor(screen), (inner.x + 8, inner.y));
         });
     }
 

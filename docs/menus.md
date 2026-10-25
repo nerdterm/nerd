@@ -77,9 +77,10 @@ the list moves only to keep the chosen row in view and with the wheel, never und
 Panes, Commands, Settings, Plugins, Files, Help and Text; on a narrow window the tabs and the chips take more lines. All
 shows at most five rows of each group and a row that says how many more there are. Panes has chips for the agent states;
 a chip other than all lists the panes in that state. Search, a name field and New space take a paste's first line; every
-other window drops it; the pane search and the file tree's filter take it while they hold the keys, and the sidebar and
-the tab bar drop it. What a result says while the window stays (a pane that has closed, a refusal, a help page's
-address) is a line in the window above the keys, gone at the next letter typed; a longer note takes more rows.
+other window drops it; New space trims it, and a path starting with `/` or `~` replaces the `~/` the field opens with;
+the pane search and the file tree's filter take it while they hold the keys, and the sidebar and the tab bar drop it.
+What a result says while the window stays (a pane that has closed, a refusal, a help page's address) is a line in the
+window above the keys, gone at the next letter typed; a longer note takes more rows.
 
 - Panes: Enter or a click goes to the pane.
 - Commands: runs the menu item on the pane, tab or space it was listed for; a pane that has closed gives a notice and

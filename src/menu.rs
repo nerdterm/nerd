@@ -418,47 +418,56 @@ impl Prompt {
                 self.value.clear();
                 self.cursor = 0;
             }
-            Char(c) if !k.modifiers.contains(KeyModifiers::CONTROL) => {
-                let at = self.byte(self.cursor);
-                self.value.insert(at, c);
-                self.cursor += 1;
-            }
-            Backspace if self.cursor > 0 => {
-                self.cursor -= 1;
-                let at = self.byte(self.cursor);
-                self.value.remove(at);
-            }
-            Delete if self.cursor < len => {
-                let at = self.byte(self.cursor);
-                self.value.remove(at);
-            }
-            Left => self.cursor = self.cursor.saturating_sub(1),
-            Right => self.cursor = (self.cursor + 1).min(len),
             Home => self.cursor = 0,
             End => self.cursor = len,
-            _ => {}
+            _ => {
+                edit(&mut self.value, &mut self.cursor, k);
+            }
         }
         PromptOutcome::None
     }
 
     /// A pasted line, at the cursor as typing would put it.
     pub fn paste(&mut self, s: &str) {
-        let at = self.byte(self.cursor);
-        self.value.insert_str(at, s);
-        self.cursor += s.chars().count();
+        insert(&mut self.value, &mut self.cursor, s);
     }
 
     // Cursor can sit past the last character, so it needs one more slot than the chars before it.
     fn offset(&self, w: usize) -> usize {
         self.cursor.saturating_sub(w.saturating_sub(1))
     }
+}
 
-    fn byte(&self, ci: usize) -> usize {
-        self.value
-            .char_indices()
-            .nth(ci)
-            .map_or(self.value.len(), |(b, _)| b)
+/// A one-line field's editing at its caret, shared by every field that has one; `cursor` counts chars, not bytes.
+/// False for a key that does not edit, which the caller keeps for itself.
+pub fn edit(value: &mut String, cursor: &mut usize, k: crossterm::event::KeyEvent) -> bool {
+    use crossterm::event::{KeyCode::*, KeyModifiers};
+    let len = value.chars().count();
+    match k.code {
+        Char(c) if !k.modifiers.contains(KeyModifiers::CONTROL) => insert(value, cursor, c.encode_utf8(&mut [0; 4])),
+        Backspace if *cursor > 0 => {
+            *cursor -= 1;
+            value.remove(byte(value, *cursor));
+        }
+        Delete if *cursor < len => {
+            value.remove(byte(value, *cursor));
+        }
+        Backspace | Delete => {}
+        Left => *cursor = cursor.saturating_sub(1),
+        Right => *cursor = (*cursor + 1).min(len),
+        _ => return false,
     }
+    true
+}
+
+/// `s` at the caret, the caret after it.
+pub fn insert(value: &mut String, cursor: &mut usize, s: &str) {
+    value.insert_str(byte(value, *cursor), s);
+    *cursor += s.chars().count();
+}
+
+fn byte(value: &str, ci: usize) -> usize {
+    value.char_indices().nth(ci).map_or(value.len(), |(b, _)| b)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
