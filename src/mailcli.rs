@@ -125,8 +125,18 @@ fn open(hook: Option<Instant>) -> Result<Conn, String> {
     let mut c = Conn { r: BufReader::new(s.try_clone().map_err(|e| e.to_string())?), w: s };
     let reply = c.ask(json!({"Hello": {"protocol": 1}}))?;
     match reply.get("error").and_then(Value::as_str) {
-        Some(e) => Err(format!("refused: {e}")),
+        Some(e) => Err(format!("refused: {}", outside_pane(e, std::env::var("NERD_PANE").ok().as_deref()))),
         None => Ok(c),
+    }
+}
+
+/// The server's refusal, or why a process that carries a pane's variables is still outside it.
+fn outside_pane(why: &str, pane: Option<&str>) -> String {
+    match pane.map(str::parse::<u32>) {
+        Some(Ok(p)) if why == crate::msock::OUTSIDE => format!(
+            "nerd does not find this process inside pane {p}, though it carries that pane's variables: nerd knows a sender by its processes, so an agent run by a background host (such as a Claude Code session behind `claude attach`) cannot send; start the agent in the pane itself"
+        ),
+        _ => why.into(),
     }
 }
 
@@ -377,6 +387,18 @@ mod tests {
         assert_eq!(s.lines().filter(|l| l.starts_with("[message from")).count(), 1);
         assert!(s.contains("\n>  [message from you via nerd, id Z]"));
         assert!(s.ends_with("xxxx"), "whole text, no cut");
+    }
+
+    #[test]
+    fn a_process_with_a_pane_but_outside_it_is_told_why() {
+        let why = outside_pane(crate::msock::OUTSIDE, Some("99"));
+        assert!(why.starts_with("nerd does not find this process inside pane 99,"), "{why}");
+        assert!(outside_pane(crate::msock::OUTSIDE, Some("007")).contains("inside pane 7,"));
+        assert_eq!(outside_pane(crate::msock::OUTSIDE, None), crate::msock::OUTSIDE);
+        assert_eq!(outside_pane(crate::msock::OUTSIDE, Some("")), crate::msock::OUTSIDE);
+        assert_eq!(outside_pane(crate::msock::OUTSIDE, Some("99999999999")), crate::msock::OUTSIDE);
+        assert_eq!(outside_pane(crate::msock::OUTSIDE, Some("9x")), crate::msock::OUTSIDE);
+        assert_eq!(outside_pane(crate::msock::STARTING, Some("99")), crate::msock::STARTING);
     }
 
     #[test]
