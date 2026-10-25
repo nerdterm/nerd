@@ -682,6 +682,12 @@ fn sidebar_data(app: &App) -> (Vec<crate::sidebar::Waiting>, Vec<crate::sidebar:
         .collect();
     for (i, sp) in app.spaces.iter().enumerate() {
         let many = sp.tabs.len() > 1;
+        // panes of one space with the same label get a number, in pane order, so their rows differ
+        let mut alike: std::collections::BTreeMap<String, Vec<crate::layout::PaneId>> = Default::default();
+        for p in sp.tabs.iter().flat_map(|t| t.panes.values()) {
+            alike.entry(p.label()).or_default().push(p.id);
+        }
+        alike.values_mut().for_each(|v| v.sort_unstable());
         let mut panes = Vec::new();
         for (ti, tab) in sp.tabs.iter().enumerate() {
             let tab_name = many.then(|| tab.label(ti));
@@ -693,7 +699,11 @@ fn sidebar_data(app: &App) -> (Vec<crate::sidebar::Waiting>, Vec<crate::sidebar:
                 if p.agent.is_some() && matches!(state, AgentState::Done | AgentState::Blocked | AgentState::Failed) {
                     let waited = p.term.changed_at().map(|at| frame.saturating_duration_since(at));
                     let asks = p.activity.asking().map(str::to_string);
-                    waiting.push(Waiting { pane: p.id, space: sp.label(), tab: tab_name.clone(), state, waited, asks });
+                    let name = match &alike[&p.label()][..] {
+                        [_] => p.label(),
+                        ids => format!("{} {}", p.label(), ids.iter().position(|i| *i == p.id).unwrap_or(0) + 1),
+                    };
+                    waiting.push(Waiting { pane: p.id, name, space: sp.label(), tab: tab_name.clone(), state, waited, asks });
                 }
                 let subagents = p
                     .activity
@@ -764,6 +774,23 @@ mod tests {
         let bytes = super::place_logo(app, &mut view, at);
         app.view = view;
         bytes
+    }
+
+    #[test]
+    fn agents_of_one_space_with_the_same_label_get_numbers_in_pane_order() {
+        use crate::app::{Space, Tab};
+        let mut app = crate::app::App::new(crate::config::Config::default());
+        let blocked = |app: &crate::app::App, id| crate::app::snapshots::agent_pane(app, id, Blocked, 0);
+        let (one, two, mut rev) = (blocked(&app, 1), blocked(&app, 2), blocked(&app, 3));
+        rev.label = Some("rev".into());
+        let mut layout = crate::layout::Layout::new(1);
+        layout.split(crate::layout::Dir::Horizontal, 2);
+        layout.split(crate::layout::Dir::Horizontal, 3);
+        let tab = Tab { name: None, layout, panes: std::collections::HashMap::from([(1, one), (2, two), (3, rev)]), isolation_new: None };
+        app.spaces.push(Space { name: Some("nerd".into()), cwd: "/".into(), tabs: vec![tab], active_tab: 0, isolation_new: None });
+        let (waiting, _, _) = super::sidebar_data(&app);
+        let rows: Vec<(usize, &str)> = waiting.iter().map(|w| (w.pane, w.name.as_str())).collect();
+        assert_eq!(rows, [(1, "claude 1"), (2, "claude 2"), (3, "rev")]);
     }
 
     #[test]
