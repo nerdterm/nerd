@@ -283,8 +283,7 @@ impl App {
             return false;
         }
         self.mail.set(&m.id, State::Delivered, None, Some("typing hand-over".into()));
-        // Without bracketed paste every newline would submit a line of its own: the message goes in as one line.
-        let one_line = if self.pane(pane).is_some_and(|p| p.term.screen().bracketed_paste()) { framed } else { framed.replace("\r\n", "\n").replace(['\n', '\r'], " ⏎ ") };
+        let one_line = if self.pane(pane).is_some_and(|p| p.term.screen().bracketed_paste()) { framed } else { one_line(&framed) };
         if !self.paste_into(pane, &one_line) {
             self.requeue(&m.id, "the pane closed");
             return true;
@@ -327,6 +326,11 @@ impl App {
         }
         None
     }
+}
+
+/// Without bracketed paste every newline would submit a line of its own and a tab would press Tab: one line, no tabs.
+fn one_line(framed: &str) -> String {
+    framed.replace("\r\n", "\n").replace(['\n', '\r'], " ⏎ ").replace('\t', " ")
 }
 
 /// The path may have been swapped since it was checked: the end actually reached must belong to the pane too.
@@ -381,6 +385,11 @@ mod tests {
     use crate::config::Config;
     use crate::mail::{Party, Step};
     use std::path::Path;
+
+    #[test]
+    fn typed_without_paste_mode_is_one_line_without_tabs() {
+        assert_eq!(one_line("[frame]\r\na\tb\nc"), "[frame] ⏎ a b ⏎ c");
+    }
 
     /// A state folder, a HOME and a policy of their own; `f` gets pane 1 "planner" and pane 2 "reader" running
     /// `agent`, whose typed bytes land in the file it is given.

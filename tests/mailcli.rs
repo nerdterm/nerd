@@ -136,6 +136,18 @@ fn inbox_prints_framed_messages() {
 }
 
 #[test]
+fn escape_sequences_from_the_socket_never_reach_the_terminal() {
+    let reply = format!(r#"{{"messages":[{}]}}"#, msg("A1", r"\u001b]0;pwned\u0007one\u009b2J"));
+    let f = fake("esc-inbox", &[HELLO, &reply]);
+    let o = run(&f, &["inbox"], &[]);
+    assert_eq!(o.status.code(), Some(0));
+    assert!(out(&o).ends_with("\n]0;pwnedone2J\n"), "{:?}", out(&o));
+    let f = fake("esc-refused", &[HELLO, r#"{"refused":"no\u001b[2J such pane\r"}"#]);
+    let o = run(&f, &["send", "reader", "hi"], &[]);
+    assert_eq!((o.status.code(), err(&o).as_str()), (Some(1), "refused: no[2J such pane\n"));
+}
+
+#[test]
 fn wait_streams_until_done() {
     let (a, b) = (format!(r#"{{"message":{}}}"#, msg("B1", "x")), format!(r#"{{"message":{}}}"#, msg("B2", "y")));
     let f = fake("stream", &[HELLO, &format!("{a}\n{b}\n{{\"done\":{{\"count\":2}}}}")]);

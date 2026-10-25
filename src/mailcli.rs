@@ -92,7 +92,7 @@ impl Conn {
         let mut s = String::new();
         match self.r.read_line(&mut s) {
             Ok(0) => Err("the connection closed".into()),
-            Ok(_) => serde_json::from_str(&s).map_err(|e| format!("bad reply: {e}")),
+            Ok(_) => serde_json::from_str(&s).map(|v| cleaned(v, false)).map_err(|e| format!("bad reply: {e}")),
             Err(e) => Err(e.to_string()),
         }
     }
@@ -137,6 +137,26 @@ fn outside_pane(why: &str, pane: Option<&str>) -> String {
             "nerd does not find this process inside pane {p}, though it carries that pane's variables: nerd knows a sender by its processes, so an agent run by a background host (such as a Claude Code session behind `claude attach`) cannot send; start the agent in the pane itself"
         ),
         _ => why.into(),
+    }
+}
+
+/// A reply with every string's control characters removed: all of it may reach a terminal. Only a message's
+/// `text` and a hook's `out` keep newlines and tabs; elsewhere a newline could forge a line of output.
+fn cleaned(v: Value, lines: bool) -> Value {
+    let one_line = |s: &str| mail::clean(s).replace(['\n', '\t'], " ");
+    match v {
+        Value::String(s) => Value::String(if lines { mail::clean(&s) } else { one_line(&s) }),
+        Value::Array(a) => Value::Array(a.into_iter().map(|v| cleaned(v, lines)).collect()),
+        Value::Object(o) => Value::Object(
+            o.into_iter()
+                .map(|(k, v)| {
+                    let k = one_line(&k);
+                    let lines = k == "text" || k == "out";
+                    (k, cleaned(v, lines))
+                })
+                .collect(),
+        ),
+        v => v,
     }
 }
 
@@ -399,6 +419,12 @@ mod tests {
         assert_eq!(outside_pane(crate::msock::OUTSIDE, Some("99999999999")), crate::msock::OUTSIDE);
         assert_eq!(outside_pane(crate::msock::OUTSIDE, Some("9x")), crate::msock::OUTSIDE);
         assert_eq!(outside_pane(crate::msock::STARTING, Some("99")), crate::msock::STARTING);
+    }
+
+    #[test]
+    fn a_reply_reaches_the_terminal_without_control_characters() {
+        let v = cleaned(json!({"error": "a\u{1b}]0;title\u{7}b\r\nc", "messages": [{"text": "x\u{9b}2Jy\n\tz", "k\u{1b}": "v"}], "out": "o\n", "n": 3}), false);
+        assert_eq!(v, json!({"error": "a]0;titleb c", "messages": [{"text": "x2Jy\n\tz", "k": "v"}], "out": "o\n", "n": 3}));
     }
 
     #[test]
