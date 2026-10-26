@@ -92,6 +92,21 @@ tar -xzf "$archive" -C "$work"
 [ -f "$work/nerd" ] || die "the archive holds no nerd binary"
 xattr -d com.apple.quarantine "$work/nerd" 2>/dev/null || true
 mkdir -p "$bindir"
+# Anyone who can write a folder on the way to nerd can rename it and put their own nerd in its place. Symlinks: ls on "$d/." reads the folder a link points to, the one the install writes through; the folders above that target are not checked.
+d=$bindir
+case $bindir/ in
+    "$HOME"/*)
+        while :; do
+            # group or other write, unless the sticky bit keeps everyone but the owner from renaming what is not theirs
+            case $(ls -ld "$d/." | cut -c6,9,10) in
+                ??[tT]) ;;
+                *w*) say "~${d#"$HOME"} can be written by other users, so one of them could replace nerd; to fix: chmod go-w \"$d\"" ;;
+            esac
+            [ "$d" = "$HOME" ] || [ "$d" = / ] && break
+            d=$(dirname "$d")
+        done
+        ;;
+esac
 # Signed beside the old one, then renamed over it: never a moment with no nerd, or an unsigned one.
 # A new file, not cp: macOS caches a signature by inode; overwriting in place gets the binary killed at launch.
 new=$(mktemp -d "$bindir/.nerd-install.XXXXXX")

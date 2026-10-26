@@ -126,6 +126,25 @@ release "$s" 1.2 main >/dev/null
 printf '{"tag_name": "v1.2", "assets": []}\n' >"$s/latest"
 expect "$(dl tag)" none "a tag that is not a version"
 
+# A folder above the install folder writable by others is named once, with its fix; a normal home prints nothing about it.
+a=$(release "$g/perm" 0.99.0 main)
+h=$t/permhome
+mkdir -p "$h/.local/bin" && chmod 755 "$h" "$h/.local" "$h/.local/bin"
+perm() { env HOME="$h" PATH="$t/stub:/usr/bin:/bin:/usr/sbin:/sbin" sh "$t/install.sh" "$a" >"$t/out" 2>&1; }
+perm
+grep -q 'can be written' "$t/out" && bad "a normal home got a writable-folder warning"
+chmod 777 "$h/.local"
+perm
+[ "$(grep -c 'can be written' "$t/out")" = 1 ] && grep -qF "nerd: ~/.local can be written by other users, so one of them could replace nerd; to fix: chmod go-w \"$h/.local\"" "$t/out" || bad "~/.local mode 777 did not give exactly one warning naming it"
+[ -x "$h/.local/bin/nerd" ] || bad "nerd was not installed beside the warning"
+chmod 1777 "$h/.local"
+perm
+grep -q 'can be written' "$t/out" && bad "a sticky ~/.local got a writable-folder warning"
+chmod 775 "$h/.local"
+perm
+grep -q 'can be written' "$t/out" || bad "a group-writable ~/.local got no warning"
+chmod 755 "$h/.local"
+
 if [ "$fail" -eq 0 ]; then
     echo "install.test: install.sh refuses every unsigned or altered release"
 else
