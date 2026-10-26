@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.18.0](https://github.com/nerdterm/nerd/compare/v0.17.1...v0.18.0) (2026-10-26)
+
+
+### Added
+
+* an agent learns whom it may write to changed, only in its own commands' output ([#143](https://github.com/nerdterm/nerd/issues/143)) ([14c7f8f](https://github.com/nerdterm/nerd/commit/14c7f8f777eb8eed875042029b5788ea7c4a44c7))
+* install.sh warns when a folder above nerd can be written by others ([#150](https://github.com/nerdterm/nerd/issues/150)) ([b1371bd](https://github.com/nerdterm/nerd/commit/b1371bda128acc40162a3638f1c72c62db9f36f0))
+* the Messages matrix shows spaces first and opens a pair of spaces on a press ([#147](https://github.com/nerdterm/nerd/issues/147)) ([f9bccf9](https://github.com/nerdterm/nerd/commit/f9bccf9015b199ff8cf75a0a672072705362b9e5))
+
+
+### Fixed
+
+* a needs-you row names the pane whose agent waits ([#152](https://github.com/nerdterm/nerd/issues/152)) ([e59447d](https://github.com/nerdterm/nerd/commit/e59447d7a583bf5389642e7f706c70cb600549ae))
+* a pane under heavy load waits for a live broker, and titles keep following processes when ps is slow ([#153](https://github.com/nerdterm/nerd/issues/153)) ([a475310](https://github.com/nerdterm/nerd/commit/a475310d3a63caa20e1b5c1cbff2005f9b739efc))
+* a process outside nerd is not told to try again while a pane starts ([#138](https://github.com/nerdterm/nerd/issues/138)) ([f97eaa8](https://github.com/nerdterm/nerd/commit/f97eaa874b73ce0ceb7b073bcb16f80224119519))
+* a sender outside the pane it names is told why it cannot send ([#136](https://github.com/nerdterm/nerd/issues/136)) ([1a6192e](https://github.com/nerdterm/nerd/commit/1a6192edb00140b2a7a8be64ff6e0dbadb8484c5))
+* an agent pane without its hook is not done on every redraw or pause ([#155](https://github.com/nerdterm/nerd/issues/155)) ([9c8ad72](https://github.com/nerdterm/nerd/commit/9c8ad7258840f82af64ad65f2e1955040c9f617e))
+* every ability in the plugin install and update question is shown whole, wrapped under its own start ([#151](https://github.com/nerdterm/nerd/issues/151)) ([4a538d3](https://github.com/nerdterm/nerd/commit/4a538d3a4fc177268bcd9aacbccbd3e270f4ab7f))
+* text from the socket or another agent can neither drive a terminal nor hide a forged frame ([#142](https://github.com/nerdterm/nerd/issues/142)) ([af1e606](https://github.com/nerdterm/nerd/commit/af1e6069fd8c93536b632916579a8f7d5c6998d7))
+* the New space field has a caret that keys and clicks move, and a pasted path replaces the prefilled ~/ ([#144](https://github.com/nerdterm/nerd/issues/144)) ([c87d53c](https://github.com/nerdterm/nerd/commit/c87d53c9eca3521ea3301566f864c71ab3e10941))
+* two panes answering each other are not held after eight turns, and allow-for-an-hour lets them go on ([#148](https://github.com/nerdterm/nerd/issues/148)) ([5d7ac9c](https://github.com/nerdterm/nerd/commit/5d7ac9cae0757f280ff38259bad8c2d5ad782da4))
+
 ## [0.17.1](https://github.com/nerdterm/nerd/compare/v0.17.0...v0.17.1) (2026-10-24)
 
 
