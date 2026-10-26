@@ -396,7 +396,10 @@ impl Broker {
 
     fn ps_via_broker(&self) -> Option<String> {
         let rx = self.ps_reply.lock().unwrap_or_else(|e| e.into_inner());
-        while rx.try_recv().is_ok() {}
+        // A table that came after its asker gave up is still fresh enough for this one.
+        if let Some(late) = rx.try_iter().last() {
+            return Some(late).filter(|t| !t.is_empty());
+        }
         self.send(&Req::Ps).ok()?;
         rx.recv_timeout(REPLY_TIMEOUT).ok().filter(|t| !t.is_empty())
     }
