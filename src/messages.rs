@@ -213,8 +213,10 @@ pub enum Click {
     Line(usize),
     /// A row label of the matrix.
     Select(String),
-    /// The matrix starts at this space group.
+    /// The matrix's first shown column.
     Start(usize),
+    /// The spaces, or the panes of a pair of them (None: `you`).
+    Zoom(Option<(String, Option<String>)>),
     /// The routes map moves by columns and lines.
     Pan(isize, isize),
     Topology,
@@ -257,8 +259,10 @@ pub struct Messages {
     pair: Option<(String, String)>,
     /// Opened from outside the window (the menu, the sidebar): leaving the map or the message closes it.
     alone: bool,
-    /// The first space group of the matrix when its columns do not all fit.
+    /// The matrix's first shown column when its columns do not all fit.
     start: usize,
+    /// The pair of spaces whose panes the matrix shows (None: `you`); None shows the spaces.
+    zoom: Option<(String, Option<String>)>,
     /// The routes map's first column and first line.
     pan: Cell<(usize, usize)>,
     scroll: Scroll,
@@ -462,6 +466,11 @@ impl Messages {
 
     /// Before a frame: a shown message that no longer waits gives way to the next of its pair; false closes the window.
     pub fn settle(&mut self, v: &MailView) -> bool {
+        let named = |s: &str| v.columns.iter().any(|c| c.space.as_deref() == Some(s) && c.cards.iter().any(|c| c.pane.is_some()));
+        if self.zoom.as_ref().is_some_and(|(a, b)| !named(a) || b.as_deref().is_some_and(|b| !named(b))) {
+            self.zoom = None;
+            self.start = 0;
+        }
         let Some(id) = &self.message else { return true };
         if let Some(m) = v.waiting.iter().find(|m| m.id == *id) {
             self.pair.get_or_insert_with(|| (m.from.name().into(), m.to.name().into()));
@@ -722,99 +731,178 @@ impl Messages {
 
     /// Who may write to whom: a row per sender, a column per recipient and `you`, each cell the verdict a message would get now.
     fn matrix(&self, v: &MailView, verdict: &dyn Fn(&str, &str) -> Verdict, w: usize, theme: &Theme) -> Vec<Line<Click>> {
-        let g = Style::default().bg(theme.ground);
-        let mut panes: Vec<&Card> = Vec::new();
-        let mut groups: Vec<(&str, std::ops::Range<usize>)> = Vec::new();
+        let mut groups: Vec<(&str, Vec<&str>)> = Vec::new();
         for col in &v.columns {
             let Some(space) = &col.space else { continue };
-            let from = panes.len();
-            panes.extend(col.cards.iter().filter(|c| c.pane.is_some()));
-            if panes.len() > from {
-                groups.push((space, from..panes.len()));
+            let names: Vec<&str> = col.cards.iter().filter(|c| c.pane.is_some()).map(|c| c.name.as_str()).collect();
+            if !names.is_empty() {
+                groups.push((space, names));
             }
         }
         // the quick start above already says to name a pane
-        if panes.is_empty() {
+        if groups.is_empty() {
             return Vec::new();
         }
-        let label = |i: usize| format!("{} {}", i + 1, panes[i].name);
-        let lw = (0..panes.len()).map(|i| cells(&label(i))).max().unwrap_or(0);
+        let find = |s: &str| groups.iter().find(|(n, _)| *n == s);
+        match &self.zoom {
+            Some((a, b)) if find(a).is_some() && b.as_deref().is_none_or(|b| find(b).is_some()) => {
+                let to = b.as_deref().and_then(find).map(|(s, names)| (*s, names.as_slice()));
+                self.pair(v, verdict, find(a).unwrap(), to, w, theme)
+            }
+            _ => self.spaces(v, verdict, &groups, w, theme),
+        }
+    }
+
+    /// The columns from `start` that fit in `room`, of `n`.
+    fn page(&self, n: usize, room: usize) -> std::ops::Range<usize> {
+        if n <= room {
+            return 0..n;
+        }
+        let start = self.start.min(n - 1);
+        start..(start + room).min(n)
+    }
+
+    /// When not every column fits: which do, and the chips that move by a page.
+    fn paging(&self, shown: &std::ops::Range<usize>, n: usize, room: usize, w: usize, theme: &Theme) -> Vec<Line<Click>> {
+        if shown.len() == n {
+            return Vec::new();
+        }
+        let g = Style::default().bg(theme.ground);
+        let fit = if shown.is_empty() { "no column".to_string() } else { format!("columns {}–{}", shown.start + 1, shown.end) };
+        let mut out: Vec<Line<Click>> = crate::menu::wrap(&format!("{fit} of {n} fit this width"), w).into_iter().map(|s| vec![(s, g.fg(theme.warn), None)]).collect();
+        let mut l = out.pop().unwrap_or_default();
+        text(&mut l, " ", g);
+        let chips = [(room > 0 && shown.start > 0, "‹ earlier", shown.start.saturating_sub(room)), (room > 0 && shown.end < n, "later ›", shown.end)];
+        for (_, word, at) in chips.into_iter().filter(|c| c.0) {
+            if width(&l) + cells(word) + 3 > w {
+                out.push(std::mem::take(&mut l));
+            }
+            chip(&mut l, word, None, Some(Click::Start(at)), theme);
+        }
+        out.push(l);
+        out
+    }
+
+    fn too_narrow(need: usize, w: usize, theme: &Theme) -> Vec<Line<Click>> {
+        let g = Style::default().bg(theme.ground);
+        vec![vec![(format!("the matrix needs {need} columns, this window has {w}: widen the window"), g.fg(theme.warn), None)]]
+    }
+
+    /// The column numbers over the cells; `you` last when `you`.
+    fn head(lw: usize, numbers: impl Iterator<Item = usize>, you: bool, theme: &Theme) -> Line<Click> {
+        let g = Style::default().bg(theme.ground);
+        let mut head: Line<Click> = vec![(" ".repeat(lw), g, None)];
+        for n in numbers {
+            text(&mut head, format!(" {:<8}", n + 1), g.fg(theme.muted));
+        }
+        if you {
+            text(&mut head, format!("│{:<8}", "you"), g.fg(theme.muted));
+        }
+        head
+    }
+
+    /// A row and a column per space, and `you`: a cell sums up every pair of their panes, and a press opens them.
+    fn spaces(&self, v: &MailView, verdict: &dyn Fn(&str, &str) -> Verdict, groups: &[(&str, Vec<&str>)], w: usize, theme: &Theme) -> Vec<Line<Click>> {
+        let g = Style::default().bg(theme.ground);
+        let label = |i: usize| format!("{} {}", i + 1, groups[i].0);
+        let lw = (0..groups.len()).map(|i| cells(&label(i))).max().unwrap_or(0);
         let cap = w.saturating_sub(lw) / CELL;
         if cap == 0 {
-            return vec![vec![(format!("the matrix needs {} columns, this window has {w}: widen the window", lw + CELL), g.fg(theme.warn), None)]];
+            return Self::too_narrow(lw + CELL, w, theme);
         }
-        let start = if panes.len() < cap { 0 } else { self.start.min(groups.len() - 1) };
-        let shown = if panes.len() < cap {
-            0..panes.len()
-        } else {
-            let first = groups[start].1.start;
-            let end = groups[start..].iter().map(|(_, r)| r.end).take_while(|end| end - first < cap).last();
-            first..end.unwrap_or_else(|| (first + cap.saturating_sub(1)).min(groups[start].1.end))
-        };
-        let mut out: Vec<Line<Click>> = Vec::new();
-        if shown.len() < panes.len() {
-            let mut l: Line<Click> = Vec::new();
-            let fit = if shown.is_empty() { "no recipient".to_string() } else { format!("recipients {}–{}", shown.start + 1, shown.end) };
-            text(&mut l, format!("{fit} of {} fit this width; start at space: ", panes.len()), g.fg(theme.warn));
-            for (i, (space, _)) in groups.iter().enumerate() {
-                if width(&l) + cells(space) + 3 > w {
-                    out.push(std::mem::take(&mut l));
+        let shown = self.page(groups.len(), cap - 1);
+        let mut out: Vec<Line<Click>> = self.paging(&shown, groups.len(), cap - 1, w, theme);
+        out.push(Self::head(lw, shown.clone(), true, theme));
+        let you = vec!["you"];
+        for (i, (space, from)) in groups.iter().enumerate() {
+            let mut l: Line<Click> = vec![(format!("{:<lw$}", label(i)), g.fg(theme.text).add_modifier(Modifier::BOLD), None)];
+            for j in shown.clone().map(Some).chain([None]) {
+                let to = j.map_or(&you, |j| &groups[j].1);
+                let pairs: Vec<(&str, &str)> = from.iter().flat_map(|f| to.iter().filter(move |t| *t != f).map(move |t| (*f, *t))).collect();
+                text(&mut l, if j.is_none() { "│" } else { " " }, g.fg(theme.muted));
+                if pairs.is_empty() {
+                    text(&mut l, format!("{:<8}", "—"), g.fg(theme.faint));
+                    continue;
                 }
-                let lit = (i == start).then(|| theme.cursor());
-                chip(&mut l, space, lit, Some(Click::Start(i)), theme);
+                let click = Some(Click::Zoom(Some((space.to_string(), j.map(|j| groups[j].0.to_string())))));
+                let held = v.waiting.iter().filter(|m| from.contains(&m.from.name()) && to.contains(&m.to.name())).count();
+                if held > 0 {
+                    let n = if held > 99 { "99+".to_string() } else { held.to_string() };
+                    l.push((format!("{:<8}", format!("held {n}")), g.fg(theme.warn), click));
+                    continue;
+                }
+                let verdicts: Vec<Verdict> = pairs.iter().map(|(f, t)| verdict(f, t)).collect();
+                let (word, style) = if verdicts.iter().all(|x| x.action == verdicts[0].action) {
+                    let bright = if verdicts.iter().any(|x| x.route.is_some()) { Modifier::BOLD } else { Modifier::DIM };
+                    (verdicts[0].action.word(), g.fg(action_color(verdicts[0].action, theme)).add_modifier(bright))
+                } else {
+                    ("mixed", g.fg(theme.text))
+                };
+                l.push((format!("{word:<8}"), style, click));
             }
             out.push(l);
         }
-        // None is the `you` column
-        let columns: Vec<Option<usize>> = shown.clone().map(Some).chain([None]).collect();
-        let sep = |j: Option<usize>| match j {
-            Some(j) => j != shown.start && groups.iter().any(|(_, r)| r.start == j),
-            None => true,
-        };
-        let mut head: Line<Click> = vec![(" ".repeat(lw), g, None)];
-        for j in &columns {
-            text(&mut head, if sep(*j) { "│" } else { " " }, g.fg(theme.muted));
-            text(&mut head, format!("{:<8}", j.map_or("you".to_string(), |j| (j + 1).to_string())), g.fg(theme.muted));
+        let legend = "a cell opens the panes behind it · mixed: they differ · bright: a route decides · faint: the mode · a reply in a thread passes unless a route says no";
+        out.extend(crate::menu::wrap(legend, w).into_iter().map(|l| vec![(l, g.fg(theme.faint), None)]));
+        out
+    }
+
+    /// The panes of space `a` towards those of `to` (None: `you`), and a route for the whole pair.
+    fn pair(&self, v: &MailView, verdict: &dyn Fn(&str, &str) -> Verdict, (a, from): &(&str, Vec<&str>), to: Option<(&str, &[&str])>, w: usize, theme: &Theme) -> Vec<Line<Click>> {
+        let g = Style::default().bg(theme.ground);
+        let mut out: Vec<Line<Click>> = Vec::new();
+        let mut l: Line<Click> = Vec::new();
+        chip(&mut l, "‹ every space", None, Some(Click::Zoom(None)), theme);
+        text(&mut l, format!(" {a} → {}", to.map_or("you", |(b, _)| b)), g.fg(theme.text).add_modifier(Modifier::BOLD));
+        out.push(l);
+        let (sf, st) = (Scope::Space(a.to_string()), to.map_or(Scope::You, |(b, _)| Scope::Space(b.into())));
+        let own = v.routes.iter().find(|r| r.route.from == sf && r.route.to == st && r.left != Some(0)).map(|r| r.route.action);
+        let mut l: Line<Click> = Vec::new();
+        text(&mut l, "every pane ", g.fg(theme.muted));
+        for a in [Some(Action::Allow), Some(Action::Ask), Some(Action::No), None] {
+            let lit = match a {
+                Some(a) => (own == Some(a)).then(|| Style::default().bg(action_color(a, theme)).fg(theme.ground)),
+                None => own.is_none().then(|| theme.cursor()),
+            };
+            let act = MailAction::SetRoute { from: sf.clone(), to: st.clone(), action: a, until: None };
+            chip(&mut l, a.map_or("mode", Action::word), lit, Some(Click::Act(act)), theme);
         }
-        out.push(head);
-        for (space, range) in &groups {
-            out.push(vec![(format!("space {space}"), g.fg(theme.muted), None)]);
-            for i in range.clone() {
-                let name = &panes[i].name;
-                let chosen = self.selected.as_deref() == Some(name.as_str());
-                let style = if chosen { g.fg(theme.accent) } else { g.fg(theme.text) }.add_modifier(Modifier::BOLD);
-                let mut l: Line<Click> = vec![(format!("{:<lw$}", label(i)), style, Some(Click::Select(name.clone())))];
-                for j in &columns {
-                    text(&mut l, if sep(*j) { "│" } else { " " }, g.fg(theme.muted));
-                    let to = j.map_or("you", |j| panes[j].name.as_str());
-                    if *j == Some(i) {
-                        text(&mut l, format!("{:<8}", "—"), g.fg(theme.faint));
-                        continue;
-                    }
-                    let waiting: Vec<&Message> = v.waiting.iter().filter(|m| m.from.name() == name && m.to.name() == to).collect();
-                    if let Some(first) = waiting.first() {
-                        let n = if waiting.len() > 99 { "99+".to_string() } else { waiting.len().to_string() };
-                        l.push((format!("{:<8}", format!("held {n}")), g.fg(theme.warn), Some(Click::Waiting(first.id.clone()))));
-                        continue;
-                    }
-                    let verdict = verdict(name, to);
-                    let style = g.fg(action_color(verdict.action, theme)).add_modifier(if verdict.route.is_some() { Modifier::BOLD } else { Modifier::DIM });
-                    let (from, to) = (scope_of(name), scope_of(to));
-                    let own = v.routes.iter().find(|r| r.route.from == from && r.route.to == to && r.left != Some(0)).map(|r| &r.route);
-                    let (action, until) = match own {
-                        None => (Some(Action::Allow), None),
-                        Some(r) => match r.action {
-                            Action::Allow => (Some(Action::Ask), r.until),
-                            Action::Ask => (Some(Action::No), r.until),
-                            Action::No => (None, None),
-                        },
-                    };
-                    l.push((format!("{:<8}", verdict.action.word()), style, Some(Click::Act(MailAction::SetRoute { from, to, action, until }))));
+        out.push(l);
+        out.extend(crate::menu::wrap("more specific routes go first; the cells show what each pair gets", w).into_iter().map(|l| vec![(l, g.fg(theme.faint), None)]));
+        let names: &[&str] = to.map_or(&["you"], |(_, n)| n);
+        if to.is_some() {
+            let mut l: Line<Click> = Vec::new();
+            text(&mut l, "to ", g.fg(theme.muted));
+            for (k, n) in names.iter().enumerate() {
+                let word = format!("{} {n}", k + 1);
+                if width(&l) + cells(&word) + 3 > w {
+                    out.push(std::mem::take(&mut l));
+                    text(&mut l, "   ", g);
                 }
-                out.push(l);
+                chip(&mut l, &word, None, Some(Click::Select(n.to_string())), theme);
             }
+            out.push(l);
         }
-        let legend = "bright: a route decides · faint: the mode · a reply in a thread passes unless a route says no";
+        let lw = from.iter().map(|n| cells(n)).max().unwrap_or(0);
+        let cap = w.saturating_sub(lw) / CELL;
+        if cap == 0 {
+            out.extend(Self::too_narrow(lw + CELL, w, theme));
+            return out;
+        }
+        let shown = if to.is_some() { self.page(names.len(), cap) } else { 0..1 };
+        out.extend(self.paging(&shown, names.len(), cap, w, theme));
+        out.push(if to.is_some() { Self::head(lw, shown.clone(), false, theme) } else { Self::head(lw, std::iter::empty(), true, theme) });
+        for name in from {
+            let chosen = self.selected.as_deref() == Some(*name);
+            let style = if chosen { g.fg(theme.accent) } else { g.fg(theme.text) }.add_modifier(Modifier::BOLD);
+            let mut l: Line<Click> = vec![(format!("{name:<lw$}"), style, Some(Click::Select(name.to_string())))];
+            for t in &names[shown.clone()] {
+                text(&mut l, if to.is_none() { "│" } else { " " }, g.fg(theme.muted));
+                pane_cell(&mut l, v, verdict, name, t, theme);
+            }
+            out.push(l);
+        }
+        let legend = "a name shows its rows · bright: a route decides · faint: the mode · a reply in a thread passes unless a route says no";
         out.extend(crate::menu::wrap(legend, w).into_iter().map(|l| vec![(l, g.fg(theme.faint), None)]));
         out
     }
@@ -1054,6 +1142,10 @@ impl Messages {
         let answer = |action| Out::Act(MailAction::AnswerRequest { id: id.clone(), action });
         match k.code {
             Esc if self.selected.take().is_some() => Out::None,
+            Esc if self.zoom.take().is_some() => {
+                self.start = 0;
+                Out::None
+            }
             Esc => Out::Close,
             Char('m') => Out::Act(MailAction::SetMode(if v.mode == Mode::Open { Mode::Strict } else { Mode::Open })),
             Char('b') => Out::Broadcast,
@@ -1138,6 +1230,10 @@ impl Messages {
                     Some(Click::Line(i)) => return Out::Act(MailAction::CycleRoute(i)),
                     Some(Click::Select(n)) => self.toggle(n),
                     Some(Click::Start(i)) => self.start = i,
+                    Some(Click::Zoom(z)) => {
+                        self.zoom = z;
+                        self.start = 0;
+                    }
                     Some(Click::Incoming(b)) => self.incoming = b,
                     Some(Click::Act(a)) => return Out::Act(a),
                     Some(Click::Reply(id)) => return Out::Reply(id),
@@ -1156,6 +1252,34 @@ impl Messages {
             }
         }
     }
+}
+
+/// A pane's cell towards `to`: `—` for itself, `held N` for waiting mail, else the verdict, whose press gives the pair's next route.
+fn pane_cell(l: &mut Line<Click>, v: &MailView, verdict: &dyn Fn(&str, &str) -> Verdict, name: &str, to: &str, theme: &Theme) {
+    let g = Style::default().bg(theme.ground);
+    if name == to {
+        text(l, format!("{:<8}", "—"), g.fg(theme.faint));
+        return;
+    }
+    let waiting: Vec<&Message> = v.waiting.iter().filter(|m| m.from.name() == name && m.to.name() == to).collect();
+    if let Some(first) = waiting.first() {
+        let n = if waiting.len() > 99 { "99+".to_string() } else { waiting.len().to_string() };
+        l.push((format!("{:<8}", format!("held {n}")), g.fg(theme.warn), Some(Click::Waiting(first.id.clone()))));
+        return;
+    }
+    let verdict = verdict(name, to);
+    let style = g.fg(action_color(verdict.action, theme)).add_modifier(if verdict.route.is_some() { Modifier::BOLD } else { Modifier::DIM });
+    let (from, to) = (scope_of(name), scope_of(to));
+    let own = v.routes.iter().find(|r| r.route.from == from && r.route.to == to && r.left != Some(0)).map(|r| &r.route);
+    let (action, until) = match own {
+        None => (Some(Action::Allow), None),
+        Some(r) => match r.action {
+            Action::Allow => (Some(Action::Ask), r.until),
+            Action::Ask => (Some(Action::No), r.until),
+            Action::No => (None, None),
+        },
+    };
+    l.push((format!("{:<8}", verdict.action.word()), style, Some(Click::Act(MailAction::SetRoute { from, to, action, until }))));
 }
 
 /// The widest of a card's lines, with the border and padding.
@@ -1387,8 +1511,109 @@ pub(crate) mod tests {
         &l[1 + 2 * at + 1]
     }
 
+    fn norm(l: &str) -> String {
+        l.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    /// The paging line and the chips wrapped under it, as one line of words.
+    fn paged(text: &[String]) -> String {
+        let at = text.iter().position(|l| l.starts_with("columns") || l.starts_with("no column")).expect("a paging line");
+        let more = text[at + 1..].iter().take_while(|l| l.contains("earlier") || l.contains("later"));
+        norm(&std::iter::once(&text[at]).chain(more).cloned().collect::<Vec<_>>().join(" "))
+    }
+
+    /// The window on the panes of space `a` towards `b` (None: `you`).
+    fn zoomed(a: &str, b: Option<&str>) -> Messages {
+        Messages { zoom: Some((a.into(), b.map(Into::into))), ..Messages::new() }
+    }
+
+    fn zoom(a: &str, b: Option<&str>) -> Click {
+        Click::Zoom(Some((a.into(), b.map(Into::into))))
+    }
+
     #[test]
-    fn the_matrix_shows_the_verdict_of_each_pair_bright_for_a_route_and_faint_for_the_mode() {
+    fn a_space_cell_sums_up_its_pairs_and_opens_them() {
+        let theme = Theme::dark();
+        let mut v = view();
+        v.waiting.clear();
+        // vault is another account: open mode asks for it
+        let by_pane = |from: &str, to: &str| match (from, to) {
+            ("vault", _) => Verdict { action: Action::Ask, why: "open mode, another account".into(), route: None },
+            ("planner", "reader") => Verdict { action: Action::Allow, why: "route".into(), route: Some(0) },
+            _ => Verdict { action: Action::Allow, why: "open mode".into(), route: None },
+        };
+        let (lines, _) = Messages::new().lines(&v, &by_pane, 120, &theme);
+        let text = texts(&lines);
+        assert!(text.iter().any(|l| l.contains(" 1        2       │you")), "spaces numbered, then you:\n{text:#?}");
+        let (word, style, hit) = cell(&lines, "1 work", 0);
+        assert_eq!((word.trim_end(), *hit == Some(zoom("work", Some("work")))), ("allow", true));
+        assert!(style.add_modifier.contains(Modifier::DIM), "only the mode decides: faint");
+        let (word, style, _) = cell(&lines, "1 work", 1);
+        assert_eq!(word.trim_end(), "allow");
+        assert!(style.add_modifier.contains(Modifier::BOLD), "a route decides one of the pairs: bright");
+        let (word, _, hit) = cell(&lines, "2 research", 0);
+        assert_eq!((word.trim_end(), hit.clone()), ("mixed", Some(zoom("research", Some("work")))), "reader allow, vault ask");
+        assert_eq!(cell(&lines, "2 research", 2).2, Some(zoom("research", None)), "the you column");
+        // held mail between the spaces counts once per message
+        v.waiting.push(msg("m1", "coder", Some("reader"), State::Held(Hold::Route), 120));
+        v.waiting.push(msg("m4", "planner", Some("vault"), State::Held(Hold::Route), 120));
+        let (lines, _) = Messages::new().lines(&v, &by_pane, 120, &theme);
+        let (word, style, hit) = cell(&lines, "1 work", 1);
+        assert_eq!((word.trim_end(), style.fg, hit.clone()), ("held 2", Some(theme.warn), Some(zoom("work", Some("research")))));
+        // a space of one pane has no pair inside it
+        let (lines, _) = Messages::new().lines(&full(), &verdict, 120, &theme);
+        assert_eq!(cell(&lines, "6 s5", 5).0.trim_end(), "—");
+        assert_eq!(cell(&lines, "6 s5", 5).2, None);
+    }
+
+    #[test]
+    fn a_press_on_a_cell_opens_the_pair_and_esc_or_every_space_comes_back() {
+        let v = view();
+        let mut m = Messages::new();
+        let (d, _) = drawn(&m, &v, 140, 60);
+        assert_eq!(press(&mut m, &d, &zoom("work", Some("research"))), Out::None);
+        let (d, shown) = drawn(&m, &v, 140, 60);
+        assert!(shown.contains("‹ every space") && shown.contains("work → research") && shown.contains("1 reader") && shown.contains("2 vault"), "{shown}");
+        assert_eq!(press(&mut m, &d, &Click::Zoom(None)), Out::None);
+        assert_eq!(m.zoom, None);
+        let (d, _) = drawn(&m, &v, 140, 60);
+        press(&mut m, &d, &zoom("work", Some("research")));
+        let (d, _) = drawn(&m, &v, 140, 60);
+        press(&mut m, &d, &Click::Select("planner".into()));
+        m.start = 1;
+        assert_eq!(key(&mut m, &v, crossterm::event::KeyCode::Esc), Out::None, "Esc clears the chosen pane first");
+        assert!(m.selected.is_none() && m.zoom.is_some());
+        assert_eq!(key(&mut m, &v, crossterm::event::KeyCode::Esc), Out::None, "then the pair");
+        assert_eq!((m.zoom.clone(), m.start), (None, 0));
+        assert_eq!(key(&mut m, &v, crossterm::event::KeyCode::Esc), Out::Close);
+    }
+
+    #[test]
+    fn every_pane_of_the_pair_takes_one_space_route_and_the_cells_keep_the_verdicts() {
+        let theme = Theme::dark();
+        let mut v = view();
+        let space = |s: &str| Scope::Space(s.into());
+        let set = |a| MailAction::SetRoute { from: space("work"), to: space("research"), action: a, until: None };
+        let acts = |m: &Messages, v: &MailView| -> Vec<MailAction> {
+            m.lines(v, &verdict, 120, &theme).0.into_iter().flatten().filter_map(|(_, _, h)| if let Some(Click::Act(a)) = h { Some(a) } else { None }).collect()
+        };
+        let m = zoomed("work", Some("research"));
+        for a in [Some(Action::Allow), Some(Action::Ask), Some(Action::No), None] {
+            assert!(acts(&m, &v).contains(&set(a)), "{a:?}");
+        }
+        assert!(acts(&zoomed("work", None), &v).contains(&MailAction::SetRoute { from: space("work"), to: Scope::You, action: Some(Action::No), until: None }));
+        // the owner's space route is lit; a more specific route still decides its cell
+        v.routes.push(RouteView { index: 5, route: Route { from: space("work"), to: space("research"), action: Action::Allow, until: None }, risk: false, left: None });
+        let shadow = |from: &str, _: &str| Verdict { action: if from == "planner" { Action::No } else { Action::Allow }, why: "route".into(), route: Some(if from == "planner" { 6 } else { 5 }) };
+        let (lines, _) = m.lines(&v, &shadow, 120, &theme);
+        let lit = lines.iter().flatten().find(|(t, _, h)| t.contains("allow") && *h == Some(Click::Act(set(Some(Action::Allow))))).unwrap();
+        assert_eq!(lit.1.bg, Some(action_color(Action::Allow, &theme)), "the space route's chip is lit");
+        assert_eq!(cell(&lines, "planner", 0).0.trim_end(), "no", "planner → space:research no goes first");
+        assert!(texts(&lines).iter().any(|l| l == "more specific routes go first; the cells show what each pair gets"));
+    }
+
+    #[test]
+    fn the_pair_shows_the_verdict_of_each_pane_bright_for_a_route_and_faint_for_the_mode() {
         let theme = Theme::dark();
         let v = view();
         let by_route = |from: &str, to: &str| match (from, to) {
@@ -1396,19 +1621,17 @@ pub(crate) mod tests {
             ("coder", "reader") => Verdict { action: Action::Ask, why: "route".into(), route: Some(1) },
             _ => Verdict { action: Action::No, why: "open mode".into(), route: None },
         };
-        let (lines, _) = Messages::new().lines(&v, &by_route, 120, &theme);
-        let text = texts(&lines);
-        assert!(text.iter().any(|l| l.starts_with(" ") && l.contains("│you")), "numbers, then you:\n{text:#?}");
-        // columns: 1 planner, 2 coder, 3 reader, 4 vault, then you
-        let (word, style, _) = cell(&lines, "1 planner", 2);
+        let (lines, _) = zoomed("work", Some("research")).lines(&v, &by_route, 120, &theme);
+        // columns: 1 reader, 2 vault
+        let (word, style, _) = cell(&lines, "planner", 0);
         assert_eq!(word.trim_end(), "allow");
         assert!(style.add_modifier.contains(Modifier::BOLD) && !style.add_modifier.contains(Modifier::DIM), "a route decides: bright");
-        let (word, style, _) = cell(&lines, "1 planner", 3);
+        let (word, style, _) = cell(&lines, "planner", 1);
         assert_eq!(word.trim_end(), "no");
         assert!(style.add_modifier.contains(Modifier::DIM), "the mode decides: faint");
-        assert_eq!(cell(&lines, "1 planner", 0).0.trim_end(), "—", "the diagonal");
-        // coder → reader has one message waiting in view(); two make "held 2"
-        assert_eq!(cell(&lines, "2 coder", 2).0.trim_end(), "held 1");
+        assert_eq!(cell(&lines, "coder", 0).0.trim_end(), "held 1", "coder → reader has one message waiting");
+        let (lines, _) = zoomed("work", Some("work")).lines(&v, &by_route, 120, &theme);
+        assert_eq!(cell(&lines, "planner", 0).0.trim_end(), "—", "the diagonal");
     }
 
     #[test]
@@ -1416,16 +1639,17 @@ pub(crate) mod tests {
         let theme = Theme::dark();
         let mut v = view();
         v.waiting.push(msg("m4", "coder", Some("reader"), State::Held(Hold::Route), 10));
-        let (lines, _) = Messages::new().lines(&v, &verdict, 120, &theme);
-        let (word, style, hit) = cell(&lines, "2 coder", 2);
+        let m = zoomed("work", Some("research"));
+        let (lines, _) = m.lines(&v, &verdict, 120, &theme);
+        let (word, style, hit) = cell(&lines, "coder", 0);
         assert_eq!(word.trim_end(), "held 2");
         assert_eq!(style.fg, Some(theme.warn));
         assert_eq!(*hit, Some(Click::Waiting("m1".into())), "the first in waiting order");
         for _ in 0..120 {
             v.waiting.push(msg("mx", "coder", Some("reader"), State::Held(Hold::Route), 10));
         }
-        let (lines, _) = Messages::new().lines(&v, &verdict, 120, &theme);
-        assert_eq!(cell(&lines, "2 coder", 2).0.trim_end(), "held 99+");
+        let (lines, _) = m.lines(&v, &verdict, 120, &theme);
+        assert_eq!(cell(&lines, "coder", 0).0.trim_end(), "held 99+");
     }
 
     #[test]
@@ -1438,26 +1662,29 @@ pub(crate) mod tests {
             other => panic!("{other:?}"),
         };
         let set = |f: &str, t: &str, a, until| MailAction::SetRoute { from: scope_of(f), to: scope_of(t), action: a, until };
-        let (lines, _) = Messages::new().lines(&v, &verdict, 120, &theme);
-        assert_eq!(act(&lines, "1 planner", 2), set("planner", "reader", Some(Action::Ask), Some(1_000)), "a timed allow becomes ask with the same time");
-        assert_eq!(act(&lines, "1 planner", 1), set("planner", "coder", Some(Action::Allow), None), "none → allow");
-        assert_eq!(act(&lines, "1 planner", 4), set("planner", "you", Some(Action::Allow), None));
+        let pair = |a, b, v: &MailView| zoomed(a, b).lines(v, &verdict, 120, &theme).0;
+        assert_eq!(act(&pair("work", Some("research"), &v), "planner", 0), set("planner", "reader", Some(Action::Ask), Some(1_000)), "a timed allow becomes ask with the same time");
+        assert_eq!(act(&pair("work", Some("work"), &v), "planner", 1), set("planner", "coder", Some(Action::Allow), None), "none → allow");
+        assert_eq!(act(&pair("work", None, &v), "planner", 0), set("planner", "you", Some(Action::Allow), None));
         v.routes[0].route.action = Action::No;
-        let (lines, _) = Messages::new().lines(&v, &verdict, 120, &theme);
-        assert_eq!(act(&lines, "1 planner", 2), set("planner", "reader", None, None), "no → none");
-        let (d, _) = drawn(&Messages::new(), &v, 140, 60);
-        let mut m = Messages::new();
+        assert_eq!(act(&pair("work", Some("research"), &v), "planner", 0), set("planner", "reader", None, None), "no → none");
+        let mut m = zoomed("work", Some("research"));
+        let (d, _) = drawn(&m, &v, 140, 60);
         assert_eq!(press(&mut m, &d, &Click::Act(set("planner", "reader", None, None))), Out::Act(set("planner", "reader", None, None)));
     }
 
     #[test]
-    fn a_click_on_a_label_gives_its_rows_both_ways() {
+    fn a_click_on_a_name_gives_its_rows_both_ways() {
         let theme = Theme::dark();
         let v = view();
-        let (d, _) = drawn(&Messages::new(), &v, 140, 60);
-        let mut m = Messages::new();
+        let mut m = zoomed("work", Some("research"));
+        let (d, _) = drawn(&m, &v, 140, 60);
         assert_eq!(press(&mut m, &d, &Click::Select("planner".into())), Out::None);
         assert_eq!(m.selected.as_deref(), Some("planner"));
+        let (d, _) = drawn(&m, &v, 140, 60);
+        press(&mut m, &d, &Click::Select("vault".into()));
+        assert_eq!(m.selected.as_deref(), Some("vault"), "a recipient on the `to` line too");
+        m.selected = Some("planner".into());
         let acts = |m: &Messages| -> Vec<MailAction> {
             m.lines(&v, &verdict, 120, &theme).0.into_iter().flatten().filter_map(|(_, _, h)| if let Some(Click::Act(a)) = h { Some(a) } else { None }).collect()
         };
@@ -1467,9 +1694,9 @@ pub(crate) mod tests {
         assert!(acts(&m).contains(&route("planner", Scope::Space("research".into()), None)), "→ every pane in space research [mode]");
         m.incoming = true;
         assert!(acts(&m).contains(&route("reader", Scope::Pane("planner".into()), Some(Action::No))), "← reader [no]");
-        let esc = crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Esc);
-        assert_eq!(m.key(esc, &v), Out::None, "Esc clears the choice");
-        assert_eq!(m.key(esc, &v), Out::Close, "a second Esc closes");
+        // opened on a pane from outside, the rows show under the spaces
+        let on = Messages::on(Some("planner".into()), false);
+        assert!(texts(&on.lines(&v, &verdict, 120, &theme).0).iter().any(|l| l.contains("where it can write")));
     }
 
     #[test]
@@ -1485,42 +1712,80 @@ pub(crate) mod tests {
     fn the_mode_is_explained_and_strict_mode_lets_a_pane_write_to_you_only() {
         let theme = Theme::dark();
         let mut v = view();
-        let said = |v: &MailView| texts(&Messages::new().lines(v, &verdict, 140, &theme).0);
+        let said = |v: &MailView| texts(&Messages::new().lines(v, &verdict, 200, &theme).0);
         assert!(said(&v).iter().any(|l| l == "no route: a pane may write to you and to its own account; to another account, you are asked"));
-        assert!(said(&v).iter().any(|l| l == "bright: a route decides · faint: the mode · a reply in a thread passes unless a route says no"));
+        assert!(said(&v).iter().any(|l| l == "a cell opens the panes behind it · mixed: they differ · bright: a route decides · faint: the mode · a reply in a thread passes unless a route says no"));
         v.mode = Mode::Strict;
         assert!(said(&v).iter().any(|l| l == "no route: a pane may write to you only"));
         let strict = |_: &str, to: &str| Verdict { action: if to == "you" { Action::Allow } else { Action::No }, why: "strict mode".into(), route: None };
-        let (lines, _) = Messages::new().lines(&v, &strict, 140, &theme);
-        let (you, style, _) = cell(&lines, "1 planner", 4);
+        let (lines, _) = zoomed("work", None).lines(&v, &strict, 140, &theme);
+        let (you, style, _) = cell(&lines, "planner", 0);
         assert_eq!(you.trim_end(), "allow");
         assert!(style.add_modifier.contains(Modifier::DIM), "faint: the mode decides");
-        assert_eq!(cell(&lines, "1 planner", 1).0.trim_end(), "no");
+        let (lines, _) = zoomed("work", Some("work")).lines(&v, &strict, 140, &theme);
+        assert_eq!(cell(&lines, "planner", 1).0.trim_end(), "no");
     }
 
     #[test]
-    fn columns_that_do_not_fit_are_whole_spaces_from_a_chosen_one_and_the_window_says_so() {
+    fn spaces_that_do_not_fit_are_paged_and_the_window_says_so() {
         let theme = Theme::dark();
-        let mut v = view();
-        v.columns.insert(2, MailColumn { space: Some("ops".into()), cards: vec![card("runner", Some(5), "main", None, Isolation::default())] });
+        let mut v = full();
         let mut m = Messages::new();
-        let header = |m: &Messages| -> String { texts(&m.lines(&v, &verdict, 60, &theme).0).into_iter().find(|l| l.contains("│you")).unwrap() };
-        let limit = |m: &Messages| -> String { texts(&m.lines(&v, &verdict, 60, &theme).0).into_iter().find(|l| l.starts_with("recipients")).unwrap() };
-        assert!(limit(&m).starts_with("recipients 1–4 of 5 fit this width; start at space:"), "{}", limit(&m));
-        let (h, _) = (header(&m), ());
-        assert!(h.contains('1') && h.contains('4') && !h.contains('5'), "work and research, whole spaces: {h}");
-        let (lines, _) = m.lines(&v, &verdict, 60, &theme);
-        assert_eq!(lines.iter().flatten().filter(|(_, _, h)| matches!(h, Some(Click::Start(_)))).count(), 3, "a chip per space");
-        let (d, _) = drawn(&m, &v, 66, 60);
-        assert_eq!(press(&mut m, &d, &Click::Start(1)), Out::None);
-        assert!(limit(&m).starts_with("recipients 3–5 of 5"), "research is the start now: {}", limit(&m));
-        let h = header(&m);
-        assert!(h.contains('5') && !h.contains('2'), "{h}");
+        // label "1 s0" is 4 wide: 4 + 3 × 9 holds two spaces and you
+        let w = 4 + 3 * CELL;
+        let line = |m: &Messages| -> String { paged(&texts(&m.lines(&v, &verdict, w, &theme).0)) };
+        assert_eq!(line(&m), "columns 1–2 of 6 fit this width later ›");
+        m.start = 2;
+        assert_eq!(line(&m), "columns 3–4 of 6 fit this width ‹ earlier later ›");
+        let (lines, _) = m.lines(&v, &verdict, w, &theme);
+        assert!(lines.iter().flatten().any(|(_, _, h)| *h == Some(Click::Start(0))), "earlier goes back a page");
+        m.start = 9;
+        assert_eq!(line(&m), "columns 6–6 of 6 fit this width ‹ earlier");
+        // room for you only, then for nothing
+        assert!(norm(&texts(&m.lines(&v, &verdict, 4 + CELL, &theme).0).join(" ")).contains("no column of 6 fit this width"));
+        assert!(texts(&m.lines(&v, &verdict, 3 + CELL, &theme).0).iter().any(|l| l == "the matrix needs 13 columns, this window has 12: widen the window"));
         // a route to a name no pane holds is a chip under the matrix, not a cell
-        v.routes.push(RouteView { index: 5, route: Route { from: Scope::parse("planner").unwrap(), to: Scope::parse("ghost").unwrap(), action: Action::Allow, until: None }, risk: false, left: None });
+        v.routes.push(RouteView { index: 5, route: Route { from: Scope::parse("p1").unwrap(), to: Scope::parse("ghost").unwrap(), action: Action::Allow, until: None }, risk: false, left: None });
         let (lines, _) = Messages::new().lines(&v, &verdict, 140, &theme);
         assert!(lines.iter().flatten().any(|(t, _, h)| *h == Some(Click::Line(5)) && t.contains("ghost")));
         assert!(texts(&lines).iter().any(|l| l.starts_with("routes ")));
+    }
+
+    #[test]
+    fn the_paging_chips_wrap_in_a_narrow_window_and_a_press_turns_the_page() {
+        let theme = Theme::dark();
+        let mut v = full();
+        let w = 4 + 2 * CELL;
+        let (lines, _) = Messages::new().lines(&v, &verdict, w, &theme);
+        let paging = lines.iter().filter(|l| l.iter().any(|(t, _, _)| t.contains("columns") || t.contains("width") || t.contains("later") || t.contains("earlier")));
+        assert!(paging.clone().count() >= 2 && paging.clone().all(|l| width(l) <= w), "{:#?}", texts(&lines));
+        assert!(lines.iter().flatten().any(|(_, _, h)| *h == Some(Click::Start(1))), "later › is there");
+        // twelve spaces do not fit the window at 140 cells: a press on later › moves the columns
+        v.columns = (0..12).map(|s| MailColumn { space: Some(format!("s{s}")), cards: vec![card(&format!("p{s}"), Some(s), "main", None, Isolation::default())] }).collect();
+        let mut m = Messages::new();
+        let (d, _) = drawn(&m, &v, 140, 60);
+        let later = d.hits.iter().map(|(_, c)| c.clone()).find(|c| matches!(c, Click::Start(i) if *i > 0)).expect("later ›");
+        assert_eq!(press(&mut m, &d, &later), Out::None);
+        assert!(matches!(later, Click::Start(i) if m.start == i));
+    }
+
+    #[test]
+    fn an_expired_space_route_is_not_lit_and_a_gone_space_closes_its_pair() {
+        let theme = Theme::dark();
+        let mut v = view();
+        let space = |s: &str| Scope::Space(s.into());
+        v.routes.push(RouteView { index: 5, route: Route { from: space("work"), to: space("research"), action: Action::No, until: Some(1) }, risk: false, left: Some(0) });
+        let mut m = zoomed("work", Some("research"));
+        let (lines, _) = m.lines(&v, &verdict, 120, &theme);
+        let no = MailAction::SetRoute { from: space("work"), to: space("research"), action: Some(Action::No), until: None };
+        let chip = lines.iter().flatten().find(|(_, _, h)| *h == Some(Click::Act(no.clone()))).unwrap();
+        assert_ne!(chip.1.bg, Some(action_color(Action::No, &theme)), "expired: not lit");
+        m.start = 3;
+        assert!(m.settle(&v));
+        assert!(m.zoom.is_some(), "both spaces are there");
+        v.columns.retain(|c| c.space.as_deref() != Some("research"));
+        assert!(m.settle(&v));
+        assert_eq!((m.zoom.clone(), m.start), (None, 0), "research is gone: back to the spaces");
     }
 
     #[test]
@@ -1529,37 +1794,26 @@ pub(crate) mod tests {
         let mut v = view();
         v.routes[0].route.until = Some(1);
         v.routes[0].left = Some(0);
-        let (lines, _) = Messages::new().lines(&v, &verdict, 120, &theme);
+        let (lines, _) = zoomed("work", Some("research")).lines(&v, &verdict, 120, &theme);
         let want = MailAction::SetRoute { from: scope_of("planner"), to: scope_of("reader"), action: Some(Action::Allow), until: None };
-        assert_eq!(cell(&lines, "1 planner", 2).2, Some(Click::Act(want)));
+        assert_eq!(cell(&lines, "planner", 0).2, Some(Click::Act(want)));
     }
 
     #[test]
-    fn a_group_wider_than_the_room_is_cut_and_the_line_gives_the_numbers() {
+    fn a_pair_wider_than_the_room_is_paged_by_panes() {
         let theme = Theme::dark();
-        let v = full();
-        let mut m = Messages::new();
-        // label 6 wide: (50 - 6) / 9 = 4 columns, so s0 fits whole (two panes and you) and s1 does not
-        let text = texts(&m.lines(&v, &verdict, 50, &theme).0);
-        let limit = text.iter().find(|l| l.starts_with("recipients")).unwrap();
-        assert!(limit.starts_with("recipients 1–2 of 11 fit this width"), "{limit}");
-        let header = text.iter().find(|l| l.contains("│you")).unwrap();
-        assert!(header.contains('2') && !header.contains('3'), "whole groups only: {header}");
-        // room for one column and you: the group is cut to what fits, and the line says so
-        let text = texts(&m.lines(&v, &verdict, 6 + 2 * CELL, &theme).0);
-        let limit = text.iter().find(|l| l.starts_with("recipients")).unwrap();
-        assert!(limit.starts_with("recipients 1–1 of 11 fit this width"), "{limit}");
-        // no room for any recipient: the line says so
-        let text = texts(&m.lines(&v, &verdict, 6 + CELL, &theme).0);
-        assert!(text.iter().any(|l| l.starts_with("no recipient of 11 fit this width")), "{text:#?}");
-        // no room even for you: no matrix, one line
-        let (lines, _) = m.lines(&v, &verdict, 5 + CELL, &theme);
-        let text = texts(&lines);
-        assert!(text.iter().any(|l| l == "the matrix needs 15 columns, this window has 14: widen the window"), "{text:#?}");
-        assert!(!text.iter().any(|l| l.contains("│you")) && !lines.iter().flatten().any(|(_, _, h)| matches!(h, Some(Click::Act(MailAction::SetRoute { .. })))), "no cells");
-        m.start = 5;
-        let text = texts(&m.lines(&v, &verdict, 50, &theme).0);
-        assert!(text.iter().any(|l| l.starts_with("recipients 11–11 of 11")), "{text:#?}");
+        let mut v = full();
+        v.columns = vec![MailColumn { space: Some("big".into()), cards: (1..=11).map(|n| card(&format!("p{n}"), Some(n), "main", None, Isolation::default())).collect() }];
+        let mut m = zoomed("big", Some("big"));
+        // names 3 wide: 3 + 4 × 9 holds four panes
+        let text = texts(&m.lines(&v, &verdict, 3 + 4 * CELL, &theme).0);
+        assert_eq!(paged(&text), "columns 1–4 of 11 fit this width later ›");
+        m.start = 4;
+        let text = texts(&m.lines(&v, &verdict, 3 + 4 * CELL, &theme).0);
+        assert_eq!(paged(&text), "columns 5–8 of 11 fit this width ‹ earlier later ›");
+        let text = texts(&m.lines(&v, &verdict, 3 + CELL - 1, &theme).0);
+        assert!(text.iter().any(|l| l == "the matrix needs 12 columns, this window has 11: widen the window"), "{text:#?}");
+        assert!(text.iter().any(|l| l.contains("‹ every space")), "the way back stays");
     }
 
     #[test]
@@ -1582,15 +1836,26 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn the_owners_shape_fits_whole_at_182_cells() {
+    fn forty_panes_in_eight_spaces_fit_whole_at_120_cells() {
         let theme = Theme::dark();
-        let v = full();
-        let (lines, _) = Messages::new().lines(&v, &verdict, 182, &theme);
+        let mut v = full();
+        let mut n = 0;
+        v.columns = (0..8)
+            .map(|s| MailColumn {
+                space: Some(format!("space-{s}")),
+                cards: (0..5)
+                    .map(|_| {
+                        n += 1;
+                        card(&format!("p{n}"), Some(n), "main", None, Isolation::default())
+                    })
+                    .collect(),
+            })
+            .collect();
+        let (lines, _) = Messages::new().lines(&v, &verdict, 120, &theme);
         let text = texts(&lines);
-        assert!(!text.iter().any(|l| l.starts_with("recipients")), "no limit line: {text:#?}");
-        assert!(text.iter().any(|l| l.contains("11 ") && l.contains("│you")), "every number up to 11 and you");
-        let row = lines.iter().find(|l| l.first().is_some_and(|(t, _, _)| t.trim_end() == "1 p1")).unwrap();
-        assert_eq!(row.len(), 1 + 2 * 12, "the label, then a separator and a cell for each of 11 panes and you");
+        assert!(!text.iter().any(|l| l.starts_with("columns")), "no paging: {text:#?}");
+        let row = lines.iter().find(|l| l.first().is_some_and(|(t, _, _)| t.trim_end() == "1 space-0")).unwrap();
+        assert_eq!(row.len(), 1 + 2 * 9, "the label, then a separator and a cell for each of 8 spaces and you");
     }
 
     #[test]
