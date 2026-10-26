@@ -135,8 +135,14 @@ perm
 grep -q 'can be written' "$t/out" && bad "a normal home got a writable-folder warning"
 chmod 777 "$h/.local"
 perm
-[ "$(grep -c 'can be written' "$t/out")" = 1 ] && grep -q '^nerd: ~/.local can be written by other users.*chmod go-w ~/.local$' "$t/out" || bad "~/.local mode 777 did not give exactly one warning naming it"
+[ "$(grep -c 'can be written' "$t/out")" = 1 ] && grep -qF "nerd: ~/.local can be written by other users, so one of them could replace nerd; to fix: chmod go-w \"$h/.local\"" "$t/out" || bad "~/.local mode 777 did not give exactly one warning naming it"
 [ -x "$h/.local/bin/nerd" ] || bad "nerd was not installed beside the warning"
+chmod 1777 "$h/.local"
+perm
+grep -q 'can be written' "$t/out" && bad "a sticky ~/.local got a writable-folder warning"
+chmod 775 "$h/.local"
+perm
+grep -q 'can be written' "$t/out" || bad "a group-writable ~/.local got no warning"
 chmod 755 "$h/.local"
 
 if [ "$fail" -eq 0 ]; then

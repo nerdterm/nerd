@@ -97,8 +97,10 @@ d=$bindir
 case $bindir/ in
     "$HOME"/*)
         while :; do
-            case $(ls -ld "$d/." | cut -c6,9) in
-                *w*) say "~${d#"$HOME"} can be written by other users, so one of them could replace nerd; to fix: chmod go-w ~${d#"$HOME"}" ;;
+            # group or other write, unless the sticky bit keeps everyone but the owner from renaming what is not theirs
+            case $(ls -ld "$d/." | cut -c6,9,10) in
+                ??[tT]) ;;
+                *w*) say "~${d#"$HOME"} can be written by other users, so one of them could replace nerd; to fix: chmod go-w \"$d\"" ;;
             esac
             [ "$d" = "$HOME" ] || [ "$d" = / ] && break
             d=$(dirname "$d")
