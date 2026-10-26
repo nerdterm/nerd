@@ -27,8 +27,14 @@ pub const PER_PAIR_PER_MINUTE: usize = 6;
 pub const DUPLICATE_WINDOW_SECS: u64 = 60;
 /// A chain A → B → C → … that never ends.
 pub const HOPS: usize = 8;
+/// Two agents answering each other with the same words.
+pub const REPEATS_WINDOW_SECS: u64 = 600;
+/// How long the owner's "deliver, allow 1 hour" lifts the loop limits of a pair.
+pub const GRANT_SECS: u64 = 3600;
+/// How many messages of the pair it lifts them for, whichever ends first.
+pub const GRANT_MESSAGES: usize = 50;
 /// Every limit that holds a message rather than refusing it; each has a sentence in `Hold::sentence`.
-pub const HELD_LIMITS: [&str; 5] = ["hops", "per_pair_per_minute", "thread", "queued_per_recipient", "broadcast"];
+pub const HELD_LIMITS: [&str; 6] = ["hops", "per_pair_per_minute", "thread", "queued_per_recipient", "broadcast", "repeats"];
 /// One conversation that never ends.
 pub const THREAD: usize = 40;
 /// One send waking every pane.
@@ -192,10 +198,11 @@ impl Hold {
                         Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", rest.join(", ")),
                         _ => names.concat(),
                     };
-                    format!("{names} have written to each other {} times in a row; nerd holds every further reply so {they} cannot loop forever", m.hops.len().saturating_sub(2))
+                    format!("{names} have written to each other {} times in a row; nerd holds every further reply so {they} cannot loop forever; deliver, allow 1 hour lets {a} and {b} go on", m.hops.len().saturating_sub(2))
                 }
                 "per_pair_per_minute" => format!("{a} has written to {b} {PER_PAIR_PER_MINUTE} times within a minute; nerd holds more so two agents cannot flood each other"),
-                "thread" => format!("this conversation has reached {THREAD} messages; nerd holds more so it cannot go on forever"),
+                "thread" => format!("this conversation has reached {THREAD} messages; nerd holds more so it cannot go on forever; deliver, allow 1 hour lets {a} and {b} go on"),
+                "repeats" => format!("{a} has sent {b} nearly the same text three times in a row, and {b} answered alike; nerd holds it so two agents cannot answer each other forever"),
                 "queued_per_recipient" => format!("{QUEUED_PER_RECIPIENT} messages already wait to be delivered to {b}; nerd holds more so one pane is not buried"),
                 "broadcast" => format!("a broadcast is sent to the first {BROADCAST} panes; nerd holds the rest so one message cannot wake every pane"),
                 _ => self.words(),
@@ -333,8 +340,23 @@ pub fn log_line(m: &Message) -> String {
     format!("message {} {} -> {} {} B hop {}{via}: {}", m.id, m.from.said(), m.to.said(), m.text.len(), m.hops.len().saturating_sub(1), m.state.words())
 }
 
+/// The words of a text for comparing two messages: lowercase runs of letters and digits.
+fn words(s: &str) -> std::collections::BTreeSet<String> {
+    s.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).map(str::to_lowercase).collect()
+}
+
+/// Nearly the same text: at least 80 % of their words shared; texts without words only when equal.
+fn similar(a: &str, b: &str) -> bool {
+    let (x, y) = (words(a), words(b));
+    if x.is_empty() || y.is_empty() {
+        return a.trim() == b.trim();
+    }
+    5 * x.intersection(&y).count() >= 4 * x.union(&y).count()
+}
+
 /// The first limit `m` would trip among the live records, by name; None when it passes.
-pub fn tripped(msgs: &[Message], m: &Message, now: u64) -> Option<&'static str> {
+/// `lifted`: the owner's grant for this pair, which lifts the loop limits `hops` and `thread` only.
+pub fn tripped(msgs: &[Message], m: &Message, now: u64, lifted: bool) -> Option<&'static str> {
     let others = || msgs.iter().filter(|r| r.id != m.id);
     let within = |r: &Message, secs: u64| now.saturating_sub(r.created) < secs;
     let pair = |r: &Message| r.from.name() == m.from.name() && r.to.name() == m.to.name();
@@ -348,10 +370,25 @@ pub fn tripped(msgs: &[Message], m: &Message, now: u64) -> Option<&'static str> 
     if others().filter(|r| pair(r) && within(r, 60)).count() >= PER_PAIR_PER_MINUTE {
         return Some("per_pair_per_minute");
     }
-    if m.hops.len().saturating_sub(1) > HOPS {
+    // A ping-pong is both sides repeating; one agent answering "ok" to varied work is not one.
+    let sent = |r: &Message| matches!(r.state, State::Queued | State::Delivered | State::Read | State::Answered) && within(r, REPEATS_WINDOW_SECS);
+    let last = |from: &str, to: &str| -> Vec<&Message> {
+        let mut v: Vec<&Message> = others().filter(|r| sent(r) && r.from.name() == from && r.to.name() == to).collect();
+        v.sort_by_key(|r| std::cmp::Reverse(r.created));
+        v.truncate(2);
+        v
+    };
+    let (mine, theirs) = (last(m.from.name(), m.to.name()), last(m.to.name(), m.from.name()));
+    if m.to != Party::You && m.from != Party::You && mine.len() == 2 && theirs.len() == 2 && mine.iter().all(|r| similar(&r.text, &m.text)) && similar(&theirs[0].text, &theirs[1].text) {
+        return Some("repeats");
+    }
+    // A reply goes back to its sender, so a thread of two panes is a conversation, not a chain.
+    // ceiling: it counts names, so a pane renamed mid-thread looks like a third party; count pane ids if that matters.
+    let parties = m.hops.iter().collect::<std::collections::HashSet<_>>().len();
+    if !lifted && parties >= 3 && m.hops.len().saturating_sub(1) > HOPS {
         return Some("hops");
     }
-    if others().filter(|r| r.thread == m.thread).count() >= THREAD {
+    if !lifted && others().filter(|r| r.thread == m.thread).count() >= THREAD {
         return Some("thread");
     }
     let same = |r: &Message| match m.to.pane() {
@@ -693,25 +730,83 @@ mod tests {
         let now = 1000;
         let m = msg("a", "b", "hello", now);
         let mut held: Vec<Message> = (0..HELD_TOTAL).map(|i| Message { state: State::Held(Hold::Route), ..msg("x", "y", &i.to_string(), 0) }).collect();
-        assert_eq!(tripped(&held, &m, now), Some("held_total"));
+        assert_eq!(tripped(&held, &m, now, false), Some("held_total"));
         held.pop();
-        assert_eq!(tripped(&held, &m, now), None);
+        assert_eq!(tripped(&held, &m, now, false), None);
         let dup = vec![msg("a", "b", "hello", now - 30)];
-        assert_eq!(tripped(&dup, &m, now), Some("duplicate_window"));
-        assert_eq!(tripped(&[msg("a", "b", "hello", now - 60)], &m, now), None, "outside the window");
+        assert_eq!(tripped(&dup, &m, now, false), Some("duplicate_window"));
+        assert_eq!(tripped(&[msg("a", "b", "hello", now - 60)], &m, now, false), None, "outside the window");
         let mut pair: Vec<Message> = (0..PER_PAIR_PER_MINUTE - 1).map(|i| msg("a", "b", &i.to_string(), now - 10)).collect();
-        assert_eq!(tripped(&pair, &m, now), None);
+        assert_eq!(tripped(&pair, &m, now, false), None);
         pair.push(Message { text: String::new(), state: State::Refused("strict".into()), ..msg("a", "b", "", now - 5) });
-        assert_eq!(tripped(&pair, &m, now), Some("per_pair_per_minute"), "a refusal counts");
+        assert_eq!(tripped(&pair, &m, now, false), Some("per_pair_per_minute"), "a refusal counts");
         let long = Message { hops: (0..=HOPS + 1).map(|i| i.to_string()).collect(), ..m.clone() };
-        assert_eq!(tripped(&[], &long, now), Some("hops"));
+        assert_eq!(tripped(&[], &long, now, false), Some("hops"));
         let thread: Vec<Message> = (0..THREAD).map(|i| Message { thread: m.thread.clone(), ..msg("c", "d", &i.to_string(), 0) }).collect();
-        assert_eq!(tripped(&thread, &m, now), Some("thread"));
+        assert_eq!(tripped(&thread, &m, now, false), Some("thread"));
         let queued: Vec<Message> = (0..QUEUED_PER_RECIPIENT).map(|i| msg("c", "b", &i.to_string(), 0)).collect();
-        assert_eq!(tripped(&queued, &m, now), Some("queued_per_recipient"));
+        assert_eq!(tripped(&queued, &m, now, false), Some("queued_per_recipient"));
         let mut both = queued.clone();
         both.extend(dup);
-        assert_eq!(tripped(&both, &m, now), Some("duplicate_window"), "the first in order wins");
+        assert_eq!(tripped(&both, &m, now, false), Some("duplicate_window"), "the first in order wins");
+    }
+
+    #[test]
+    fn hops_hold_a_chain_of_three_and_never_two_panes_answering_each_other() {
+        let now = 1000;
+        let m = msg("a", "b", "hello", now);
+        let two = Message { hops: (0..=HOPS + 4).map(|i| if i % 2 == 0 { "a".into() } else { "b".into() }).collect(), ..m.clone() };
+        assert_eq!(tripped(&[], &two, now, false), None, "a conversation, however long");
+        let three = Message { hops: (0..=HOPS + 1).map(|i| ["a", "b", "you"][i % 3].into()).collect(), ..m.clone() };
+        assert_eq!(tripped(&[], &three, now, false), Some("hops"));
+        assert_eq!(tripped(&[], &three, now, true), None, "the owner's grant lifts it");
+    }
+
+    #[test]
+    fn the_owners_grant_lifts_the_loop_limits_only() {
+        let now = 1000;
+        let m = msg("a", "b", "hello", now);
+        let thread: Vec<Message> = (0..THREAD).map(|i| Message { thread: m.thread.clone(), ..msg("c", "d", &i.to_string(), 0) }).collect();
+        assert_eq!(tripped(&thread, &m, now, true), None, "thread is lifted");
+        let pair: Vec<Message> = (0..PER_PAIR_PER_MINUTE).map(|i| msg("a", "b", &i.to_string(), now - 10)).collect();
+        assert_eq!(tripped(&pair, &m, now, true), Some("per_pair_per_minute"));
+        assert_eq!(tripped(&[msg("a", "b", "hello", now - 30)], &m, now, true), Some("duplicate_window"));
+        let pong = [msg("a", "b", "thank you so much", now - 300), msg("b", "a", "you are welcome", now - 250), msg("a", "b", "thank you so much again", now - 200), msg("b", "a", "you are welcome!", now - 150)];
+        let again = msg("a", "b", "Thank you so much!", now);
+        assert_eq!(tripped(&pong, &again, now, true), Some("repeats"), "not lifted");
+    }
+
+    #[test]
+    fn repeats_hold_only_two_agents_answering_each_other_alike() {
+        let now = 10_000;
+        let held = |from: &str, to: &str, text: &str, ago: u64| msg(from, to, text, now - ago);
+        let pong = vec![held("a", "b", "thanks, that helps", 400), held("b", "a", "glad it helps", 300), held("a", "b", "Thanks! That helps.", 200), held("b", "a", "glad it helps!", 100)];
+        let third = msg("a", "b", "thanks that helps", now);
+        assert_eq!(tripped(&pong, &third, now, false), Some("repeats"));
+        assert_eq!(tripped(&pong[..3], &third, now, false), None, "one answer from b is not a ping-pong");
+        assert_eq!(tripped(&pong, &msg("a", "b", "the build broke on step 4", now), now, false), None, "a different text");
+        let old: Vec<Message> = pong.iter().map(|r| Message { created: r.created - REPEATS_WINDOW_SECS, ..r.clone() }).collect();
+        assert_eq!(tripped(&old, &third, now, false), None, "outside the window");
+        let refused: Vec<Message> = pong.iter().map(|r| Message { state: State::Refused("no".into()), ..r.clone() }).collect();
+        assert_eq!(tripped(&refused, &third, now, false), None, "refusals do not count");
+        assert_eq!(tripped(&pong, &msg("a", "c", "thanks that helps", now), now, false), None, "another recipient");
+        let owner: Vec<Message> = pong.iter().map(|r| Message { to: if r.to.name() == "b" { Party::You } else { r.to.clone() }, from: if r.from.name() == "b" { Party::You } else { r.from.clone() }, ..r.clone() }).collect();
+        assert_eq!(tripped(&owner, &Message { to: Party::You, ..third.clone() }, now, false), None, "the owner's replies are not a ping-pong");
+        // progress lines with numbers differ
+        let steps = vec![held("a", "b", "step 3 done", 400), held("b", "a", "ok", 300), held("a", "b", "step 4 done", 200), held("b", "a", "ok", 100)];
+        assert_eq!(tripped(&steps, &msg("a", "b", "step 5 done", now), now, false), None);
+        // a worker answering ok to varied work
+        let work = vec![held("b", "a", "ok", 400), held("a", "b", "now fix the parser", 300), held("b", "a", "ok", 200), held("a", "b", "now update the docs", 100)];
+        assert_eq!(tripped(&work, &msg("b", "a", "ok", now), now, false), None);
+    }
+
+    #[test]
+    fn similar_texts_share_most_of_their_words() {
+        assert!(similar("Thanks, that helps!", "thanks that helps"));
+        assert!(!similar("step 3 done", "step 4 done"));
+        assert!(!similar("ok", "done"));
+        assert!(similar("👍", " 👍 "));
+        assert!(!similar("👍", "ok"));
     }
 
     #[test]
@@ -791,9 +886,9 @@ mod tests {
         let now = 1000;
         let held: Vec<Message> = (0..HELD_TOTAL).map(|i| Message { state: State::Held(Hold::Route), ..msg(&format!("s{i}"), "t", "x", now) }).collect();
         let to_b = msg("a", "b", "hi", now);
-        assert_eq!(tripped(&held, &to_b, now), Some("held_total"));
+        assert_eq!(tripped(&held, &to_b, now, false), Some("held_total"));
         let to_you = Message { to: Party::You, ..msg("a", "you", "hi", now) };
-        assert_eq!(tripped(&held, &to_you, now), None);
+        assert_eq!(tripped(&held, &to_you, now, false), None);
     }
 
     #[test]
@@ -836,12 +931,14 @@ mod tests {
             let s = h.sentence(&m);
             assert!(s != h.words() && !s.contains('_') && !s.contains("limit "), "{h:?}: {s}");
         }
-        assert_eq!(Hold::limit("hops").sentence(&m), format!("coder and reader have written to each other {HOPS} times in a row; nerd holds every further reply so they cannot loop forever"));
+        assert_eq!(Hold::limit("hops").sentence(&m), format!("coder and reader have written to each other {HOPS} times in a row; nerd holds every further reply so they cannot loop forever; deliver, allow 1 hour lets coder and reader go on"));
         assert_eq!(Hold::Off.sentence(&m), "messaging was off when it was due; turn it on, then deliver it");
         assert_eq!(Hold::limit("queued_per_recipient").sentence(&m), format!("{QUEUED_PER_RECIPIENT} messages already wait to be delivered to reader; nerd holds more so one pane is not buried"));
         assert_eq!(Hold::Route.sentence(&m), "a route asks you before coder writes to reader, unless reader started the thread");
         m.hops = ["reader", "you"].repeat(5).into_iter().map(String::from).collect();
-        assert_eq!(Hold::limit("hops").sentence(&m), format!("you and reader have written to each other {HOPS} times in a row; nerd holds every further reply so the exchange cannot loop forever"));
+        assert_eq!(Hold::limit("hops").sentence(&m), format!("you and reader have written to each other {HOPS} times in a row; nerd holds every further reply so the exchange cannot loop forever; deliver, allow 1 hour lets coder and reader go on"));
+        m.hops = ["coder", "reader", "you"].repeat(4).into_iter().map(String::from).collect();
+        assert_eq!(Hold::limit("hops").sentence(&m), format!("you, coder and reader have written to each other {} times in a row; nerd holds every further reply so the exchange cannot loop forever; deliver, allow 1 hour lets coder and reader go on", 10));
         assert_eq!(Hold::Limit("new_one".into()).sentence(&m), "limit new_one", "a record from an older nerd falls back to the words");
     }
 

@@ -108,6 +108,9 @@ pub struct MailState {
     bad_replies: HashMap<String, Vec<u64>>,
     /// Per pane, a digest of whom it may write to as it last saw it.
     seen_reachable: HashMap<PaneId, u64>,
+    /// The owner's "deliver, allow 1 hour": per pair of names, sorted, when it was given and until when.
+    /// ceiling: in memory, so a server restart drops it and the next held message asks again; keep it in policy.json if that matters.
+    grants: HashMap<(String, String), (u64, u64)>,
 }
 
 impl MailState {
@@ -459,8 +462,10 @@ impl App {
                 let (from, to) = (scope_of(&m.from), scope_of(&m.to));
                 self.edit_policy(|p| {
                     p.routes.retain(|r| r.from != from || r.to != to);
-                    p.routes.push(Route { from, to, action: Action::Allow, until: Some(now + 3600) });
+                    p.routes.push(Route { from, to, action: Action::Allow, until: Some(now + crate::mail::GRANT_SECS) });
                 })?;
+                self.mail.grants.retain(|_, (_, until)| *until > now);
+                self.mail.grants.insert(pair_key(m.from.name(), m.to.name()), (now, now + crate::mail::GRANT_SECS));
             }
             MailAction::Drop(id) => match self.mail.get(&id).map(|m| (&m.state, &m.to)) {
                 Some((State::Held(_), _)) => {
@@ -658,7 +663,7 @@ impl App {
 
     /// The state a pane's new message gets, and its answer: Ok(None) on its way, Ok(Some(why)) held, Err(why) refused.
     fn judge(&self, m: &Message, sender: &Sender, ask_route: bool, now: u64) -> (State, Result<Option<String>, String>) {
-        let tripped = crate::mail::tripped(&self.mail.msgs, m, now);
+        let tripped = crate::mail::tripped(&self.mail.msgs, m, now, self.granted(m, now));
         let refusal = match tripped {
             Some("held_total") => Some(format!("the owner already has {} held messages; try later", crate::mail::HELD_TOTAL)),
             Some("duplicate_window") => Some(format!("the same text to {} within {} s", m.to.name(), crate::mail::DUPLICATE_WINDOW_SECS)),
@@ -682,6 +687,15 @@ impl App {
             (Action::Allow, None, None) if m.to == Party::You => (State::Delivered, Ok(None)),
             (Action::Allow, None, None) => (State::Queued, Ok(None)),
         }
+    }
+
+    /// The owner's grant covers the pair of `m`, either way, while it has time and messages left.
+    fn granted(&self, m: &Message, now: u64) -> bool {
+        let (a, b) = (m.from.name(), m.to.name());
+        let Some(&(since, until)) = self.mail.grants.get(&pair_key(a, b)) else { return false };
+        let pair = |r: &Message| (r.from.name() == a && r.to.name() == b) || (r.from.name() == b && r.to.name() == a);
+        let sent = |r: &&Message| r.created >= since && pair(r) && matches!(r.state, State::Queued | State::Delivered | State::Read | State::Answered);
+        now < until && self.mail.msgs.iter().filter(sent).count() < crate::mail::GRANT_MESSAGES
     }
 
     /// Writes a pane's new message and answers for it.
@@ -906,6 +920,9 @@ impl App {
             let gone: Vec<Route> = routes.iter().map(|i| policy::current().routes[*i].clone()).collect();
             self.edit_policy(|p| p.routes.retain(|r| !gone.contains(r)))?;
         }
+        let old = self.pane(pane).and_then(|p| p.label.clone());
+        let drop = |n: &String| old.as_ref() == Some(n) || (!keep && addr.as_ref() == Some(n));
+        self.mail.grants.retain(|(a, b), _| !drop(a) && !drop(b));
         if let Some(p) = self.pane_mut(pane) {
             p.label = name;
         }
@@ -1246,6 +1263,11 @@ fn account_uid(name: &str) -> Option<u32> {
     (r == 0 && !out.is_null()).then_some(pw.pw_uid)
 }
 
+/// A pair of names, whichever wrote first.
+fn pair_key(a: &str, b: &str) -> (String, String) {
+    if a < b { (a.into(), b.into()) } else { (b.into(), a.into()) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1506,6 +1528,12 @@ mod tests {
         SendReq { to: to.into(), text: text.into(), reply_to: None, auto: false, ask_route: false }
     }
 
+    /// A record between two names, on its way, created at `at`.
+    fn rec(from: &str, to: &str, text: &str, at: u64) -> Message {
+        let p = |n: &str| Party::Pane { pane: None, name: n.into(), agent: None, uid: policy::owner_uid() };
+        Message { hops: vec![from.into(), to.into()], ..message(crate::mail::new_id(), p(from), p(to), text.into(), at) }
+    }
+
     fn send(app: &mut App, from: PaneId, to: &str, text: &str) -> SendReply {
         app.mail_send(from, policy::owner_uid(), req(to, text), crate::hook::now())
     }
@@ -1670,6 +1698,80 @@ mod tests {
             assert_eq!((r.from.text(), r.to.text(), r.action), ("planner".to_string(), "reader".to_string(), Action::Allow));
             assert!(r.until.is_some_and(|u| u.abs_diff(crate::hook::now() + 3600) <= 2), "{:?}", r.until);
             assert_eq!(app.mail_act(MailAction::Deliver(id.clone()), false), Err(format!("message {id} is not waiting")));
+        });
+    }
+
+    #[test]
+    fn deliver_and_allow_lifts_the_thread_limit_for_the_pair_both_ways_for_an_hour_or_fifty_messages() {
+        with_policy("mail-grant", || {
+            let mut app = app();
+            let now = crate::hook::now();
+            let q = id_of(&send(&mut app, 1, "reader", "start"));
+            let filler = |thread: &str, i: usize| Message { thread: thread.into(), ..rec("x", "y", &format!("old {i}"), now - 7200) };
+            for i in 0..crate::mail::THREAD {
+                app.mail.add(filler(&q, i));
+            }
+            let held = reply(&mut app, 3, &q, "answer");
+            assert!(matches!(&held, SendReply::Held { why, .. } if why == "limit thread"), "{held:?}");
+            let h = id_of(&held);
+            app.mail_act(MailAction::DeliverAllow(h.clone()), false).unwrap();
+            let back = reply(&mut app, 1, &h, "next step");
+            assert!(matches!(back, SendReply::Sent { .. }), "the other direction passes: {back:?}");
+            let again = reply(&mut app, 3, &id_of(&back), "and the next");
+            assert!(matches!(again, SendReply::Sent { .. }), "and the first direction: {again:?}");
+            // fifty messages of the pair since the grant: held again
+            let key = super::pair_key("planner", "reader");
+            app.mail.grants.insert(key.clone(), (now - 1000, now + 3600));
+            let before: Vec<String> = app.mail.msgs.iter().filter(|m| m.created >= now - 1000 && (m.from.name() == "planner" || m.from.name() == "reader")).map(|m| m.id.clone()).collect();
+            for m in &before {
+                app.mail.update(m, |m| m.created = now - 2000);
+            }
+            for i in 0..crate::mail::GRANT_MESSAGES - 1 {
+                app.mail.add(Message { thread: q.clone(), ..rec("planner", "reader", &format!("budget {i}"), now - 500) });
+            }
+            let last = reply(&mut app, 1, &id_of(&again), "the fiftieth");
+            assert!(matches!(last, SendReply::Sent { .. }), "49 counted, the 50th passes: {last:?}");
+            let spent = reply(&mut app, 1, &id_of(&again), "one more");
+            assert!(matches!(&spent, SendReply::Held { why, .. } if why == "limit thread"), "{spent:?}");
+            // past the hour: held again
+            app.mail.grants.insert(key, (now, now - 1));
+            let late = reply(&mut app, 3, &id_of(&back), "late");
+            assert!(matches!(&late, SendReply::Held { why, .. } if why == "limit thread"), "{late:?}");
+        });
+    }
+
+    #[test]
+    fn a_rename_takes_the_grant_from_the_old_name() {
+        with_policy("mail-grant-rename", || {
+            let mut app = app();
+            let now = crate::hook::now();
+            app.mail.grants.insert(super::pair_key("planner", "reader"), (now, now + 3600));
+            app.mail.grants.insert(super::pair_key("planner", "you"), (now, now + 3600));
+            app.mail_act(MailAction::Rename { pane: 3, name: Some("scribe".into()), keep: true }, false).unwrap();
+            assert!(!app.mail.grants.contains_key(&super::pair_key("planner", "reader")), "a later reader is another pane");
+            assert!(app.mail.grants.contains_key(&super::pair_key("planner", "you")));
+        });
+    }
+
+    #[test]
+    fn deliver_and_allow_lifts_the_thread_limit_for_a_pane_writing_to_you() {
+        with_policy("mail-grant-you", || {
+            let mut app = app();
+            let now = crate::hook::now();
+            let first = id_of(&send(&mut app, 1, "you", "done"));
+            for i in 0..crate::mail::THREAD {
+                app.mail.add(Message { thread: first.clone(), ..rec("x", "y", &format!("old {i}"), now - 7200) });
+            }
+            app.mail_act(MailAction::Reply { id: first.clone(), text: "go on".into() }, false).unwrap();
+            let mine = app.mail.msgs.last().unwrap().id.clone();
+            let held = reply(&mut app, 1, &mine, "more");
+            assert!(matches!(&held, SendReply::Held { why, .. } if why == "limit thread"), "{held:?}");
+            app.mail_act(MailAction::DeliverAllow(id_of(&held)), false).unwrap();
+            assert!(app.mail.grants.contains_key(&super::pair_key("planner", "you")));
+            app.mail_act(MailAction::Reply { id: id_of(&held), text: "and on".into() }, false).unwrap();
+            let mine = app.mail.msgs.last().unwrap().id.clone();
+            let next = reply(&mut app, 1, &mine, "even more");
+            assert!(matches!(next, SendReply::Sent { .. }), "{next:?}");
         });
     }
 
