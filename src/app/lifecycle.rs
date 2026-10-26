@@ -264,23 +264,24 @@ impl App {
         false
     }
 
-    /// A broker silent for its whole wait fails every spawn still waiting on it.
+    /// A broker gone, or silent for its whole wait, fails every spawn still waiting on it.
     pub fn tick_spawns(&mut self) -> bool {
-        let now = Instant::now();
+        let (now, gone) = (Instant::now(), crate::broker::gone());
+        let why = if gone { "the broker is gone" } else { "the broker did not answer" };
         let late: Vec<PaneId> = self
             .spaces
             .iter()
             .flat_map(|s| s.tabs.iter())
             .flat_map(|t| t.panes.values())
-            .filter(|p| p.pty.until().is_some_and(|u| now >= u))
+            .filter(|p| p.pty.until().is_some_and(|u| gone || now >= u))
             .map(|p| p.id)
             .collect();
         for id in &late {
-            self.spawn_failed(*id, "the broker did not answer");
+            self.spawn_failed(*id, why);
         }
-        let open_late = self.opening.as_ref().and_then(|o| o.pty.as_ref()).and_then(|p| p.until()).is_some_and(|u| now >= u);
+        let open_late = self.opening.as_ref().and_then(|o| o.pty.as_ref()).and_then(|p| p.until()).is_some_and(|u| gone || now >= u);
         if open_late {
-            self.open_failed("the broker did not answer");
+            self.open_failed(why);
         }
         !late.is_empty() || open_late
     }

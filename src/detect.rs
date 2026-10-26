@@ -94,14 +94,33 @@ pub fn ps_snapshot() -> Option<String> {
 }
 
 fn ps_snapshot_uncached() -> Option<String> {
-    // `output()` has no timeout; run it on a thread and time out the channel recv
-    // instead, so a hung ps doesn't block the caller (the thread dies on its own).
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        // Via the broker: `/bin/ps` is setuid, and the sandboxed daemon can't exec setuid.
-        let _ = tx.send(crate::broker::ps());
+    static PENDING: Pending = std::sync::Mutex::new(None);
+    // Via the broker: `/bin/ps` is setuid, and the sandboxed daemon can't exec setuid.
+    carried(&PENDING, crate::broker::ps)
+}
+
+type Pending = std::sync::Mutex<Option<std::sync::mpsc::Receiver<Option<String>>>>;
+
+/// `output()` has no timeout, so `run` goes on a thread; one slower than PS_TIMEOUT is
+/// waited for again by the next call, so a loaded machine gets late tables, not none.
+fn carried(pending: &Pending, run: fn() -> Option<String>) -> Option<String> {
+    // Not locked across the wait: a second caller asks on its own rather than wait twice.
+    let waiting = pending.lock().unwrap_or_else(|e| e.into_inner()).take();
+    let rx = waiting.unwrap_or_else(|| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(run());
+        });
+        rx
     });
-    rx.recv_timeout(PS_TIMEOUT).ok().flatten()
+    match rx.recv_timeout(PS_TIMEOUT) {
+        Ok(text) => text,
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            *pending.lock().unwrap_or_else(|e| e.into_inner()) = Some(rx);
+            None
+        }
+        Err(_) => None,
+    }
 }
 
 /// Parses `ps -axww -o pid=,ppid=,pgid=,args=` output, skipping malformed lines.
@@ -246,6 +265,17 @@ mod tests {
         let here = std::env::current_dir().unwrap().canonicalize().unwrap();
         assert_eq!(super::cwd_of(std::process::id() as i32).map(|p| p.canonicalize().unwrap()), Some(here));
         assert_eq!(super::cwd_of(-1), None);
+    }
+
+    #[test]
+    fn a_table_slower_than_the_timeout_reaches_the_next_call() {
+        static PENDING: super::Pending = std::sync::Mutex::new(None);
+        fn slow() -> Option<String> {
+            std::thread::sleep(super::PS_TIMEOUT + Duration::from_millis(500));
+            Some("late".into())
+        }
+        assert_eq!(super::carried(&PENDING, slow), None);
+        assert_eq!(super::carried(&PENDING, slow).as_deref(), Some("late"));
     }
 
     use super::*;

@@ -1875,13 +1875,19 @@ fn a_client_that_catches_up_shows_the_same_screen_as_a_fresh_one() {
     settle(&mut client, &mut term, Duration::from_millis(500), Duration::from_secs(5));
     type_line(&mut client, "seq 1 200000; echo FIN-$((40+2))");
     std::thread::sleep(Duration::from_secs(4));
+    // Under heavy load the server parses the flood for tens of seconds.
     let t = Instant::now();
-    while !term.screen().contents().contains("FIN-42") && t.elapsed() < Duration::from_secs(10) {
+    while !term.screen().contents().contains("FIN-42") && t.elapsed() < Duration::from_secs(30) {
+        settle(&mut client, &mut term, Duration::from_millis(300), Duration::from_secs(1));
+    }
+    // The title follows the foreground process, probed once a second through `ps`: `seq` stays on it a while after FIN-42.
+    let t = Instant::now();
+    while !term.screen().contents().contains("─ sh ─") && t.elapsed() < Duration::from_secs(15) {
         settle(&mut client, &mut term, Duration::from_millis(300), Duration::from_secs(1));
     }
     settle(&mut client, &mut term, Duration::from_millis(500), Duration::from_secs(5));
     let caught_up = term.screen().contents();
-    assert!(caught_up.contains("│FIN-42 "), "{caught_up}");
+    assert!(caught_up.contains("│FIN-42 ") && caught_up.contains("─ sh ─"), "{caught_up}");
 
     let mut fresh = connect(&env, 100, 30);
     let mut clean = vt100::Parser::new(30, 100, 0);
@@ -2980,9 +2986,9 @@ fn the_plugin_template_connects_hears_panes_and_answers_its_command() {
     let _ = std::fs::remove_dir_all(&env.dir);
 }
 
-/// A broker that answers every spawn `ms` late.
+/// A broker that answers every spawn `ms` late, to a server that waits 5 s for it.
 fn slow_broker(env: &Env, ms: u64, extra: &[(&str, std::ffi::OsString)]) -> DaemonGuard {
-    let mut vars = vec![("NERD_BROKER_DELAY_MS", std::ffi::OsString::from(ms.to_string()))];
+    let mut vars = vec![("NERD_BROKER_DELAY_MS", std::ffi::OsString::from(ms.to_string())), ("NERD_BROKER_WAIT_MS", "5000".into())];
     vars.extend(extra.iter().cloned());
     spawn_daemon_in(env, env!("CARGO_BIN_EXE_nerd").as_ref(), "xterm-256color", true, &[], &vars)
 }
@@ -3109,6 +3115,22 @@ fn a_broker_silent_past_the_wait_fails_the_pane_and_its_late_answer_is_dropped()
     assert!(t.elapsed() < Duration::from_secs(6), "failed only after the answer was due: {:?}", t.elapsed());
     // The late answer for pane 1 comes at 6 s; the fresh space's pane 2 is still waiting then.
     assert!(wait_reading(&mut client, Duration::from_secs(4), || t.elapsed() > Duration::from_secs(7) && saved_ids(&env) == [2]), "{:?}: {}", saved_ids(&env), daemon_log(&env));
+    let _ = std::fs::remove_dir_all(&env.dir);
+}
+
+#[test]
+fn a_broker_that_is_gone_fails_the_pane_at_once() {
+    let env = setup_env("gone-broker");
+    let daemon = slow_broker(&env, 3000, &[]);
+    let mut client = connect(&env, 80, 24);
+    assert!(wait_for(&mut client, "spaces", Duration::from_secs(2)), "no frame: {}", daemon_log(&env));
+    let found = Command::new("pgrep").args(["-P", &daemon.0.id().to_string(), "-f", "[-]-broker$"]).output().unwrap();
+    let broker = String::from_utf8_lossy(&found.stdout).trim().to_string();
+    assert!(Command::new("kill").args(["-9", &broker]).status().unwrap().success(), "no broker: {broker:?}");
+    let t = Instant::now();
+    let failed = "pane 1: failed to launch /bin/sh with 1 argument: the broker is gone";
+    assert!(wait_reading(&mut client, Duration::from_secs(4), || daemon_log(&env).contains(failed)), "{}", daemon_log(&env));
+    assert!(t.elapsed() < Duration::from_secs(2), "failed only after the wait: {:?}", t.elapsed());
     let _ = std::fs::remove_dir_all(&env.dir);
 }
 
