@@ -257,7 +257,7 @@ fn blocked_here() -> Option<String> {
 fn blocked(exe: &Path, home: &Path) -> Option<String> {
     let real = std::fs::canonicalize(exe).unwrap_or_else(|_| exe.to_path_buf());
     if real.components().any(|c| c.as_os_str() == "Cellar") {
-        return Some("nerd was installed with Homebrew: run brew upgrade nerd".into());
+        return Some("nerd was installed with Homebrew: run brew update && brew upgrade nerd".into());
     }
     let ours = home.join(".local/bin/nerd");
     let file = std::fs::symlink_metadata(&ours).is_ok_and(|m| m.file_type().is_file());
@@ -476,7 +476,7 @@ mod tests {
         let link = home.join("homebrew/bin");
         std::fs::create_dir_all(&link).unwrap();
         std::os::unix::fs::symlink(cellar.join("nerd"), link.join("nerd")).unwrap();
-        assert!(blocked(&link.join("nerd"), &home).is_some_and(|b| b.contains("brew upgrade nerd")), "a Homebrew link");
+        assert!(blocked(&link.join("nerd"), &home).is_some_and(|b| b.contains("brew update && brew upgrade nerd")), "a Homebrew link");
 
         let dev = home.join("dev/nerd/target/release");
         std::fs::create_dir_all(&dev).unwrap();

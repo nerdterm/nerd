@@ -38,7 +38,7 @@ curl -fsSL https://nerdterm.dev/install.sh | sh
 
 The script downloads the latest release, checks that nerd's release key signed its checksum and that the archive matches it, installs `nerd` into `~/.local/bin` and, if that folder is not on your `PATH`, adds it in `~/.zshrc`. It refuses a release older than the nerd already installed. Run it again to upgrade. `NERD_BINDIR` installs somewhere else. To install an archive you already have, run `sh install.sh nerd-….tar.gz` with its `.sha256` and `.sha256.sig` beside it; without them the script refuses unless `NERD_INSTALL_UNVERIFIED=1` is set, and a signature that does not check is refused either way. An older archive given this way installs: that is how to go back to a release.
 
-Or with Homebrew, upgraded with `brew upgrade nerd`:
+Or with Homebrew, upgraded with `brew update && brew upgrade nerd`:
 
 ```sh
 brew install nerdterm/tap/nerd
