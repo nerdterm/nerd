@@ -118,6 +118,10 @@ pub struct Term {
     events: Listener,
     title: Option<String>,
     last_output: std::time::Instant,
+    /// Where the current run of output began: one with no gap of IDLE_AFTER.
+    burst_from: std::time::Instant,
+    /// The last output of a run that went on for SUSTAINED: an agent without a hook works only after one.
+    sustained_at: Option<std::time::Instant>,
     started: std::time::Instant,
     /// How many lines are scrolled up from the bottom.
     pub scroll: usize,
@@ -150,6 +154,10 @@ thread_local! {
 const IDLE_AFTER: std::time::Duration = std::time::Duration::from_millis(600);
 /// How long after launch we don't try to determine state.
 const STARTUP_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
+/// An agent without a hook: output that goes on this long is work; a redraw or a ticking clock is not.
+const SUSTAINED: std::time::Duration = std::time::Duration::from_secs(1);
+/// An agent without a hook: the silence after work that makes it done, longer than its pauses between steps.
+const AGENT_QUIET: std::time::Duration = std::time::Duration::from_secs(3);
 
 impl Term {
     pub fn new(cols: u16, rows: u16, scrollback: usize) -> Self {
@@ -162,6 +170,8 @@ impl Term {
             title: None,
             // Nothing printed yet: a fresh pane is not "working", or its first tick would pass for activity.
             last_output: std::time::Instant::now().checked_sub(IDLE_AFTER).unwrap_or_else(std::time::Instant::now),
+            burst_from: std::time::Instant::now(),
+            sustained_at: None,
             started: std::time::Instant::now(),
             scroll: 0,
             seen: true,
@@ -183,7 +193,14 @@ impl Term {
             self.theme_notify = on;
         }
         self.advance(bytes);
-        self.last_output = std::time::Instant::now();
+        let now = std::time::Instant::now();
+        if self.last_output.elapsed() >= IDLE_AFTER {
+            self.burst_from = now;
+        }
+        if now.duration_since(self.burst_from) >= SUSTAINED {
+            self.sustained_at = Some(now);
+        }
+        self.last_output = now;
     }
 
     /// Old text put back after a restart: drawn, but not output, so it is neither activity nor "done".
@@ -364,6 +381,8 @@ impl Term {
     /// Screen text that means the pane's agent asks the human; none for a pane without an agent.
     pub fn set_blocked_text(&mut self, text: Vec<String>) {
         self.blocked_text = text;
+        // Another program is in front: what the last one printed is not its work.
+        self.sustained_at = None;
     }
 
     pub fn set_hook_state(&mut self, s: Option<AgentState>) {
@@ -375,19 +394,25 @@ impl Term {
         if let Some(s) = self.hook {
             return s;
         }
-        // Decided from the visible prompt text, cheaper than tracking the protocol; built only when a rule reads it.
+        // Decided from the visible prompt text, cheaper than tracking the protocol; built only when a rule reads it, and once.
+        let text = std::cell::OnceCell::new();
         let visible = || {
-            #[cfg(test)]
-            CONTENTS.with(|c| c.set(c.get() + 1));
-            self.screen().contents()
+            text.get_or_init(|| {
+                #[cfg(test)]
+                CONTENTS.with(|c| c.set(c.get() + 1));
+                self.screen().contents()
+            })
         };
-        if !self.blocked_text.is_empty() {
-            let visible = visible();
-            if self.blocked_text.iter().any(|t| visible.contains(t.as_str())) {
-                return AgentState::Blocked;
-            }
+        if !self.blocked_text.is_empty() && self.blocked_text.iter().any(|t| visible().contains(t.as_str())) {
+            return AgentState::Blocked;
         }
-        if self.last_output.elapsed() < IDLE_AFTER {
+        // blocked_text is set exactly while an agent is in front; without its hook, only sustained output is work.
+        // ceiling: an animation at idle with gaps under IDLE_AFTER still counts as work; the hook is the real answer.
+        if !self.blocked_text.is_empty() {
+            if self.sustained_at.is_some_and(|t| t.elapsed() < AGENT_QUIET) {
+                return AgentState::Working;
+            }
+        } else if self.last_output.elapsed() < IDLE_AFTER {
             return AgentState::Working;
         }
         if self.started.elapsed() < STARTUP_GRACE && visible().trim().is_empty() {
@@ -1081,6 +1106,37 @@ mod tests {
         t.mark_seen();
         assert!(!t.tick_state(), "nothing new");
         assert_eq!(t.state(), AgentState::Idle);
+    }
+
+    #[test]
+    fn an_agent_without_a_hook_works_only_on_sustained_output_and_is_done_after_a_longer_quiet() {
+        let now = std::time::Instant::now;
+        let mut t = Term::new(80, 24, 100);
+        t.set_blocked_text(crate::agents::get("claude").unwrap().agent.blocked_text);
+        t.started = now() - STARTUP_GRACE * 2;
+        t.tick_state();
+        // a redraw after a resize, or a clock ticking once a second: short runs, never work, never done
+        for _ in 0..3 {
+            t.last_output = now() - IDLE_AFTER * 2;
+            t.feed(b"redraw");
+            t.tick_state();
+            assert_eq!(t.state(), AgentState::Idle, "a short run is not work");
+        }
+        // a run that goes on: work, which a pause shorter than AGENT_QUIET does not end
+        t.burst_from = now() - SUSTAINED * 2;
+        t.feed(b"thinking");
+        t.tick_state();
+        assert_eq!(t.state(), AgentState::Working);
+        t.last_output = now() - IDLE_AFTER * 2;
+        t.sustained_at = Some(now() - IDLE_AFTER * 2);
+        t.tick_state();
+        assert_eq!(t.state(), AgentState::Working, "a subagent's pause is not done");
+        t.sustained_at = Some(now() - AGENT_QUIET * 2);
+        assert!(t.tick_state());
+        assert_eq!(t.state(), AgentState::Done, "after the quiet, done until seen");
+        // its hook decides once it writes
+        t.set_hook_state(Some(AgentState::Working));
+        assert_eq!(t.state(), AgentState::Working);
     }
 
     #[test]
