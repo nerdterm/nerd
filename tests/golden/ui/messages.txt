@@ -15,10 +15,10 @@
      │ 3. nerd inbox shows what came; nerd send --reply <id> "text"       │     
      │    answers.                                                        │     
      │                                                                    │     
-     │           1        2       │3        4       │you                  │     
-     │ space work                                                         │     
-     │ 1 planner —        allow   │allow    allow   │allow                │     
-     │ lines 1–16 of 38                                                   │     
+     │            1        2       │you                                   │     
+     │ 1 work     allow    held 1  │allow                                 │     
+     │ 2 research held 1   allow   │held 1                                │     
+     │ lines 1–16 of 35                                                   │     
      │                            [Esc] close                             │     
      └────────────────────────────────────────────────────────────────────┘     
                                                                                 
@@ -128,33 +128,35 @@
 15:76-79 Reset Reset NONE
 16:0-3 Reset Reset NONE
 16:4-4 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
-16:5-15 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
-16:16-60 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
-16:61-74 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+16:5-16 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+16:17-43 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
+16:44-74 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
 16:75-75 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
 16:76-79 Reset Reset NONE
 17:0-3 Reset Reset NONE
 17:4-4 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
 17:5-6 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
-17:7-16 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
-17:17-74 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+17:7-16 Rgb(221, 224, 229) Rgb(19, 20, 23) BOLD
+17:17-17 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
+17:18-25 Rgb(110, 214, 155) Rgb(19, 20, 23) DIM
+17:26-26 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
+17:27-34 Rgb(230, 193, 120) Rgb(19, 20, 23) NONE
+17:35-35 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
+17:36-43 Rgb(110, 214, 155) Rgb(19, 20, 23) DIM
+17:44-74 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
 17:75-75 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
 17:76-79 Reset Reset NONE
 18:0-3 Reset Reset NONE
 18:4-4 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
 18:5-6 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
-18:7-15 Rgb(221, 224, 229) Rgb(19, 20, 23) BOLD
-18:16-16 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
-18:17-24 Rgb(116, 121, 127) Rgb(19, 20, 23) NONE
-18:25-25 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
-18:26-33 Rgb(110, 214, 155) Rgb(19, 20, 23) DIM
-18:34-34 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
-18:35-42 Rgb(110, 214, 155) Rgb(19, 20, 23) DIM
-18:43-43 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
-18:44-51 Rgb(110, 214, 155) Rgb(19, 20, 23) DIM
-18:52-52 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
-18:53-60 Rgb(110, 214, 155) Rgb(19, 20, 23) DIM
-18:61-74 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+18:7-16 Rgb(221, 224, 229) Rgb(19, 20, 23) BOLD
+18:17-17 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
+18:18-25 Rgb(230, 193, 120) Rgb(19, 20, 23) NONE
+18:26-26 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
+18:27-34 Rgb(110, 214, 155) Rgb(19, 20, 23) DIM
+18:35-35 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
+18:36-43 Rgb(230, 193, 120) Rgb(19, 20, 23) NONE
+18:44-74 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
 18:75-75 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
 18:76-79 Reset Reset NONE
 19:0-3 Reset Reset NONE
@@ -198,15 +200,12 @@
                     │    and - reads the text from stdin.                                          │                    
                     │ 3. nerd inbox shows what came; nerd send --reply <id> "text" answers.        │                    
                     │                                                                              │                    
-                    │           1        2       │3        4       │you                            │                    
-                    │ space work                                                                   │                    
-                    │ 1 planner —        allow   │allow    allow   │allow                          │                    
-                    │ 2 coder   allow    —       │held 1   allow   │allow                          │                    
-                    │ space research                                                               │                    
-                    │ 3 reader  allow    allow   │—        allow   │held 1                         │                    
-                    │ 4 vault   held 1   allow   │allow    —       │allow                          │                    
-                    │ bright: a route decides · faint: the mode · a reply in a thread passes       │                    
-                    │ unless a route says no                                                       │                    
+                    │            1        2       │you                                             │                    
+                    │ 1 work     allow    held 1  │allow                                           │                    
+                    │ 2 research held 1   allow   │held 1                                          │                    
+                    │ a cell opens the panes behind it · mixed: they differ · bright: a route      │                    
+                    │ decides · faint: the mode · a reply in a thread passes unless a route says   │                    
+                    │ no                                                                           │                    
                     │ routes  reader → space:work no   * → * allow                                 │                    
                     │ risk: planner → vault: an allow between a pane with network and one without  │                    
                     │ ──────────────────────────────────────────────────────────────────────────── │                    
@@ -214,7 +213,10 @@
                     │ coder → reader · an ask route · 2m                                           │                    
                     │   [d] deliver  [h] deliver, allow 1 hour  [x] drop  [r] reply…               │                    
                     │ vault asks to write to planner · 1m                                          │                    
-                    │ lines 1–28 of 36                                                             │                    
+                    │    allow   ask   no                                                          │                    
+                    │ reader → you · 30s                                                           │                    
+                    │    reply…   drop                                                             │                    
+                    │ lines 1–28 of 33                                                             │                    
                     │                                 [Esc] close                                  │                    
                     └──────────────────────────────────────────────────────────────────────────────┘                    
                                                                                                                         
@@ -321,163 +323,141 @@
 16:101-119 Reset Reset NONE
 17:0-18 Reset Reset NONE
 17:19-19 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
-17:20-30 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
-17:31-75 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
-17:76-99 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+17:20-31 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+17:32-58 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
+17:59-99 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
 17:100-100 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
 17:101-119 Reset Reset NONE
 18:0-18 Reset Reset NONE
 18:19-19 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
 18:20-21 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
-18:22-31 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
-18:32-99 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+18:22-31 Rgb(221, 224, 229) Rgb(19, 20, 23) BOLD
+18:32-32 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
+18:33-40 Rgb(110, 214, 155) Rgb(19, 20, 23) DIM
+18:41-41 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
+18:42-49 Rgb(230, 193, 120) Rgb(19, 20, 23) NONE
+18:50-50 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
+18:51-58 Rgb(110, 214, 155) Rgb(19, 20, 23) DIM
+18:59-99 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
 18:100-100 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
 18:101-119 Reset Reset NONE
 19:0-18 Reset Reset NONE
 19:19-19 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
 19:20-21 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
-19:22-30 Rgb(221, 224, 229) Rgb(19, 20, 23) BOLD
-19:31-31 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
-19:32-39 Rgb(116, 121, 127) Rgb(19, 20, 23) NONE
-19:40-40 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
-19:41-48 Rgb(110, 214, 155) Rgb(19, 20, 23) DIM
-19:49-49 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
-19:50-57 Rgb(110, 214, 155) Rgb(19, 20, 23) DIM
-19:58-58 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
-19:59-66 Rgb(110, 214, 155) Rgb(19, 20, 23) DIM
-19:67-67 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
-19:68-75 Rgb(110, 214, 155) Rgb(19, 20, 23) DIM
-19:76-99 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+19:22-31 Rgb(221, 224, 229) Rgb(19, 20, 23) BOLD
+19:32-32 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
+19:33-40 Rgb(230, 193, 120) Rgb(19, 20, 23) NONE
+19:41-41 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
+19:42-49 Rgb(110, 214, 155) Rgb(19, 20, 23) DIM
+19:50-50 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
+19:51-58 Rgb(230, 193, 120) Rgb(19, 20, 23) NONE
+19:59-99 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
 19:100-100 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
 19:101-119 Reset Reset NONE
 20:0-18 Reset Reset NONE
 20:19-19 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
 20:20-21 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
-20:22-30 Rgb(221, 224, 229) Rgb(19, 20, 23) BOLD
-20:31-31 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
-20:32-39 Rgb(110, 214, 155) Rgb(19, 20, 23) DIM
-20:40-40 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
-20:41-48 Rgb(116, 121, 127) Rgb(19, 20, 23) NONE
-20:49-49 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
-20:50-57 Rgb(230, 193, 120) Rgb(19, 20, 23) NONE
-20:58-58 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
-20:59-66 Rgb(110, 214, 155) Rgb(19, 20, 23) DIM
-20:67-67 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
-20:68-75 Rgb(110, 214, 155) Rgb(19, 20, 23) DIM
-20:76-99 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+20:22-92 Rgb(116, 121, 127) Rgb(19, 20, 23) NONE
+20:93-99 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
 20:100-100 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
 20:101-119 Reset Reset NONE
 21:0-18 Reset Reset NONE
 21:19-19 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
 21:20-21 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
-21:22-35 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
-21:36-99 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+21:22-95 Rgb(116, 121, 127) Rgb(19, 20, 23) NONE
+21:96-99 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
 21:100-100 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
 21:101-119 Reset Reset NONE
 22:0-18 Reset Reset NONE
 22:19-19 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
 22:20-21 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
-22:22-30 Rgb(221, 224, 229) Rgb(19, 20, 23) BOLD
-22:31-31 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
-22:32-39 Rgb(110, 214, 155) Rgb(19, 20, 23) DIM
-22:40-40 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
-22:41-48 Rgb(110, 214, 155) Rgb(19, 20, 23) DIM
-22:49-49 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
-22:50-57 Rgb(116, 121, 127) Rgb(19, 20, 23) NONE
-22:58-58 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
-22:59-66 Rgb(110, 214, 155) Rgb(19, 20, 23) DIM
-22:67-67 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
-22:68-75 Rgb(230, 193, 120) Rgb(19, 20, 23) NONE
-22:76-99 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+22:22-23 Rgb(116, 121, 127) Rgb(19, 20, 23) NONE
+22:24-99 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
 22:100-100 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
 22:101-119 Reset Reset NONE
 23:0-18 Reset Reset NONE
 23:19-19 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
 23:20-21 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
-23:22-30 Rgb(221, 224, 229) Rgb(19, 20, 23) BOLD
-23:31-31 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
-23:32-39 Rgb(230, 193, 120) Rgb(19, 20, 23) NONE
-23:40-40 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
-23:41-48 Rgb(110, 214, 155) Rgb(19, 20, 23) DIM
-23:49-49 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
-23:50-57 Rgb(110, 214, 155) Rgb(19, 20, 23) DIM
-23:58-58 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
-23:59-66 Rgb(116, 121, 127) Rgb(19, 20, 23) NONE
-23:67-67 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
-23:68-75 Rgb(110, 214, 155) Rgb(19, 20, 23) DIM
-23:76-99 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+23:22-28 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
+23:29-52 Rgb(239, 130, 136) Rgb(19, 20, 23) NONE
+23:53-53 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+23:54-66 Rgb(110, 214, 155) Rgb(19, 20, 23) NONE
+23:67-99 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
 23:100-100 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
 23:101-119 Reset Reset NONE
 24:0-18 Reset Reset NONE
 24:19-19 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
 24:20-21 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
-24:22-91 Rgb(116, 121, 127) Rgb(19, 20, 23) NONE
-24:92-99 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+24:22-96 Rgb(239, 130, 136) Rgb(19, 20, 23) NONE
+24:97-99 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
 24:100-100 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
 24:101-119 Reset Reset NONE
 25:0-18 Reset Reset NONE
 25:19-19 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
 25:20-21 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
-25:22-43 Rgb(116, 121, 127) Rgb(19, 20, 23) NONE
-25:44-99 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+25:22-97 Rgb(47, 50, 56) Rgb(19, 20, 23) NONE
+25:98-99 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
 25:100-100 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
 25:101-119 Reset Reset NONE
 26:0-18 Reset Reset NONE
 26:19-19 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
 26:20-21 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
-26:22-28 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
-26:29-52 Rgb(239, 130, 136) Rgb(19, 20, 23) NONE
-26:53-53 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
-26:54-66 Rgb(110, 214, 155) Rgb(19, 20, 23) NONE
-26:67-99 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+26:22-36 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
+26:37-99 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
 26:100-100 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
 26:101-119 Reset Reset NONE
 27:0-18 Reset Reset NONE
 27:19-19 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
 27:20-21 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
-27:22-96 Rgb(239, 130, 136) Rgb(19, 20, 23) NONE
-27:97-99 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+27:22-55 Rgb(221, 224, 229) Rgb(19, 20, 23) BOLD
+27:56-99 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
 27:100-100 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
 27:101-119 Reset Reset NONE
 28:0-18 Reset Reset NONE
 28:19-19 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
-28:20-21 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
-28:22-97 Rgb(47, 50, 56) Rgb(19, 20, 23) NONE
-28:98-99 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+28:20-26 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+28:27-34 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+28:35-39 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+28:40-61 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+28:62-66 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+28:67-71 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+28:72-76 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+28:77-83 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+28:84-99 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
 28:100-100 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
 28:101-119 Reset Reset NONE
 29:0-18 Reset Reset NONE
 29:19-19 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
 29:20-21 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
-29:22-36 Rgb(155, 160, 168) Rgb(19, 20, 23) NONE
-29:37-99 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+29:22-56 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+29:57-99 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
 29:100-100 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
 29:101-119 Reset Reset NONE
 30:0-18 Reset Reset NONE
 30:19-19 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
-30:20-21 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
-30:22-55 Rgb(221, 224, 229) Rgb(19, 20, 23) BOLD
-30:56-99 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+30:20-23 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+30:24-30 Rgb(155, 160, 168) Rgb(27, 29, 33) NONE
+30:31-31 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+30:32-36 Rgb(155, 160, 168) Rgb(27, 29, 33) NONE
+30:37-37 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+30:38-41 Rgb(155, 160, 168) Rgb(27, 29, 33) NONE
+30:42-99 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
 30:100-100 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
 30:101-119 Reset Reset NONE
 31:0-18 Reset Reset NONE
 31:19-19 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
-31:20-26 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
-31:27-34 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
-31:35-39 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
-31:40-61 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
-31:62-66 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
-31:67-71 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
-31:72-76 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
-31:77-83 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
-31:84-99 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+31:20-21 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+31:22-39 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
+31:40-99 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
 31:100-100 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
 31:101-119 Reset Reset NONE
 32:0-18 Reset Reset NONE
 32:19-19 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
-32:20-21 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
-32:22-56 Rgb(221, 224, 229) Rgb(19, 20, 23) NONE
-32:57-99 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+32:20-23 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+32:24-31 Rgb(155, 160, 168) Rgb(27, 29, 33) NONE
+32:32-32 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
+32:33-38 Rgb(155, 160, 168) Rgb(27, 29, 33) NONE
+32:39-99 Rgb(159, 208, 138) Rgb(19, 20, 23) NONE
 32:100-100 Rgb(19, 20, 23) Rgb(19, 20, 23) NONE
 32:101-119 Reset Reset NONE
 33:0-18 Reset Reset NONE

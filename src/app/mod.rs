@@ -2736,6 +2736,12 @@ mod tests {
             .unwrap_or_else(|| panic!("no cell {from} → {to} drawn"))
     }
 
+    /// The Messages window on the panes of space `a` towards `b` (None: `you`).
+    fn zoom(app: &mut App, a: &str, b: Option<&str>) {
+        click(app, &crate::messages::Click::Zoom(Some((a.into(), b.map(Into::into)))));
+        screen(app);
+    }
+
     fn letter_to(from: (PaneId, &str), to: (Option<PaneId>, &str), state: crate::mail::State) -> crate::mail::Message {
         use crate::mail::{Message, Party, Step};
         let id = crate::mail::new_id();
@@ -2767,6 +2773,8 @@ mod tests {
         with_policy("cell-cycle", || {
             let mut app = named();
             app.overlay = app.run_action(Action::Messages, &MenuCtx::Global);
+            screen(&mut app);
+            zoom(&mut app, "work", Some("research"));
             for want in [vec!["planner → reader allow"], vec!["planner → reader ask"], vec!["planner → reader no"], vec![]] {
                 screen(&mut app);
                 let c = cell(&app, "planner", "reader");
@@ -2778,6 +2786,8 @@ mod tests {
             let until = crate::hook::now() + 3600;
             app.mail_act(MailAction::SetRoute { from: crate::policy::Scope::Pane("coder".into()), to: crate::policy::Scope::You, action: Some(crate::policy::Action::Allow), until: Some(until) }, false).unwrap();
             screen(&mut app);
+            click(&mut app, &crate::messages::Click::Zoom(None));
+            zoom(&mut app, "work", None);
             let c = cell(&app, "coder", "you");
             click(&mut app, &c);
             assert_eq!(crate::policy::current().routes[0].until, Some(until));
@@ -3004,6 +3014,7 @@ mod tests {
             for (way, open) in ways {
                 app.overlay = app.run_action(Action::Messages, &MenuCtx::Global);
                 screen(&mut app);
+                zoom(&mut app, "work", Some("research"));
                 open(&mut app, &third.id);
                 assert!(screen(&mut app).contains("[Esc] back"), "{way}");
                 assert_eq!(showing(&app), Some(third.id.clone()), "{way}");
@@ -3147,6 +3158,8 @@ mod tests {
             refused(&mut app, "Rename pane…");
 
             open(&mut app, Messages::new());
+            click(&mut app, Click::Zoom(Some(("work".into(), Some("work".into())))));
+            screen(&mut app);
             let c = cell(&app, "planner", "coder");
             click(&mut app, c);
             refused(&mut app, "a click on a cell");

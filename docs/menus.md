@@ -130,13 +130,17 @@ from (turning a plugin on, removing, installing, updating).
 ## Messages, isolation and accounts
 
 - Main menu, server group: **Messages…** opens the Messages window: the mode and what it means for a pair with no
-  route, Broadcast…, Set up a topology…, Routes map…, a quick start of three lines under them, a matrix of the named
-  panes (a row per sender, a column per recipient and `you`; each cell is the verdict a message would get now,
-  bright when a route of the owner's decides, faint when the mode does; a click on a cell cycles that pair's route:
-  none, allow, ask, no, none; a click on a row label shows its rows), what waits for the owner, and today's threads.
-  When the columns do not fit, the window says which recipients fit and chips pick the space they start at; too
-  narrow for one column, it says how many it needs. Set up a topology… comes back to the window. Routes that are not
-  a pair of named panes stay as chips: a click cycles allow, ask, no, none.
+  route, Broadcast…, Set up a topology…, Routes map…, a quick start of three lines under them, a matrix of the spaces
+  that hold a named pane (a row per sending space, a column per receiving space and `you`; a cell sums up every pair
+  of their panes: allow, ask or no when they agree, bright when a route of the owner's decides one of them, faint
+  when only the mode does, mixed when they differ, held N when messages between them wait), what waits for the owner,
+  and today's threads. A press on a cell opens that pair of spaces in place of the matrix: ‹ every space and Escape
+  go back; every pane sets one route for the whole pair (allow, ask, no, mode), with a line that more specific routes
+  go first; then a row per sending pane and a column per receiving pane, each cell the verdict a message would get
+  now, a click cycling that pair's route: none, allow, ask, no, none; a click on a pane's name shows its rows. When
+  the columns do not fit, the window says which fit and ‹ earlier and later › page them; too narrow for one column,
+  it says how many it needs. Set up a topology… comes back to the window. Routes that are not a pair of named panes
+  stay as chips: a click cycles allow, ask, no, none.
 - A waiting message opens the view **Held message** (or **Message** for one written to the owner) inside the
   Messages window: a click on its row in the sidebar's needs-you list or on the collapsed rail, on a `held N` cell
   (the first message of that pair), on a waiting row's head (also under Show inbox…), or Enter on the current waiting
