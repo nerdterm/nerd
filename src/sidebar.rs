@@ -88,6 +88,8 @@ impl SubRow {
 /// An agent that finished or asks for an answer.
 pub struct Waiting {
     pub pane: PaneId,
+    /// The pane's label, as the tree shows it; a number follows when the space has several alike.
+    pub name: String,
     pub space: String,
     pub tab: Option<String>,
     pub state: AgentState,
@@ -187,12 +189,14 @@ pub fn draw(buf: &mut Buffer, area: Rect, waiting: &[Waiting], mail: &[MailRow],
         }
         // the mark says what happened; the right side says how long it has waited
         let age = w.waited.map(ago).unwrap_or_default();
-        let mut label = match &w.tab {
-            Some(t) => format!("{} \u{b7} {t}", w.space),
-            None => w.space.clone(),
-        };
+        // the question comes before the space and tab, which are what a narrow row cuts
+        let mut label = w.name.clone();
         if let (AgentState::Blocked, Some(tool)) = (w.state, &w.asks) {
             label.push_str(&format!(" \u{b7} Allow {tool}?"));
+        }
+        label.push_str(&format!(" \u{b7} {}", w.space));
+        if let Some(t) = &w.tab {
+            label.push_str(&format!(" \u{b7} {t}"));
         }
         rows.mark(buf, rows.x, y, w.state, theme);
         rows.text(buf, rows.x + 2, y, &label, age.len() as u16 + 1, Style::new().fg(theme.text));
@@ -551,7 +555,7 @@ mod tests {
     }
 
     fn waiting(pane: PaneId, space: &str, state: AgentState) -> Waiting {
-        Waiting { pane, space: space.into(), tab: None, state, waited: Some(std::time::Duration::from_secs(12)), asks: None }
+        Waiting { pane, name: "claude".into(), space: space.into(), tab: None, state, waited: Some(std::time::Duration::from_secs(12)), asks: None }
     }
 
     fn render(waits: &[Waiting], spaces: &[SpaceNode]) -> (Buffer, Hits) {
@@ -572,8 +576,8 @@ mod tests {
         assert!(line(&buf, 0).contains(" needs you "));
         assert_eq!(line(&buf, 1).trim_matches(|c| c == '│' || c == ' '), "", "air under the title");
         let asks = line(&buf, 2);
-        assert!(asks.contains("● shop") && asks.trim_end_matches(['│', ' ']).ends_with("12s"), "no word, the wait: {asks:?}");
-        assert!(!asks.contains("asks") && line(&buf, 3).contains("✓ web") && !line(&buf, 3).contains("done"));
+        assert!(asks.contains("● claude · shop") && asks.trim_end_matches(['│', ' ']).ends_with("12s"), "no word, the wait: {asks:?}");
+        assert!(!asks.contains("asks") && line(&buf, 3).contains("✓ claude · web") && !line(&buf, 3).contains("done"));
         assert_eq!(buf[(W - 4, 2)].fg, Theme::dark().faint);
         assert!(line(&buf, 6).starts_with("├─ spaces"), "{:?}", line(&buf, 6));
         assert!(line(&buf, FIRST).starts_with("│ ○ nerd"));
@@ -810,17 +814,27 @@ mod tests {
     }
 
     #[test]
+    fn a_row_names_its_pane_before_its_space() {
+        let spaces = [space(0, "nerd", "master", AgentState::Blocked)];
+        let rev = Waiting { name: "rev".into(), ..waiting(8, "nerd", AgentState::Done) };
+        let (buf, hits) = render(&[waiting(7, "nerd", AgentState::Done), rev], &spaces);
+        assert!(line(&buf, 2).starts_with("│ ✓ claude · nerd"), "{:?}", line(&buf, 2));
+        assert!(line(&buf, 3).starts_with("│ ✓ rev · nerd"), "{:?}", line(&buf, 3));
+        assert_eq!(hits.panes.iter().map(|h| h.1).collect::<Vec<_>>(), vec![7, 8]);
+    }
+
+    #[test]
     fn a_blocked_agent_says_what_it_asks() {
         let spaces = [space(0, "nerd", "master", AgentState::Blocked)];
         let w = Waiting { asks: Some("Bash".into()), ..waiting(7, "shop", AgentState::Blocked) };
         let (buf, _) = render(&[w], &spaces);
-        assert!(line(&buf, 2).starts_with("│ ● shop · Allow Bash?"), "{:?}", line(&buf, 2));
+        assert!(line(&buf, 2).starts_with("│ ● claude · Allow Bash?"), "{:?}", line(&buf, 2));
         let done = Waiting { asks: Some("Bash".into()), ..waiting(7, "shop", AgentState::Done) };
         let (buf, _) = render(&[done], &spaces);
         assert!(!line(&buf, 2).contains("Allow"), "only a blocked one asks");
         let failed = waiting(8, "web", AgentState::Failed);
         let (buf, _) = render(&[failed], &spaces);
-        assert!(line(&buf, 2).starts_with("│ ✕ web"));
+        assert!(line(&buf, 2).starts_with("│ ✕ claude · web"));
         assert_eq!(buf[(2, 2)].fg, Theme::dark().bad);
     }
 
