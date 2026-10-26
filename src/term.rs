@@ -131,6 +131,11 @@ pub struct Term {
     last_base: AgentState,
     /// The word from the agent's hook. If present, we trust it and don't parse the screen.
     hook: Option<AgentState>,
+    /// While the hook says the agent asks: its question was on the live screen, and then left it (answered).
+    asked: bool,
+    answered: bool,
+    /// When the asked question was first missing from the live screen; a redraw clears it within a tick or two.
+    gone_since: Option<std::time::Instant>,
     blocked_text: Vec<String>,
     /// The pointer shape the program asked for with OSC 22, shown while the mouse is over its pane.
     pub pointer: Option<String>,
@@ -154,6 +159,8 @@ thread_local! {
 const IDLE_AFTER: std::time::Duration = std::time::Duration::from_millis(600);
 /// How long after launch we don't try to determine state.
 const STARTUP_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
+/// How long an asked question must be gone from the screen to count as answered, not as a redraw.
+const ANSWER_AFTER: std::time::Duration = std::time::Duration::from_millis(300);
 /// An agent without a hook: output that goes on this long is work; a redraw or a ticking clock is not.
 const SUSTAINED: std::time::Duration = std::time::Duration::from_secs(1);
 /// An agent without a hook: the silence after work that makes it done, longer than its pauses between steps.
@@ -177,6 +184,9 @@ impl Term {
             seen: true,
             last_base: AgentState::Unknown,
             hook: None,
+            asked: false,
+            answered: false,
+            gone_since: None,
             blocked_text: Vec::new(),
             changed_at: None,
             pointer: None,
@@ -386,13 +396,24 @@ impl Term {
     }
 
     pub fn set_hook_state(&mut self, s: Option<AgentState>) {
+        if s != self.hook {
+            (self.asked, self.answered, self.gone_since) = (false, false, None);
+        }
         self.hook = s;
+    }
+
+    /// Whether `text` shows the agent's question; a "❯ 1." row matches whichever option the cursor is on.
+    fn asks(&self, text: &str) -> bool {
+        self.blocked_text.iter().any(|t| match t.find(|c: char| c.is_ascii_digit()) {
+            Some(i) => ('1'..='9').any(|d| text.contains(&format!("{}{d}{}", &t[..i], &t[i + 1..]))),
+            None => text.contains(t.as_str()),
+        })
     }
 
     /// Base state disregarding "seen": what's visible on screen and by timing.
     fn base_state(&self) -> AgentState {
         if let Some(s) = self.hook {
-            return s;
+            return if s == AgentState::Blocked && self.answered { AgentState::Working } else { s };
         }
         // Decided from the visible prompt text, cheaper than tracking the protocol; built only when a rule reads it, and once.
         let text = std::cell::OnceCell::new();
@@ -403,7 +424,7 @@ impl Term {
                 self.screen().contents()
             })
         };
-        if !self.blocked_text.is_empty() && self.blocked_text.iter().any(|t| visible().contains(t.as_str())) {
+        if !self.blocked_text.is_empty() && self.asks(visible()) {
             return AgentState::Blocked;
         }
         // blocked_text is set exactly while an agent is in front; without its hook, only sustained output is work.
@@ -440,6 +461,17 @@ impl Term {
     /// Catches the moment work finished and clears the "seen" mark.
     /// Returns whether the state changed: idle comes from the clock, so the caller cannot tell by comparing.
     pub fn tick_state(&mut self) -> bool {
+        // An answer sends no hook until the allowed tool ends; the question leaving the live screen is the answer.
+        if self.hook == Some(AgentState::Blocked) && !self.blocked_text.is_empty() {
+            let live = self.screen().live_contents();
+            if self.asks(&live) {
+                (self.asked, self.answered, self.gone_since) = (true, false, None);
+            } else if self.asked {
+                self.answered = self.gone_since.get_or_insert_with(std::time::Instant::now).elapsed() >= ANSWER_AFTER;
+            }
+        } else {
+            (self.asked, self.answered, self.gone_since) = (false, false, None);
+        }
         let base = self.base_state();
         if self.last_base == AgentState::Working && base == AgentState::Idle {
             self.seen = false;
@@ -711,8 +743,16 @@ impl Screen<'_> {
 
     /// The visible text: rows joined by newlines, a wrapped row joined to the next, trailing blanks dropped.
     pub fn contents(&self) -> String {
+        self.text_from(-(self.0.grid().display_offset() as i32))
+    }
+
+    /// The live screen's text, whatever part of history is scrolled into view.
+    pub fn live_contents(&self) -> String {
+        self.text_from(0)
+    }
+
+    fn text_from(&self, top: i32) -> String {
         let g = self.0.grid();
-        let top = -(g.display_offset() as i32);
         let mut out = String::new();
         for l in top..top + g.screen_lines() as i32 {
             let (text, wrapped) = row_text(self.0, Line(l));
@@ -1092,6 +1132,44 @@ mod tests {
         assert_ne!(t.state(), AgentState::Blocked, "a shell's text is not a question");
         t.set_blocked_text(crate::agents::get("claude").unwrap().agent.blocked_text);
         assert_eq!(t.state(), AgentState::Blocked);
+    }
+
+    #[test]
+    fn an_answered_question_is_work_once_it_leaves_the_live_screen() {
+        let mut t = Term::new(40, 5, 100);
+        t.set_blocked_text(crate::agents::get("claude").unwrap().agent.blocked_text);
+        t.set_hook_state(Some(AgentState::Blocked));
+        t.tick_state();
+        assert_eq!(t.state(), AgentState::Blocked, "asked, the question not drawn yet: still asks");
+        for i in 0..20 {
+            t.feed(format!("line {i}\r\n").as_bytes());
+        }
+        t.feed("Do you want to proceed?\r\n❯ 1. Yes".as_bytes());
+        t.tick_state();
+        assert_eq!(t.state(), AgentState::Blocked);
+        t.scroll_by(-10);
+        t.tick_state();
+        assert_eq!(t.state(), AgentState::Blocked, "scrolling the question out of view is no answer");
+        t.scroll_by(10);
+        t.feed("\x1b[2J\x1b[HWhich one?\r\n  1. Red\r\n❯ 2. Blue".as_bytes());
+        t.gone_since = Some(std::time::Instant::now() - ANSWER_AFTER * 2);
+        t.tick_state();
+        assert_eq!(t.state(), AgentState::Blocked, "the cursor on another option is no answer");
+        t.feed(b"\x1b[2J\x1b[HRunning cargo test");
+        t.tick_state();
+        assert_eq!(t.state(), AgentState::Blocked, "gone for a moment may be a redraw");
+        t.gone_since = Some(std::time::Instant::now() - ANSWER_AFTER * 2);
+        t.tick_state();
+        assert_eq!(t.state(), AgentState::Working, "the question left the screen: answered");
+        t.feed("\x1b[2J\x1b[HDo you want to edit?\r\n❯ 1. Yes".as_bytes());
+        t.tick_state();
+        assert_eq!(t.state(), AgentState::Blocked, "a second question asks again");
+        t.set_hook_state(Some(AgentState::Working));
+        t.set_hook_state(Some(AgentState::Blocked));
+        assert_eq!(t.state(), AgentState::Blocked, "a new ask from the hook forgets the last answer at once");
+        t.feed(b"\x1b[2J\x1b[Hsomething else");
+        t.tick_state();
+        assert_eq!(t.state(), AgentState::Blocked, "a question never seen on screen keeps the hook's word");
     }
 
     #[test]
