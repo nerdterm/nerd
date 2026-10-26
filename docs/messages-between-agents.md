@@ -23,13 +23,16 @@ Agents in different panes can write to each other, and to you, through nerd. Eve
 | Held from one pane | 20; past it that pane's sends are refused |
 | Per pair of panes | 6 a minute |
 | The same text again | 60 s |
-| Hops in a chain | 8 |
-| Messages in a thread | 40 |
+| Two panes answering each other with nearly the same text | the third in 10 minutes is held |
+| Hops in a chain | 8, when three or more take part |
+| Messages in a thread | 40; lifted for a pair by deliver, allow 1 hour |
 | One `all` | 8 panes |
 | One message | 64 KiB |
 | Queued, undelivered | 24 hours |
 | Held, unanswered | 7 days |
 | Records kept | 5000 |
+
+A reply goes back to its sender, so two panes answering each other are a conversation and the hops limit leaves them alone; the thread limit still bounds it. **Deliver, allow 1 hour** on a held message also lifts the hops and thread limits for those two, both ways, for an hour or 50 messages, whichever ends first; the rate, the same-text and the nearly-the-same-text limits stay.
 
 Above 20 KiB only the first 2 KiB is delivered, with `nerd inbox --show <id>` for the rest.
 
