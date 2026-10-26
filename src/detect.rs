@@ -104,8 +104,9 @@ type Pending = std::sync::Mutex<Option<std::sync::mpsc::Receiver<Option<String>>
 /// `output()` has no timeout, so `run` goes on a thread; one slower than PS_TIMEOUT is
 /// waited for again by the next call, so a loaded machine gets late tables, not none.
 fn carried(pending: &Pending, run: fn() -> Option<String>) -> Option<String> {
-    let mut pending = pending.lock().unwrap_or_else(|e| e.into_inner());
-    let rx = pending.take().unwrap_or_else(|| {
+    // Not locked across the wait: a second caller asks on its own rather than wait twice.
+    let waiting = pending.lock().unwrap_or_else(|e| e.into_inner()).take();
+    let rx = waiting.unwrap_or_else(|| {
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let _ = tx.send(run());
@@ -115,7 +116,7 @@ fn carried(pending: &Pending, run: fn() -> Option<String>) -> Option<String> {
     match rx.recv_timeout(PS_TIMEOUT) {
         Ok(text) => text,
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-            *pending = Some(rx);
+            *pending.lock().unwrap_or_else(|e| e.into_inner()) = Some(rx);
             None
         }
         Err(_) => None,

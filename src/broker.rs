@@ -26,7 +26,7 @@ static GONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(
 pub fn spawn_wait() -> Duration {
     static WAIT: OnceLock<Duration> = OnceLock::new();
     // Test aid, like NERD_BROKER_DELAY_MS: a test of a silent broker waits less.
-    *WAIT.get_or_init(|| std::env::var("NERD_BROKER_WAIT_MS").ok().and_then(|s| s.parse().ok()).map_or(Duration::from_secs(30), Duration::from_millis))
+    *WAIT.get_or_init(|| std::env::var("NERD_BROKER_WAIT_MS").ok().and_then(|s| s.parse::<u64>().ok()).map_or(Duration::from_secs(30), |ms| Duration::from_millis(ms.clamp(1, 600_000))))
 }
 
 pub fn gone() -> bool {
