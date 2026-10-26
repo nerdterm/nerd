@@ -2278,8 +2278,14 @@ mod remote_tests {
     #[test]
     fn a_link_that_dies_after_the_arming_is_a_loss() {
         let fake = Fake::new("lost", "lost");
-        let server = fake.serve(|s| {
+        let armed = fake.dir.join("armed");
+        let server = fake.serve(move |s| {
             s.write_all(ARMED).unwrap();
+            // Open until the client has the marker, however slow the machine, then long enough for the fake ssh to cut the link.
+            let t = std::time::Instant::now();
+            while !armed.exists() && t.elapsed() < Duration::from_secs(60) {
+                std::thread::sleep(Duration::from_millis(20));
+            }
             std::thread::sleep(Duration::from_secs(3));
         });
         let (seen, _, exit, said) = fake.run("1");
