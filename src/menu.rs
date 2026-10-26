@@ -1067,6 +1067,11 @@ pub fn table_lines(rows: &[Vec<String>], width: usize) -> Vec<String> {
             let line: String = r.iter().enumerate().map(|(c, s)| format!("{s:<0$}", w[c] + 2)).collect();
             let parts = match r.get(n - 1) {
                 Some(last) if n > 1 && at + last.chars().count() > width => wrap(last, width - at),
+                // a single column wraps under the start of its text, so nothing in it is cut
+                _ if n == 1 && crate::slots::cells(line.trim_end()) > width => {
+                    let indent = (line.len() - line.trim_start().len()).min(width / 2);
+                    return wrap(&line, width - indent).into_iter().map(|p| format!("{}{p}", " ".repeat(indent))).collect();
+                }
                 _ => return vec![line.trim_end().chars().take(width).collect()],
             };
             let head: String = line.chars().take(at).collect();
@@ -1133,6 +1138,19 @@ pub fn wrap(text: &str, width: usize) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_long_ability_is_shown_whole_at_any_width() {
+        let a = "Learns which .db, .sqlite, .sqlite3, .csv, .tsv, .json, .parquet, .xls, .xlsx files you select, and reads them";
+        for w in [80u16, 120, 160] {
+            let c = Confirm::new("Install a plugin", "From x.").rows(vec![vec!["It can:".into()], vec![format!("  {a}")]]);
+            let inner = c.rect(Rect::new(0, 0, w, 45)).width as usize - 2 * crate::chrome::DIALOG_FRAME.horizontal as usize;
+            let lines = c.body_lines(inner);
+            assert!(lines.iter().all(|l| crate::slots::cells(l) <= inner), "{lines:?}");
+            let got: Vec<&str> = lines.iter().filter(|l| l.starts_with("  ")).flat_map(|l| l.split_whitespace()).collect();
+            assert_eq!(got.join(" "), a, "{lines:?}");
+        }
+    }
 
     #[test]
     fn wrap_cuts_a_long_word_by_what_the_terminal_draws() {
