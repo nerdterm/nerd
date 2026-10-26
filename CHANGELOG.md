@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.18.1](https://github.com/nerdterm/nerd/compare/v0.18.0...v0.18.1) (2026-10-26)
+
+
+### Fixed
+
+* a Homebrew install is told to run brew update && brew upgrade nerd ([#159](https://github.com/nerdterm/nerd/issues/159)) ([b93f190](https://github.com/nerdterm/nerd/commit/b93f1901642b12ec2df8b5b917d13d04dd324194))
+* a pane stops asking you as soon as its question is answered, not when the allowed action ends ([#158](https://github.com/nerdterm/nerd/issues/158)) ([e4d73c5](https://github.com/nerdterm/nerd/commit/e4d73c58b6c77ce53a555c908fe6224ddc14985f))
+
 ## [0.18.0](https://github.com/nerdterm/nerd/compare/v0.17.1...v0.18.0) (2026-10-26)
 
 
