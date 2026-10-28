@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.19.1](https://github.com/nerdterm/nerd/compare/v0.19.0...v0.19.1) (2026-10-28)
+
+
+### Fixed
+
+* a preview picture goes while the notice card is drawn over it ([#169](https://github.com/nerdterm/nerd/issues/169)) ([6ca3a7f](https://github.com/nerdterm/nerd/commit/6ca3a7f7d784b306fdd81b9daa13e831c6a0f6bb))
+* Servers says why a machine cannot be listed, and offers a terminal only when ssh wanted a prompt ([#171](https://github.com/nerdterm/nerd/issues/171)) ([5519b1e](https://github.com/nerdterm/nerd/commit/5519b1e3fe9eec84b72518f3c2b9e17e852f7bf4))
+
 ## [0.19.0](https://github.com/nerdterm/nerd/compare/v0.18.1...v0.19.0) (2026-10-28)
 
 
