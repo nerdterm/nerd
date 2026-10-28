@@ -530,21 +530,43 @@ pub fn to_png(path: &Path) -> Option<Arc<Vec<u8>>> {
     convert_to_png(path).ok().map(Arc::new)
 }
 
-fn convert_to_png(path: &Path) -> Result<Vec<u8>, String> {
-    let tmp = temp_path("png");
-    // A PDF page whose size could not be read, or a large one, is drawn no larger than this; -Z upscales too, so not a small one.
+/// A PDF's first page on white, as a JPEG of the best quality: a page is paper, and sips draws a PDF on
+/// nothing, which a dark preview would show as dark on dark. None for any other file; the caller removes it.
+fn paper(path: &Path) -> Option<PathBuf> {
     let mut head = Vec::new();
-    let _ = std::fs::File::open(path).map(|f| {
-        let mut f = f.take(IMAGE_LIMIT);
-        let _ = f.by_ref().take(5).read_to_end(&mut head);
-        if head == b"%PDF-" {
-            let _ = f.read_to_end(&mut head);
-        }
-    });
-    let unread = head.starts_with(b"%PDF-") && pdf_page(&head).is_none_or(|(w, h)| w.max(h) > 2048);
-    let cap: &[&str] = if unread { &["-Z", "2048"] } else { &[] };
-    let out = crate::spawn::cmd("/usr/bin/sips")
+    let mut f = std::fs::File::open(path).ok()?.take(IMAGE_LIMIT);
+    f.by_ref().take(5).read_to_end(&mut head).ok()?;
+    if head != b"%PDF-" {
+        return None;
+    }
+    let _ = f.read_to_end(&mut head);
+    // A page whose size could not be read, or a large one, is drawn no larger than this; -Z upscales too, so not a small one.
+    let cap: &[&str] = if pdf_page(&head).is_none_or(|(w, h)| w.max(h) > 2048) { &["-Z", "2048"] } else { &[] };
+    let tmp = temp_path("jpg");
+    // A failed run leaves no file, and the conversion from it says so.
+    let _ = crate::spawn::cmd("/usr/bin/sips")
         .args(cap)
+        .args(["-s", "format", "jpeg", "-s", "formatOptions", "best"])
+        .arg(path)
+        .arg("--out")
+        .arg(&tmp)
+        .stdin(std::process::Stdio::null())
+        .output();
+    Some(tmp)
+}
+
+fn convert_to_png(path: &Path) -> Result<Vec<u8>, String> {
+    let page = paper(path);
+    let made = convert_to_png_from(page.as_deref().unwrap_or(path));
+    if let Some(p) = page {
+        let _ = std::fs::remove_file(p);
+    }
+    made
+}
+
+fn convert_to_png_from(path: &Path) -> Result<Vec<u8>, String> {
+    let tmp = temp_path("png");
+    let out = crate::spawn::cmd("/usr/bin/sips")
         .args(["-s", "format", "png"])
         .arg(path)
         .arg("--out")
@@ -579,6 +601,15 @@ fn temp_path(ext: &str) -> PathBuf {
 
 /// Off the loop, like `to_png`; unknown dimensions are scaled down too.
 pub fn to_pixels(path: &Path, dims: Option<(u32, u32)>) -> Option<Arc<Pixels>> {
+    let page = paper(path);
+    let px = pixels_from(page.as_deref().unwrap_or(path), dims);
+    if let Some(p) = page {
+        let _ = std::fs::remove_file(p);
+    }
+    px
+}
+
+fn pixels_from(path: &Path, dims: Option<(u32, u32)>) -> Option<Arc<Pixels>> {
     let tmp = temp_path("bmp");
     let mut cmd = crate::spawn::cmd("/usr/bin/sips");
     // Without a colour profile sips writes palette PNGs as headerless raw pixels, and gray+alpha as a format we don't read.
@@ -1741,12 +1772,35 @@ mod tests {
         let huge = d.join("poster.pdf");
         std::fs::write(&huge, pdf(1, 14400, 14400)).unwrap();
         assert!(matches!(Preview::load(&huge).kind, Kind::Note(n) if n.contains("50 megapixels")), "a page too big is not drawn");
+        let px = to_pixels(&doc, Some((612, 792))).expect("blocks of the page");
+        assert_eq!(&px.rgba[..4], &[255, 255, 255, 255], "the page is paper, not the dark preview behind it");
         let big = d.join("big.pdf");
         let mut b = pdf(1, 100, 100);
         b.extend(std::iter::repeat_n(b'%', (IMAGE_LIMIT + 10) as usize));
         std::fs::write(&big, b).unwrap();
         assert!(matches!(Preview::load(&big).kind, Kind::Image { format: ImageFormat::Pdf, pages: None, .. }), "a PDF over 4 MiB is still drawn, sips reads it, but its count is not guessed from a part");
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn the_preview_fixtures_show_what_they_say() {
+        let at = |f: &str| Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/preview").join(f);
+        let image = |f: &str| match Preview::load(&at(f)).kind {
+            Kind::Image { format, dims, pages, .. } => Some((format, dims, pages)),
+            _ => None,
+        };
+        assert_eq!(image("picture.png"), Some((ImageFormat::Png, Some((240, 160)), None)));
+        assert_eq!(image("photo.jpg"), Some((ImageFormat::Jpeg, Some((240, 160)), None)));
+        assert_eq!(image("picture.gif"), Some((ImageFormat::Gif, Some((240, 160)), None)));
+        assert_eq!(image("picture.svg"), Some((ImageFormat::Svg, Some((240, 160)), None)));
+        assert_eq!(image("three-pages.pdf"), Some((ImageFormat::Pdf, Some((612, 792)), Some(3))));
+        assert!(matches!(Preview::load(&at("unsized.svg")).kind, Kind::Text { .. }));
+        for f in ["huge.svg", "poster.pdf"] {
+            assert!(matches!(Preview::load(&at(f)).kind, Kind::Note(n) if n.contains("50 megapixels")), "{f}");
+        }
+        for f in ["photo.jpg", "picture.gif", "picture.svg", "three-pages.pdf"] {
+            assert!(to_png(&at(f)).is_some(), "sips draws {f}");
+        }
     }
 
     #[test]
