@@ -137,6 +137,11 @@ pub fn repo_kind(dir: &Path) -> RepoKind {
     }
 }
 
+/// The folder holding `.git` (a directory, or a linked worktree's file) at or above `dir`, found on disk without git.
+pub fn work_root(dir: &Path) -> Option<PathBuf> {
+    dir.ancestors().find(|d| d.join(".git").exists()).map(Path::to_path_buf)
+}
+
 pub fn repo_root(dir: &Path) -> Option<PathBuf> {
     read_git(dir, ["rev-parse", "--show-toplevel"], &[]).ok().map(PathBuf::from)
 }
@@ -311,6 +316,98 @@ pub fn status_marks(dir: &Path) -> HashMap<PathBuf, char> {
     marks
 }
 
+/// What a repository with no commits is compared with, when git cannot say it in the repository's own hash.
+const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+/// An untracked file is read this far for its lines; past it, and a binary one, counts no lines.
+const NEW_FILE_READ: u64 = 256 * 1024;
+/// New files a review lists.
+const NEW_FILES: usize = 500;
+
+/// A file a review shows, its path from the repository's root.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Changed {
+    pub path: String,
+    pub added: u32,
+    pub removed: u32,
+}
+
+/// What a review compares with: the default branch's name and where this branch left it, when that is not
+/// HEAD itself; and HEAD, or the empty tree in a repository with no commits.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReviewBase {
+    pub branch: Option<String>,
+    pub since: Option<String>,
+    pub head: String,
+}
+
+/// The default branch (`origin/HEAD`, else `main`, else `master`) and its merge-base with HEAD.
+pub fn review_base(root: &Path) -> ReviewBase {
+    let head = read_git(root, ["rev-parse", "--verify", "--quiet", "HEAD"], &[])
+        .or_else(|_| read_git(root, ["hash-object", "-t", "tree", "/dev/null"], &[]))
+        .unwrap_or_else(|_| EMPTY_TREE.to_string());
+    // A full ref name: the agent writes origin/HEAD, and a short one could start with "-".
+    let full = read_git(root, ["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"], &[])
+        .ok()
+        .filter(|r| r.starts_with("refs/remotes/origin/"))
+        .or_else(|| ["refs/heads/main", "refs/heads/master"].into_iter().find(|r| read_git(root, ["rev-parse", "--verify", "--quiet", r], &[]).is_ok()).map(String::from));
+    let since = full.as_deref().and_then(|r| read_git(root, ["merge-base", "HEAD", r], &[]).ok()).filter(|s| *s != head);
+    let branch = full.map(|r| r.trim_start_matches("refs/remotes/origin/").trim_start_matches("refs/heads/").to_string());
+    ReviewBase { branch, since, head }
+}
+
+/// Tracked files changed since `base`, committed or not, then new files; renames are a deletion and an addition.
+pub fn review_files(root: &Path, base: &str) -> Vec<Changed> {
+    let Ok(env) = filters_off(root) else { return Vec::new() };
+    let tracked = read_git(root, ["diff", "--numstat", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", "--ignore-submodules=dirty", base, "--"], &env).unwrap_or_default();
+    let mut out: Vec<Changed> = tracked
+        .split('\0')
+        .filter_map(|f| {
+            let mut it = f.splitn(3, '\t');
+            let (a, r, path) = (it.next()?, it.next()?, it.next()?);
+            Some(Changed { path: path.to_string(), added: a.parse().unwrap_or(0), removed: r.parse().unwrap_or(0) })
+        })
+        .collect();
+    let new = read_git(root, ["ls-files", "--others", "--exclude-standard", "-z"], &env).unwrap_or_default();
+    let canon = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    for path in new.split('\0').filter(|p| !p.is_empty() && !p.ends_with('/')).take(NEW_FILES) {
+        let added = new_file(&canon, path).map_or(0, |t| t.lines().count() as u32);
+        out.push(Changed { path: path.to_string(), added, removed: 0 });
+    }
+    out
+}
+
+/// A regular file's text under the canonical `root`, read up to `NEW_FILE_READ`; None for a FIFO, a binary or an
+/// unreadable one, and when any part of its path is a link.
+fn new_file(root: &Path, path: &str) -> Option<String> {
+    use std::io::Read;
+    use std::os::unix::fs::OpenOptionsExt;
+    // Checked on the open file: a FIFO swapped in after a look by path would block the git worker for good, and a
+    // folder swapped for a link would show the agent what its isolation hides from it.
+    let f = std::fs::OpenOptions::new().read(true).custom_flags(nix::libc::O_NONBLOCK | nix::libc::O_NOFOLLOW_ANY).open(root.join(path)).ok()?;
+    if !f.metadata().ok()?.is_file() {
+        return None;
+    }
+    let mut b = Vec::new();
+    f.take(NEW_FILE_READ).read_to_end(&mut b).ok()?;
+    (!b.contains(&0)).then(|| String::from_utf8_lossy(&b).into_owned())
+}
+
+/// The diff of `path` since `base`; a new file as all added lines, a binary one as a note.
+pub fn review_diff(root: &Path, base: &str, path: &str) -> String {
+    let Ok(env) = filters_off(root) else { return String::new() };
+    let tracked = read_git(root, ["diff", "--no-color", "--no-renames", "--no-ext-diff", "--no-textconv", "--ignore-submodules=dirty", "--submodule=short", "-U3", base, "--", path], &env).unwrap_or_default();
+    if !tracked.is_empty() {
+        return tracked;
+    }
+    match root.canonicalize().ok().and_then(|canon| new_file(&canon, path)) {
+        Some(text) => {
+            let lines: Vec<&str> = text.lines().collect();
+            format!("@@ -0,0 +1,{} @@ new file\n{}", lines.len(), lines.iter().map(|l| format!("+{l}")).collect::<Vec<_>>().join("\n"))
+        }
+        None => "Binary or unreadable file".to_string(),
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -329,6 +426,106 @@ pub(crate) mod tests {
             .output()
             .expect("git should be on PATH");
         assert!(output.status.success(), "git {args:?} failed: {}", String::from_utf8_lossy(&output.stderr));
+    }
+
+    #[test]
+    fn a_review_lists_what_changed_since_the_default_branch_and_new_files() {
+        if !git_available() {
+            return;
+        }
+        let dir = init_repo("review");
+        let on_main = review_base(&dir);
+        assert_eq!((on_main.branch.as_deref(), on_main.since.as_deref()), (Some("main"), None), "on the default branch itself: nothing since it");
+        run(&dir, &["switch", "-q", "-c", "work"]);
+        std::fs::write(dir.join("a.rs"), "one\ntwo\n").unwrap();
+        run(&dir, &["add", "a.rs"]);
+        run(&dir, &["commit", "-q", "-m", "a"]);
+        std::fs::write(dir.join("README.md"), "test\nmore\n").unwrap();
+        std::fs::write(dir.join("new file.txt"), "x\ny\nz\n").unwrap();
+        std::fs::write(dir.join("blob.bin"), [0u8, 1, 2]).unwrap();
+        let b = review_base(&dir);
+        let since = b.since.clone().expect("work left main");
+        let files = review_files(&dir, &since);
+        let find = |p: &str| files.iter().find(|c| c.path == p).cloned();
+        assert_eq!(find("a.rs"), Some(Changed { path: "a.rs".into(), added: 2, removed: 0 }), "committed since main");
+        assert_eq!(find("README.md").map(|c| (c.added, c.removed)), Some((1, 0)), "not committed yet");
+        assert_eq!(find("new file.txt").map(|c| c.added), Some(3), "a new file, its spaces kept");
+        assert_eq!(find("blob.bin").map(|c| c.added), Some(0), "a binary file counts no lines");
+        let uncommitted = review_files(&dir, &b.head);
+        assert!(uncommitted.iter().all(|c| c.path != "a.rs"), "uncommitted only: {uncommitted:?}");
+        assert!(review_diff(&dir, &since, "a.rs").contains("+one"));
+        assert_eq!(review_diff(&dir, &b.head, "new file.txt"), "@@ -0,0 +1,3 @@ new file\n+x\n+y\n+z");
+        assert_eq!(review_diff(&dir, &b.head, "blob.bin"), "Binary or unreadable file");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_review_of_a_repository_with_no_commits_shows_every_file_as_new() {
+        if !git_available() {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("nerd-git-test-review-empty-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        run(&dir, &["init", "-q", "-b", "main"]);
+        std::fs::write(dir.join("first.rs"), "fn main() {}\n").unwrap();
+        let b = review_base(&dir);
+        assert_eq!((b.branch, b.since, b.head.as_str()), (None, None, EMPTY_TREE));
+        assert_eq!(review_files(&dir, &b.head), vec![Changed { path: "first.rs".into(), added: 1, removed: 0 }]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_review_runs_no_program_the_repository_names_and_reads_no_fifo_or_link() {
+        if !git_available() {
+            return;
+        }
+        let (dir, _, hit) = hit_repo("review-hostile");
+        run(&dir, &["add", "README.md"]);
+        run(&dir, &["commit", "-q", "-m", "readme"]);
+        let touch = format!("sh -c 'touch \"{}\"; cat'", hit.display());
+        std::fs::write(dir.join(".git/info/attributes"), "* diff=y filter=y\n").unwrap();
+        for (key, value) in [("diff.y.textconv", &touch), ("diff.y.command", &touch), ("diff.external", &touch), ("filter.y.clean", &touch), ("filter.y.process", &touch), ("core.fsmonitor", &touch)] {
+            run(&dir, &["config", key, value]);
+        }
+        std::fs::write(dir.join("README.md"), "changed again\n").unwrap();
+        age(&dir.join("README.md"));
+        std::fs::write(dir.join("new.txt"), "x\n").unwrap();
+        let fifo = dir.join("pipe");
+        assert!(Command::new("mkfifo").arg(&fifo).status().unwrap().success());
+        std::os::unix::fs::symlink("/etc/hosts", dir.join("link")).unwrap();
+        let b = review_base(&dir);
+        assert!(review_files(&dir, &b.head).iter().any(|c| c.path == "README.md"));
+        assert!(review_diff(&dir, &b.head, "README.md").contains("+changed again"));
+        assert!(review_diff(&dir, &b.head, "new.txt").contains("+x"));
+        assert!(!ran(&hit), "a program the repository named ran");
+        assert_eq!(review_diff(&dir, &b.head, "pipe"), "Binary or unreadable file", "a FIFO is never opened for reading");
+        assert_eq!(review_diff(&dir, &b.head, "link"), "Binary or unreadable file", "a link is not followed");
+        // listed as new in a folder, then the folder swapped for a link out of the repository
+        let outside = init_repo("review-hostile-outside");
+        std::fs::write(outside.join("secret"), "key\n").unwrap();
+        std::fs::create_dir(dir.join("d")).unwrap();
+        std::fs::write(dir.join("d/secret"), "decoy\n").unwrap();
+        assert!(review_diff(&dir, &b.head, "d/secret").contains("+decoy"), "the temp folder's own links are no reason to refuse");
+        std::fs::remove_dir_all(dir.join("d")).unwrap();
+        std::os::unix::fs::symlink(&outside, dir.join("d")).unwrap();
+        assert_eq!(review_diff(&dir, &b.head, "d/secret"), "Binary or unreadable file", "no folder of its path is followed out");
+        std::fs::remove_dir_all(&outside).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_review_base_never_hands_git_an_option_from_the_repository() {
+        if !git_available() {
+            return;
+        }
+        let dir = init_repo("review-option");
+        run(&dir, &["switch", "-q", "-c", "work"]);
+        std::fs::create_dir_all(dir.join(".git/refs/remotes/origin")).unwrap();
+        std::fs::write(dir.join(".git/refs/remotes/origin/HEAD"), "ref: refs/heads/--all\n").unwrap();
+        let b = review_base(&dir);
+        assert_eq!(b.branch.as_deref(), Some("main"), "a symref outside origin is not the default branch");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// Sets user.email/user.name locally so the commit succeeds on any CI machine.

@@ -50,6 +50,7 @@ mod pty;
 mod release;
 mod render;
 mod report;
+mod review;
 mod run;
 mod sandbox;
 mod search;

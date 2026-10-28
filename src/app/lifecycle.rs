@@ -410,6 +410,9 @@ impl App {
     /// Updates pane states and clears "done" from the focused pane. Returns whether
     /// anything shown changed; without it the sidebar never updates.
     pub fn tick_states(&mut self) -> bool {
+        // A pane's number is never given again, so a closed pane's unsent comments can go.
+        let live: Vec<PaneId> = self.reviews.keys().copied().filter(|id| self.pane(*id).is_some()).collect();
+        self.reviews.retain(|id, c| live.contains(id) && !c.is_empty());
         self.ask_foregrounds();
         let focused = self
             .space()
@@ -865,6 +868,36 @@ impl App {
     pub(super) fn apply_git(&mut self, f: GitFound) -> bool {
         let mut changed = false;
         match f {
+            GitFound::Review { pane, since, base, files } => {
+                if let Overlay::Review(w) = &mut self.overlay
+                    && w.pane == pane
+                    && w.take_files(since, base, files)
+                {
+                    let w = w.clone();
+                    self.ask_review_diff(&w);
+                    changed = true;
+                }
+            }
+            GitFound::ReviewSend { pane, req, diffs } => {
+                // Sent only while the window that asked is open, or its comment prompt: closing it takes the send back.
+                let w = match &mut self.overlay {
+                    Overlay::Review(w) | Overlay::Prompt(_, Ask::Comment(w, _) | Ask::EditComment(w, _)) => Some(w),
+                    _ => None,
+                };
+                if let Some(w) = w.filter(|w| w.pane == pane && w.sending == Some(req)) {
+                    w.sending = None;
+                    crate::review::refresh(self.reviews.entry(pane).or_default(), &diffs);
+                    self.send_review(pane);
+                    changed = true;
+                }
+            }
+            GitFound::ReviewDiff { pane, since, path, text } => {
+                if let Overlay::Review(w) = &mut self.overlay
+                    && w.pane == pane
+                {
+                    changed |= w.take_diff(since, &path, &text, self.reviews.entry(pane).or_default());
+                }
+            }
             GitFound::Diff(w, text) => {
                 let Some(tree) = self.tree.as_mut() else { return false };
                 // An untracked file has no diff, and falls back to itself; only if still wanted, or it would crowd out the load that is.
@@ -958,12 +991,20 @@ pub enum GitAsk {
     /// The diff of the wanted file, taken in the space's folder.
     Diff(PathBuf, crate::tree::Wanted),
     Branches(Vec<PathBuf>),
+    /// Review changes: the files changed in this pane's repository, since the default branch or not.
+    Review { pane: PaneId, root: PathBuf, since: bool },
+    ReviewDiff { pane: PaneId, root: PathBuf, since: bool, base: String, path: String },
+    /// Before a review is sent: the diff of each file it comments on, (path, since), read again.
+    ReviewSend { pane: PaneId, req: u64, root: PathBuf, files: Vec<(String, bool)> },
 }
 
 pub enum GitFound {
     Marks(PathBuf, HashMap<PathBuf, char>),
     Diff(crate::tree::Wanted, String),
     Branches(Vec<(PathBuf, Option<String>)>),
+    Review { pane: PaneId, since: bool, base: crate::git::ReviewBase, files: Vec<crate::git::Changed> },
+    ReviewDiff { pane: PaneId, since: bool, path: String, text: String },
+    ReviewSend { pane: PaneId, req: u64, diffs: Vec<(String, bool, String)> },
 }
 
 pub enum PreviewAsk {
@@ -1067,15 +1108,36 @@ pub(super) fn preview_failed(j: &PreviewAsk) -> Option<PreviewFound> {
 
 /// Runs on the git worker. Of each kind only the newest job counts; the diff goes first, a human waits on it.
 pub(super) fn git_work(jobs: Vec<GitAsk>) -> Vec<GitFound> {
-    let (mut marks, mut diff, mut branches) = (None, None, None);
+    let (mut marks, mut diff, mut branches, mut review, mut review_diff, mut review_send) = (None, None, None, None, None, None);
     for j in jobs {
         match j {
             GitAsk::Marks(c) => marks = Some(c),
             GitAsk::Diff(space, w) => diff = Some((space, w)),
             GitAsk::Branches(v) => branches = Some(v),
+            GitAsk::Review { pane, root, since } => review = Some((pane, root, since)),
+            GitAsk::ReviewDiff { pane, root, since, base, path } => review_diff = Some((pane, root, since, base, path)),
+            GitAsk::ReviewSend { pane, req, root, files } => review_send = Some((pane, req, root, files)),
         }
     }
     let mut out = Vec::new();
+    let sha = |base: &crate::git::ReviewBase, since: bool| if since { base.since.clone().unwrap_or_else(|| base.head.clone()) } else { base.head.clone() };
+    if let Some((pane, req, root, files)) = review_send {
+        let base = crate::git::review_base(&root);
+        let diffs = files.into_iter().map(|(path, since)| {
+            let text = crate::git::review_diff(&root, &sha(&base, since), &path);
+            (path, since, text)
+        });
+        out.push(GitFound::ReviewSend { pane, req, diffs: diffs.collect() });
+    }
+    if let Some((pane, root, since)) = review {
+        let base = crate::git::review_base(&root);
+        let files = crate::git::review_files(&root, &sha(&base, since));
+        out.push(GitFound::Review { pane, since, base, files });
+    }
+    if let Some((pane, root, since, base, path)) = review_diff {
+        let text = crate::git::review_diff(&root, &base, &path);
+        out.push(GitFound::ReviewDiff { pane, since, path, text });
+    }
     if let Some((space, w)) = diff {
         let text = crate::git::diff(&space, &w.path);
         out.push(GitFound::Diff(w, text));

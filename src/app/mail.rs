@@ -1271,7 +1271,7 @@ fn pair_key(a: &str, b: &str) -> (String, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::{Layout, Space, Tab};
+    use crate::app::{Layout, Overlay, Space, Tab};
     use crate::config::Config;
 
     /// Runs `f` with policy.json in a state folder of its own, the global copy reset after.
@@ -1353,6 +1353,111 @@ mod tests {
             assert_eq!(*policy::current(), *before);
             assert_eq!(app.pane(1).unwrap().label.as_deref(), Some("planner"));
             assert!(!policy::path().exists(), "nothing written");
+        });
+    }
+
+    fn comment(text: &str) -> crate::review::Comment {
+        crate::review::Comment { file: "a.rs".into(), line: 3, old: false, quote: "let x = 1;".into(), text: text.into(), outdated: false, since: true }
+    }
+
+    #[test]
+    fn review_changes_is_offered_for_an_agent_in_a_repository() {
+        let mut app = app();
+        let enabled = |app: &App| {
+            let Overlay::Menu(menu, _) = app.pane_menu(1, (1, 1)) else { panic!("menu expected") };
+            menu.items.iter().find(|i| i.label == "Review changes…").expect("always listed").enabled
+        };
+        assert!(!enabled(&app), "/ is no repository");
+        let dir = std::env::temp_dir().join(format!("nerd-review-menu-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join(".git")).unwrap();
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        app.pane_mut(1).unwrap().cwd = dir.join("src");
+        assert!(enabled(&app), "a folder inside a repository");
+        app.pane_mut(1).unwrap().agent = None;
+        assert!(!enabled(&app), "a shell has no changes of its own to review");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Send as the window asks it: git reads the commented files again (as `diffs`), and its answer sends.
+    fn send_review_with(app: &mut App, w: &crate::review::Review, diffs: Vec<(String, bool, String)>) {
+        let open = app.review_outcome(Box::new(w.clone()), crate::review::Out::Send);
+        let Overlay::Review(asked) = &open else { panic!("the window stays") };
+        let req = asked.sending;
+        app.overlay = open;
+        if let Some(req) = req {
+            app.apply_git(crate::app::lifecycle::GitFound::ReviewSend { pane: w.pane, req, diffs });
+        }
+    }
+
+    fn send_review(app: &mut App, w: &crate::review::Review) {
+        send_review_with(app, w, Vec::new());
+    }
+
+    #[test]
+    fn a_review_comment_is_added_edited_and_sent_to_its_pane_by_name() {
+        with_policy("mail-review", || {
+            let mut app = app();
+            let w = Box::new(crate::review::Review::new(1, app.address(1), "/".into()));
+            let Overlay::Prompt(_, ask) = app.review_outcome(w.clone(), crate::review::Out::Comment(comment(""))) else { panic!("a prompt for the comment") };
+            assert!(matches!(app.submitted("  rename this  ".into(), &ask), Some(Overlay::Review(_))), "back to the window");
+            assert_eq!(app.reviews[&1], vec![comment("rename this")]);
+            let Overlay::Prompt(_, edit) = app.review_outcome(w.clone(), crate::review::Out::Edit(0)) else { panic!("a prompt to edit") };
+            app.submitted("rename it to y".into(), &edit);
+            assert_eq!(app.reviews[&1][0].text, "rename it to y");
+            let Overlay::Review(asked) = app.review_outcome(w.clone(), crate::review::Out::Send) else { panic!("the window stays") };
+            let req = asked.sending.expect("git asked");
+            app.overlay = Overlay::Review(Box::new(crate::review::Review::new(1, app.address(1), "/".into())));
+            app.apply_git(crate::app::lifecycle::GitFound::ReviewSend { pane: 1, req, diffs: Vec::new() });
+            assert!(app.mail.msgs.is_empty(), "a send whose window was closed and opened again is taken back");
+            app.overlay = Overlay::Prompt(crate::menu::Prompt::new("Comment", ""), crate::app::Ask::Comment(asked, comment("")));
+            app.apply_git(crate::app::lifecycle::GitFound::ReviewSend { pane: 1, req, diffs: Vec::new() });
+            assert_eq!(app.mail.msgs.len(), 1, "sent while its comment prompt is open");
+            app.mail.msgs.clear();
+            app.reviews.insert(1, vec![comment("rename it to y")]);
+            send_review_with(&mut app, &w, vec![("a.rs".into(), true, "@@ -1 +1,5 @@\n+a\n+b\n+c\n let a = 0;\n+let x = 1;\n".into())]);
+            let m = app.mail.msgs.last().expect("sent");
+            assert!(m.text.contains("a.rs:5\n"), "the line as git reads it now: {}", m.text);
+            app.reviews.insert(1, vec![comment("rename it to y")]);
+            app.mail.msgs.clear();
+            send_review_with(&mut app, &w, vec![("a.rs".into(), true, "@@ -1 +1 @@\n-let x = 1;\n+let x = 2;\n".into())]);
+            let m = app.mail.msgs.last().expect("sent");
+            assert!(m.text.contains("(outdated: the line has changed since)"), "{}", m.text);
+            app.reviews.insert(1, vec![comment("rename it to y")]);
+            app.mail.msgs.clear();
+            send_review(&mut app, &w);
+            let m = app.mail.msgs.last().expect("sent");
+            assert_eq!((m.from.clone(), m.to.name(), m.text.as_str()), (Party::You, "planner", crate::review::message(&[comment("rename it to y")]).as_str()));
+            assert!(!app.reviews.contains_key(&1), "sent comments are cleared");
+        });
+    }
+
+    #[test]
+    fn a_review_that_cannot_be_sent_keeps_its_comments() {
+        with_policy("mail-review-kept", || {
+            let mut app = app();
+            let unnamed = crate::review::Review::new(2, None, "/".into());
+            app.reviews.insert(2, vec![comment("x")]);
+            send_review(&mut app, &unnamed);
+            assert!(app.notice.take().is_some_and(|n| n.contains("Rename pane")), "an unnamed pane is told how to name it");
+            assert_eq!(app.reviews[&2].len(), 1);
+            let w = Box::new(crate::review::Review::new(1, app.address(1), "/".into()));
+            app.reviews.insert(1, vec![comment(&"y".repeat(crate::mail::FRAME_ONLY_ABOVE))]);
+            send_review(&mut app, &w);
+            assert!(app.notice.take().is_some_and(|n| n.contains("over 20 KiB")), "an agent would see only its start");
+            app.reviews.insert(1, vec![comment("z")]);
+            app.client_inside = true;
+            for out in [crate::review::Out::Send, crate::review::Out::Discard, crate::review::Out::Delete(0), crate::review::Out::Edit(0), crate::review::Out::Comment(comment(""))] {
+                assert!(matches!(app.review_outcome(w.clone(), out), Overlay::Review(_)));
+                assert_eq!(app.notice.take().as_deref(), Some(INSIDE_REFUSED), "not from a window inside a pane");
+            }
+            let ask = crate::app::Ask::Comment(w.clone(), comment(""));
+            app.submitted("planted".into(), &ask);
+            assert_eq!(app.notice.take().as_deref(), Some(INSIDE_REFUSED));
+            assert_eq!(app.reviews[&1], vec![comment("z")], "nothing added, edited or dropped");
+            assert!(app.mail.msgs.is_empty());
+            app.client_inside = false;
+            app.review_outcome(w, crate::review::Out::Discard);
+            assert!(!app.reviews.contains_key(&1));
         });
     }
 
