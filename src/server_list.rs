@@ -208,8 +208,10 @@ impl ServerList {
             CONFIG => return vec![('e', "add a computer in config.json…", Act::EditConfig)],
             _ => {}
         }
-        if id.starts_with("m:") {
-            return vec![('\n', open(self.view.open.contains(id)), Act::Toggle)];
+        if let Some(name) = id.strip_prefix("m:") {
+            // a machine nerd will not ssh to has nothing to list
+            let usable = self.machines.iter().any(|(r, _)| r.name == name && r.check().is_ok());
+            return if usable { vec![('\n', open(self.view.open.contains(id)), Act::Toggle)] } else { Vec::new() };
         }
         if let Some(pid) = id.strip_prefix("p:") {
             return if self.stray(pid).is_some_and(|s| s.other_home) { Vec::new() } else { vec![('s', "stop…", Act::Stop)] };
@@ -409,9 +411,14 @@ impl ServerList {
             _ => {}
         }
         if let Some(name) = id.strip_prefix("m:")
-            && let Some((r, _)) = self.machines.iter().find(|(r, _)| r.name == name)
+            && let Some((r, m)) = self.machines.iter().find(|(r, _)| r.name == name)
         {
-            out.push(format!("{} at {}: its servers are listed over ssh when you open it, and one opens in a terminal window of its own.", clean(&r.name), clean(&r.host)));
+            out.push(match (r.check(), m) {
+                // the row under the machine is cut to the window's width; here it is whole
+                (Ok(()), Machine::Failed(e)) => clean(e),
+                (Ok(()), _) => format!("{} at {}: its servers are listed over ssh when you open it, and one opens in a terminal window of its own.", clean(&r.name), clean(&r.host)),
+                (Err(e), _) => format!("{} cannot be used: {e}. Fix it in \"remotes\" in config.json (nerd --config prints its path).", clean(&r.name)),
+            });
         }
         if let Some((r, i, _)) = self.remote(id) {
             let folders: Vec<String> = i.folders.iter().map(|f| clean(f)).collect();
@@ -636,9 +643,13 @@ pub(crate) mod tests {
         assert!(!ids(&w).contains(&"r:studio:7".to_string()));
         w.listed("studio", Machine::Failed("late".into()));
         assert!(matches!(w.machines[0].1, Machine::Listed(..)), "an answer for a closed machine changes nothing");
+        w.act("m:studio", 0);
+        w.listed("studio", Machine::Failed("ssh to studio failed: ssh: Could not resolve hostname studio.local".into()));
+        assert_eq!(w.details("m:studio"), ["ssh to studio failed: ssh: Could not resolve hostname studio.local"], "the whole failure, under the machine");
         let mut bad = ServerList::new("1".into(), vec![RemoteEntry { name: "x".into(), host: "-oProxyCommand=x".into() }], true, false);
+        assert!(offered(&bad, "m:x").is_empty(), "nothing to list on a bad entry");
         assert!(matches!(bad.act("m:x", 0), Out::None), "a bad entry never reaches the client");
-        assert!(matches!(&bad.machines[0].1, Machine::Failed(e) if e.starts_with("not usable")));
+        assert_eq!(bad.details("m:x"), ["x cannot be used: a host cannot start with '-'. Fix it in \"remotes\" in config.json (nerd --config prints its path)."]);
     }
 
     #[test]
