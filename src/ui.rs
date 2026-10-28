@@ -278,12 +278,21 @@ pub fn draw(f: &mut Frame, app: &App, view: &mut ViewState, geometry: &[crate::a
         view.sidebar_mail.clear();
     }
 
+    // Over the panes' top right corner, below the top row: the menu button and the tabs stay in reach.
+    let msg = match (&app.notice, &app.toast) {
+        (Some(m), _) => Some((m.as_str(), true)),
+        (None, Some(m)) => Some((m.as_str(), false)),
+        _ => None,
+    };
+    let card_area = Rect { x: a.panes.x, width: full.right().saturating_sub(a.panes.x), ..body };
+    let card = msg.and_then(|(m, _)| notice_rect(card_area, m, app.card_more().is_some()));
+
     let tw = a.tree_w;
     // Kitty bytes only reach a terminal that answered the graphics query; tmux/screen would mangle them.
     let kitty = app.graphics && !app.caps.mux;
     match (app.tree.as_ref(), a.pair) {
         (Some(tree), Some(pair_area)) => {
-            view.tree.cover(app.overlay.is_open());
+            view.tree.cover(if app.overlay.is_open() { Some(full) } else { card });
             let pair = tree.draw_pair(&mut view.tree, f.buffer_mut(), pair_area, &theme, tw);
             // preview image goes to the client as Kitty graphics, outside the frame - ratatui cells can't hold it
             let img = view.tree.take_image_bytes();
@@ -466,15 +475,8 @@ pub fn draw(f: &mut Frame, app: &App, view: &mut ViewState, geometry: &[crate::a
         f.buffer_mut().set_string(x, r.y + 1, &text, Style::default().fg(theme.text).bg(theme.surface));
     }
 
-    // Over the panes' top right corner, below the top row: the menu button and the tabs stay in reach.
-    let msg = match (&app.notice, &app.toast) {
-        (Some(m), _) => Some((m.as_str(), true)),
-        (None, Some(m)) => Some((m.as_str(), false)),
-        _ => None,
-    };
-    if let Some((msg, error)) = msg {
-        let area = Rect { x: a.panes.x, width: full.right().saturating_sub(a.panes.x), ..body };
-        notice_card(f.buffer_mut(), area, msg, error, app.card_more().is_some(), &theme, &mut view.hits);
+    if let (Some((msg, error)), Some(r)) = (msg, card) {
+        notice_card(f.buffer_mut(), r, msg, error, app.card_more().is_some(), &theme, &mut view.hits);
     }
 
     view.dialog = Default::default();
@@ -536,10 +538,8 @@ const NOTICE_W: u16 = 64;
 /// Columns between the card and the right edge of the area: the pane's border and a cell of ground.
 const NOTICE_INSET: u16 = 3;
 
-/// One line in a frame at the top right of `area`: cut with "… more" when long, and a × that closes it.
-/// A click on the card opens the whole text; the hits say where.
-/// `more`: a window stands behind the card, so "… more" shows even when the text fits.
-fn notice_card(buf: &mut Buffer, area: Rect, msg: &str, error: bool, more: bool, theme: &crate::render::Theme, hits: &mut crate::mouse::Hits) {
+/// Where the notice card goes at the top right of `area`, or None when there is no room for it.
+fn notice_rect(area: Rect, msg: &str, more: bool) -> Option<Rect> {
     let msg = crate::render::unspoofed(&msg.replace('\n', " "));
     let len = crate::slots::cells(&msg) as u16 + if more { 7 } else { 0 };
     // the frame's border and padding, then the text, then " ×"
@@ -548,9 +548,17 @@ fn notice_card(buf: &mut Buffer, area: Rect, msg: &str, error: bool, more: bool,
     let w = (len + pad).min(NOTICE_W).min(area.width.saturating_sub(2 * NOTICE_INSET));
     // Room for a few letters and × is all a card needs; a short message makes a small card.
     if area.width.saturating_sub(2 * NOTICE_INSET) < pad + 4 || area.height < 4 {
-        return;
+        return None;
     }
-    let r = Rect { x: area.right().saturating_sub(w + NOTICE_INSET), y: area.y + 1, width: w, height: 3 };
+    Some(Rect { x: area.right().saturating_sub(w + NOTICE_INSET), y: area.y + 1, width: w, height: 3 })
+}
+
+/// One line in the frame `r`: cut with "… more" when long, and a × that closes it.
+/// A click on the card opens the whole text; the hits say where.
+/// `more`: a window stands behind the card, so "… more" shows even when the text fits.
+fn notice_card(buf: &mut Buffer, r: Rect, msg: &str, error: bool, more: bool, theme: &crate::render::Theme, hits: &mut crate::mouse::Hits) {
+    let msg = crate::render::unspoofed(&msg.replace('\n', " "));
+    let len = crate::slots::cells(&msg) as u16 + if more { 7 } else { 0 };
     let border = if error { theme.bad } else { theme.border_focus };
     // Nothing is painted above it: the top row stays as it is.
     let inner = crate::chrome::dialog(buf, r, None, border, theme, crate::chrome::Moat::NotAbove);

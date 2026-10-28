@@ -232,8 +232,8 @@ pub struct TreeView {
     pub(super) sent_img: Option<(PathBuf, Rect)>,
     /// Set by `draw_preview`, reset by `take_image_bytes`: a frame without the preview clears the image.
     pub(super) preview_drawn: bool,
-    /// A window is open over the screen: the picture is not sent, since Kitty would draw it on top.
-    pub(super) covered: bool,
+    /// What is drawn over the screen (a window, the notice card): a picture under it is not sent, since Kitty would draw it on top.
+    pub(super) covered: Option<Rect>,
     /// Row rects from the last frame with their index into `rows`, since `mouse()`
     /// runs separately from `draw()`.
     pub(super) hits: Vec<(Rect, usize)>,
