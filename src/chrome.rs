@@ -357,7 +357,6 @@ pub fn draw_tabs_keeping(buf: &mut Buffer, area: Rect, tabs: &[TabItem], keys: b
     if let Some(p) = plus.filter(|_| !more) {
         buf.set_style(p, Style::default().fg(theme.faint));
     }
-    let plus = plus.filter(|_| more);
     // side by side, the chips join into one bar, parted by hairline seams
     for (rect, _) in &rects {
         if let Some(cell) = buf.cell_mut((rect.right() - 1, rect.y)) {

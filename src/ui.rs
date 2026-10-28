@@ -345,7 +345,8 @@ pub fn draw(f: &mut Frame, app: &App, view: &mut ViewState, geometry: &[crate::a
     let seg_hits = draw_segments(f.buffer_mut(), app, from, end, top.y);
     view.hits.segments = seg_hits;
     view.hits.tabs = tab_rects;
-    view.hits.new_tab = plus;
+    // a greyed + still takes its cells, but answers no click
+    view.hits.new_tab = plus.filter(|_| app.tab_room());
 
     let panes_area = right;
 

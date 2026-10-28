@@ -3047,8 +3047,12 @@ mod tests {
         assert_eq!(full(&app), MAX_TABS, "no tenth tab");
         assert_eq!(app.notice.as_deref(), Some("a space holds at most 9 tabs: close one or open another space"));
         assert!(!app.tab_room());
-        screen(&mut app);
+        app.prefix = true;
+        let shown = screen(&mut app);
         assert!(app.view.hits.new_tab.is_none(), "+ is greyed and answers no click");
+        let last = app.view.hits.tabs.last().expect("the tabs are drawn").0;
+        let top: Vec<char> = shown.lines().nth(last.y as usize).unwrap().chars().collect();
+        assert_eq!(top[last.right() as usize + 2], '+', "the greyed + keeps its cells; nothing after it is drawn over it: {:?}", top.iter().collect::<String>());
         let menu = rows(app.tab_menu(0, (1, 1)));
         assert!(menu.iter().any(|r| r.starts_with("~New tab")), "New tab is greyed: {menu:?}");
     }
