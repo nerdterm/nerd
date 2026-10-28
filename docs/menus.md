@@ -37,8 +37,8 @@ taste.
 
 Every window except a context menu is drawn through `chrome::dialog`, and `chrome::fit` sizes it.
 
-- The routes map is the one window that fills the screen, so a wide layout can be panned; it leaves the top row to
-  nerd's logo, an image the terminal draws over any text.
+- The routes map and Review changes are the windows that fill the screen, so a wide layout or a diff has room; they
+  leave the top row to nerd's logo, an image the terminal draws over any text.
 - The title is in the frame, never a row inside it. A context menu has no title.
 - Each window type has one width, frame included, whatever it shows:
   - 48 columns: a one-line field (Rename, a space's name, every prompt); the typed text scrolls inside it, a note
@@ -155,6 +155,12 @@ from (turning a plugin on, removing, installing, updating).
   shift, sideways), the arrow keys and the left, right, up and down buttons pan, and a line says which columns and
   lines are shown. The Messages window has the same button; Esc goes back to that window when the map was opened
   from it, and closes the map when it was opened from the menu.
+- Pane menu, view group, after Subagents…: **Review changes…**, greyed unless the pane runs an agent in a folder of a
+  git repository. It fills the screen: the changed files on the left, the chosen file's diff on the right, and above
+  them **since main** (where this branch left the default branch) and **uncommitted** to compare with. A click on a
+  diff line, or Enter, asks for a comment on it; the comment shows under its line with **edit** and **delete**.
+  **[s] send N comments to** the pane's name sends them as one message from you; **[x] discard** drops them,
+  **[r] refresh** reads the repository again. Comments stay until sent or discarded while the pane lives.
 - Pane menu, a group after the view group: **Send message…** (greyed for a pane with no address-shaped name),
   **Show inbox…**, **Who can write here…**, **Where it can write…**, and the greyed note "Install the hook for
   exact delivery" when the pane's agent delivers through a hook that is not this build's. Then **Isolation…** as

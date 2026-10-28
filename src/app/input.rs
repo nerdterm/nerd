@@ -288,6 +288,10 @@ impl App {
                 let out = w.key(k, &self.mail_view());
                 self.messages_outcome(w, out)
             }
+            Overlay::Review(mut w) => {
+                let out = w.key(k);
+                self.review_outcome(w, out)
+            }
             Overlay::Isolation(mut w) => {
                 let out = w.key(k);
                 self.isolation_outcome(w, out)
@@ -578,6 +582,7 @@ impl App {
             Overlay::NewSpace(w) => w.rect(screen),
             Overlay::Picker(w, _) => w.rect(screen),
             Overlay::Messages(_) => return Some(self.view.dialog.messages.close),
+            Overlay::Review(_) => return Some(self.view.dialog.review.close),
             Overlay::Isolation(_) | Overlay::Accounts(_) => return Some(self.view.dialog.isolation.close),
             _ => return None,
         };
@@ -590,6 +595,11 @@ impl App {
         let at = ratatui::layout::Position::new(x, y);
         let hit = |r: &Rect| r.contains(at);
         let d = &self.view.dialog;
+        if let Overlay::Review(w) = &self.overlay
+            && (w.dragging() || crate::review::on_divider(&d.review, x, y))
+        {
+            return EW.into();
+        }
         let shape = match &self.overlay {
             Overlay::None => None,
             Overlay::Menu(m, _) => Some(if m.points_at(screen, x, y) { POINTER } else { DEFAULT }),
@@ -601,6 +611,7 @@ impl App {
                     || d.panel.rows.iter().any(|(r, _)| hit(r))
                     || hit(&d.panel.close)
                     || d.messages.hits.iter().any(|(r, _)| hit(r))
+                    || d.review.hits.iter().any(|(r, _)| hit(r))
                     || d.isolation.hits.iter().any(|(r, _)| hit(r))
                     || d.find.hits.iter().any(|(r, _)| hit(r))
                     || self.close_button(screen).is_some_and(|r| hit(&r));
@@ -1077,6 +1088,10 @@ impl App {
             Overlay::Messages(mut w) => {
                 let out = w.mouse(ev, &self.view.dialog.messages);
                 self.messages_outcome(w, out)
+            }
+            Overlay::Review(mut w) => {
+                let out = w.mouse(ev, &self.view.dialog.review);
+                self.review_outcome(w, out)
             }
             Overlay::Isolation(mut w) => {
                 let out = w.mouse(ev, &self.view.dialog.isolation);

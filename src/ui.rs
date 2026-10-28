@@ -476,7 +476,11 @@ pub fn draw(f: &mut Frame, app: &App, view: &mut ViewState, geometry: &[crate::a
     view.dialog = Default::default();
     match &app.overlay {
         crate::app::Overlay::Menu(m, _) => m.draw(f.buffer_mut(), full, &theme),
-        crate::app::Overlay::Prompt(p, _) => {
+        crate::app::Overlay::Prompt(p, ask) => {
+            // a comment is written with its line in sight
+            if let crate::app::Ask::Comment(w, _) | crate::app::Ask::EditComment(w, _) = ask {
+                w.draw(f.buffer_mut(), full, &theme, app.reviews.get(&w.pane).map_or(&[], Vec::as_slice));
+            }
             p.draw(f.buffer_mut(), full, &theme);
             let (cx, cy) = p.cursor(full);
             f.set_cursor_position((cx, cy));
@@ -507,6 +511,7 @@ pub fn draw(f: &mut Frame, app: &App, view: &mut ViewState, geometry: &[crate::a
             let named = app.named_panes();
             view.dialog.messages = w.draw(f.buffer_mut(), full, &theme, &app.mail_view(), &|a, b| crate::app::App::mail_between_in(&named, a, b));
         }
+        crate::app::Overlay::Review(w) => view.dialog.review = w.draw(f.buffer_mut(), full, &theme, app.reviews.get(&w.pane).map_or(&[], Vec::as_slice)),
         crate::app::Overlay::Isolation(w) => view.dialog.isolation = w.draw(f.buffer_mut(), full, &theme),
         crate::app::Overlay::Accounts(w) => view.dialog.isolation = w.draw(f.buffer_mut(), full, &theme, &crate::policy::current().accounts),
         crate::app::Overlay::None => {}

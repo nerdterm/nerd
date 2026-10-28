@@ -1022,6 +1022,7 @@ impl App {
         if let Some(p) = pane.filter(|p| p.agent.is_some()) {
             view.push(Item::new("Subagents…", Action::Subagents).enabled(!p.activity.subs.is_empty()));
         }
+        view.push(Item::new("Review changes…", Action::ReviewChanges).enabled(pane.is_some_and(|p| p.agent.is_some() && crate::git::work_root(&p.cwd).is_some())));
         let mut mail = vec![
             Item::new("Send message…", Action::SendMessage).enabled(self.address(id).is_some()),
             Item::new("Show inbox…", Action::ShowInbox),
@@ -1510,6 +1511,7 @@ impl App {
             (Action::TreeZoom, _) => self.tree_zoom = !self.tree_zoom && self.cfg.preview,
             (Action::TreeWrap, _) => self.toggle_wrap(),
             (Action::NextView, _) => self.next_view(),
+            (Action::ReviewChanges, MenuCtx::Pane(id)) => return self.review_overlay(*id),
             (Action::TreeHidden, _) => {
                 if let Some(t) = self.tree.as_mut() {
                     t.toggle_hidden();
@@ -1562,7 +1564,7 @@ impl App {
             Ask::RenamePane(id) => {
                 let _ = self.rename_pane(*id, &value);
             }
-            Ask::SendTo(_) | Ask::Broadcast(_) | Ask::Reply(..) | Ask::Admit(_) => {}
+            Ask::SendTo(_) | Ask::Broadcast(_) | Ask::Reply(..) | Ask::Admit(_) | Ask::Comment(..) | Ask::EditComment(..) => {}
             Ask::NewWorktree(i) => {
                 if value.is_empty() {
                     return;
@@ -1624,6 +1626,84 @@ impl App {
                 self.notice = Some(e);
                 false
             }
+        }
+    }
+
+    /// Review changes for this pane's repository; git answers off the loop.
+    pub(super) fn review_overlay(&mut self, id: PaneId) -> Overlay {
+        let Some(root) = self.pane(id).and_then(|p| crate::git::work_root(&p.cwd)) else { return Overlay::None };
+        let mut w = crate::review::Review::new(id, self.address(id), root.clone());
+        w.width = self.review_width;
+        self.git.ask(GitAsk::Review { pane: id, root, since: w.since });
+        Overlay::Review(Box::new(w))
+    }
+
+    pub(super) fn ask_review_diff(&self, w: &crate::review::Review) {
+        if let (Some(base), Some(path)) = (w.base_sha(), w.path()) {
+            self.git.ask(GitAsk::ReviewDiff { pane: w.pane, root: w.root.clone(), since: w.since, base, path: path.to_string() });
+        }
+    }
+
+    pub(super) fn review_outcome(&mut self, mut w: Box<crate::review::Review>, out: crate::review::Out) -> Overlay {
+        use crate::review::Out;
+        let pane = w.pane;
+        self.review_width = w.width.or(self.review_width);
+        // Rule 8: comments become the owner's message, so a window inside a pane only reads them.
+        if self.client_inside && matches!(out, Out::Comment(_) | Out::Edit(_) | Out::Delete(_) | Out::Discard | Out::Send) {
+            self.notice = Some(super::mail::INSIDE_REFUSED.into());
+            return Overlay::Review(w);
+        }
+        match out {
+            Out::None => {}
+            Out::Close => return Overlay::None,
+            Out::Load => self.git.ask(GitAsk::Review { pane, root: w.root.clone(), since: w.since }),
+            Out::Diff => self.ask_review_diff(&w),
+            Out::Comment(c) => {
+                let title = format!("Comment on {}:{}", c.file, c.line);
+                return Overlay::Prompt(crate::menu::Prompt::new(title, "").does("add"), Ask::Comment(w, c));
+            }
+            Out::Edit(i) => {
+                let Some(c) = self.reviews.get(&pane).and_then(|l| l.get(i)).cloned() else { return Overlay::Review(w) };
+                return Overlay::Prompt(crate::menu::Prompt::new(format!("Comment on {}:{}", c.file, c.line), c.text).does("save"), Ask::EditComment(w, i));
+            }
+            Out::Delete(i) => {
+                if let Some(l) = self.reviews.get_mut(&pane).filter(|l| i < l.len()) {
+                    l.remove(i);
+                }
+            }
+            Out::Discard => {
+                self.reviews.remove(&pane);
+            }
+            Out::Send => {
+                let files: Vec<(String, bool)> = self.reviews.get(&pane).map_or(Vec::new(), |l| l.iter().map(|c| (c.file.clone(), c.since)).collect());
+                if self.address(pane).is_none() {
+                    self.notice = Some(UNNAMED_REVIEW.into());
+                } else if !files.is_empty() {
+                    // Lines move while the agent works: read each file's diff again, then send.
+                    self.review_req += 1;
+                    w.sending = Some(self.review_req);
+                    self.git.ask(GitAsk::ReviewSend { pane, req: self.review_req, root: w.root.clone(), files });
+                }
+            }
+        }
+        Overlay::Review(w)
+    }
+
+    /// The pane's comments, in one message to it; kept when it is refused.
+    pub(super) fn send_review(&mut self, pane: PaneId) {
+        let Some(comments) = self.reviews.get(&pane).filter(|c| !c.is_empty()) else { return };
+        let text = crate::review::message(comments);
+        // Past this, delivery shows the agent only the start of a message.
+        if text.len() > crate::mail::FRAME_ONLY_ABOVE {
+            self.notice = Some(format!("the review is over {} KiB: discard some comments", crate::mail::FRAME_ONLY_ABOVE / 1024));
+            return;
+        }
+        let Some(to) = self.address(pane) else {
+            self.notice = Some(UNNAMED_REVIEW.into());
+            return;
+        };
+        if self.mail_done(MailAction::Send { to, text }) {
+            self.reviews.remove(&pane);
         }
     }
 
@@ -1759,6 +1839,27 @@ impl App {
                 }
                 Overlay::Messages((**w).clone())
             }
+            Ask::Comment(w, _) | Ask::EditComment(w, _) if self.client_inside => {
+                self.notice = Some(super::mail::INSIDE_REFUSED.into());
+                Overlay::Review(w.clone())
+            }
+            Ask::Comment(w, c) => {
+                if !text.is_empty() {
+                    self.reviews.entry(w.pane).or_default().push(crate::review::Comment { text: text.clone(), ..c.clone() });
+                }
+                Overlay::Review(w.clone())
+            }
+            Ask::EditComment(w, i) => {
+                let list = self.reviews.entry(w.pane).or_default();
+                if text.is_empty() {
+                    if *i < list.len() {
+                        list.remove(*i);
+                    }
+                } else if let Some(c) = list.get_mut(*i) {
+                    c.text = text.clone();
+                }
+                Overlay::Review(w.clone())
+            }
             Ask::Reply(id, w) => {
                 if !text.is_empty() {
                     self.mail_done(MailAction::Reply { id: id.clone(), text: text.clone() });
@@ -1781,6 +1882,7 @@ impl App {
             Ask::PluginAddress => self.plugins_overlay(),
             Ask::RenameServer(_) => self.servers_back.take().map_or(Overlay::None, Overlay::Servers),
             Ask::Broadcast(w) | Ask::Reply(_, w) => Overlay::Messages(*w),
+            Ask::Comment(w, _) | Ask::EditComment(w, _) => Overlay::Review(w),
             Ask::Admit(w) => Overlay::Accounts(w),
             _ => Overlay::None,
         }
@@ -1915,6 +2017,7 @@ pub enum Action {
     TreeShape,
     TreeWrap,
     NextView,
+    ReviewChanges,
     TreeHidden,
     TreeReload,
     TreeRoot,
@@ -2038,6 +2141,10 @@ pub enum Ask {
     Reply(String, Box<crate::messages::Messages>),
     /// From the Accounts window, which comes back after.
     Admit(crate::isolation_ui::Accounts),
+    /// A comment on a line in Review changes, which comes back after.
+    Comment(Box<crate::review::Review>, crate::review::Comment),
+    /// The comment at this place of the pane's list, edited; emptied, it goes.
+    EditComment(Box<crate::review::Review>, usize),
 }
 
 /// No more than one lives on top of the frame at a time.
@@ -2062,6 +2169,8 @@ pub enum Overlay {
     Messages(crate::messages::Messages),
     Isolation(crate::isolation_ui::IsolationWin),
     Accounts(crate::isolation_ui::Accounts),
+    /// Review changes, over the whole screen.
+    Review(Box<crate::review::Review>),
 }
 
 /// What a selection in the list means.
@@ -2199,6 +2308,7 @@ mod plural_tests {
 }
 
 const CONTROL_NAME: &str = "that name has control characters";
+const UNNAMED_REVIEW: &str = "name the pane to send it a review: Rename pane… in its menu";
 
 /// One word typed into a shell. None for a control character, which a line editor acts on even
 /// inside quotes; bare when safe, so an alias still expands; `\` escaped too, for fish.

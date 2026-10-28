@@ -72,6 +72,24 @@ Files are read from the file tree's folder, or the space's folder when the tree 
 
 Anything that changes what a pane can reach (isolation, routes, providers) opens its own window and never changes in place.
 
+## Review changes
+
+**Review changes…** in the menu of a pane that runs an agent shows what the agent changed in its git repository: every changed file, committed or not, and new files. **since main** compares with where the branch left the default branch (`origin/HEAD`, else `main`, else `master`); **uncommitted** with the last commit.
+
+The files are listed under their folders, each folder with its lines added and removed; a click on a folder folds it. Drag the line between the list and the diff to widen either. The keys move in the list as in a tree (Up and Down, Right unfolds a folder or opens the file's diff, Left folds it or goes up to it); Tab goes between the list and the diff.
+
+Click a line of the diff, or press Enter on it, to comment on it. **[s] send** sends every comment to the agent as one message from you, each with its file, line and the line quoted:
+
+```
+Review of your changes, 1 comment:
+
+src/app.rs:42
+> let total = items.len() + 1;
+off by one: the header is not an item
+```
+
+Only a named pane receives messages: name it with **Rename pane…** first. Before sending, nerd reads the commented files again, so each comment carries its line as it is now; one whose line is gone says so. A comment belongs to the diff it was made on and shows at the top of the other one. A review over 20 KiB is refused, because the agent would see only its start.
+
 ## Commands
 
 | Command | What it does |

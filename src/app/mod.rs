@@ -244,6 +244,11 @@ pub struct App {
     /// The view of its previews the user chose last, per plugin: asked for again with every file.
     preview_modes: HashMap<String, String>,
     preview_req: u64,
+    /// Comments of Review changes not sent yet, per pane: they outlive the window, not the server.
+    pub(crate) reviews: HashMap<PaneId, Vec<crate::review::Comment>>,
+    review_req: u64,
+    /// The Review changes list's width as its divider was last dragged; it outlives the window, not the server.
+    review_width: Option<u16>,
     /// Messages between agents: the live records and what delivery keeps.
     pub mail: MailState,
     /// A window attached from inside one of this server's panes.
@@ -295,6 +300,7 @@ pub struct DialogView {
     /// The Isolation and Accounts windows.
     pub isolation: crate::messages::Drawn<crate::isolation_ui::Click>,
     pub find: crate::find::Drawn,
+    pub review: crate::messages::Drawn<crate::review::Click>,
 }
 
 impl App {
@@ -368,6 +374,9 @@ impl App {
             preview_asked: None,
             preview_modes: HashMap::new(),
             preview_req: 0,
+            reviews: HashMap::new(),
+            review_req: 0,
+            review_width: None,
             bell,
             exits: Vec::new(),
             exit_how: HashMap::new(),
@@ -3424,6 +3433,49 @@ mod tests {
     }
 
     #[test]
+    fn a_send_reads_each_commented_file_again_in_its_own_diff() {
+        use super::lifecycle::{git_work, GitAsk, GitFound};
+        let dir = crate::git::tests::init_repo("review-send");
+        std::fs::write(dir.join("README.md"), "test\nnow\n").unwrap();
+        let files = vec![("README.md".to_string(), false), ("README.md".to_string(), true)];
+        let found = git_work(vec![GitAsk::ReviewSend { pane: 4, req: 9, root: dir.clone(), files }]);
+        let [GitFound::ReviewSend { pane: 4, req: 9, diffs }] = &found[..] else { panic!("one answer") };
+        assert_eq!(diffs.len(), 2);
+        assert!(diffs.iter().all(|(p, _, text)| p == "README.md" && text.contains("+now")), "{diffs:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn review_changes_shows_the_hand_over_every_click_target_and_takes_only_its_own_answers() {
+        use super::lifecycle::GitFound;
+        use crate::git::{Changed, ReviewBase};
+        let mut app = with_one_space();
+        let area = app.screen;
+        let mut w = crate::review::Review::new(1, Some("coder".into()), "/r".into());
+        let base = ReviewBase { branch: Some("main".into()), since: Some("abc".into()), head: "def".into() };
+        w.take_files(true, base.clone(), vec![Changed { path: "src/a.rs".into(), added: 1, removed: 1 }]);
+        app.overlay = Overlay::Review(Box::new(w));
+        let diff = "@@ -1 +1 @@\n-old\n+new\n";
+        assert!(!app.apply_git(GitFound::ReviewDiff { pane: 2, since: true, path: "src/a.rs".into(), text: diff.into() }), "another pane's answer");
+        assert!(!app.apply_git(GitFound::ReviewDiff { pane: 1, since: true, path: "b.rs".into(), text: diff.into() }), "another file's answer");
+        assert!(!app.apply_git(GitFound::ReviewDiff { pane: 1, since: false, path: "src/a.rs".into(), text: diff.into() }), "the other diff's answer");
+        assert!(!app.apply_git(GitFound::Review { pane: 2, since: true, base, files: Vec::new() }), "another pane's files");
+        assert!(app.apply_git(GitFound::ReviewDiff { pane: 1, since: true, path: "src/a.rs".into(), text: diff.into() }));
+        app.reviews.insert(1, vec![crate::review::Comment { file: "src/a.rs".into(), line: 1, old: false, quote: "new".into(), text: "why".into(), outdated: false, since: true }]);
+        let _ = screen(&mut app);
+        let hits = app.view.dialog.review.hits.clone();
+        for want in [crate::review::Click::File(0), crate::review::Click::Fold(0), crate::review::Click::Line(1), crate::review::Click::Edit(0), crate::review::Click::Delete(0), crate::review::Click::Since(false), crate::review::Click::Send] {
+            assert!(hits.iter().any(|(_, h)| *h == want), "{want:?} drawn");
+        }
+        for (r, h) in &hits {
+            let want = if *h == crate::review::Click::Divider { crate::pointer::EW } else { crate::pointer::POINTER };
+            assert_eq!(app.pointer_at(area, r.x, r.y), want, "{h:?}");
+        }
+        let close = app.view.dialog.review.close;
+        assert_eq!(app.pointer_at(area, close.x, close.y), crate::pointer::POINTER, "the close button");
+    }
+
+    #[test]
     fn the_pointer_says_what_a_click_or_a_drag_will_do_and_is_sent_only_when_it_changes() {
         use crate::pointer::*;
         let mut app = with_one_space();
@@ -4312,12 +4364,12 @@ mod tests {
             let head = ["Split right [⌥+\\]", "Split down [⌥+-]", "—"];
             let mut one = strings(&head);
             let mail = ["~Send message…", "Show inbox…", "Who can write here…", "Where it can write…", "~Install the hook for exact delivery", "—", "Isolation…", "—"];
-            one.extend(strings(&["~Full screen [⌥+Z]", "Search in pane [⌥+/]", "~Subagents…", "—"]));
+            one.extend(strings(&["~Full screen [⌥+Z]", "Search in pane [⌥+/]", "~Subagents…", "~Review changes…", "—"]));
             one.extend(strings(&mail));
             one.extend(strings(&["Rename pane…", "Close pane… [⌥+W]"]));
             assert_eq!(rows(app.pane_menu(1, (1, 1))), one, "one pane, an agent without subagents");
             let mut two = strings(&head);
-            two.extend(strings(&["Full screen [⌥+Z]", "Search in pane [⌥+/]", "Subagents…", "—"]));
+            two.extend(strings(&["Full screen [⌥+Z]", "Search in pane [⌥+/]", "Subagents…", "~Review changes…", "—"]));
             two.extend(strings(&mail));
             two.extend(strings(&["Rename pane…", "Close pane… [⌥+W]"]));
             assert_eq!(rows(app.pane_menu(2, (1, 1))), two, "two panes, subagents running");

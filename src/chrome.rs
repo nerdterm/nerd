@@ -294,6 +294,21 @@ fn cells(s: &str) -> u16 {
     crate::slots::cells(s) as u16
 }
 
+/// `s` in at most `max` cells, its end "…" when cut: a wide character counts two.
+pub(crate) fn cut_cells(s: &str, max: usize) -> String {
+    if cells(s) as usize <= max {
+        return s.to_string();
+    }
+    let mut out = String::new();
+    for c in s.chars() {
+        if cells(&out) as usize + cells(c.encode_utf8(&mut [0; 4])) as usize + 1 > max {
+            break;
+        }
+        out.push(c);
+    }
+    out + "…"
+}
+
 /// Width a chip with this label and these badges takes, in cells.
 pub fn chip_width(label: &str, badges: &[(String, Color)]) -> u16 {
     cells(label) + badges.iter().enumerate().map(|(i, (t, _))| cells(badge_sep(i)) + cells(t)).sum::<u16>() + 2 * CHIP_PAD
