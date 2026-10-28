@@ -77,7 +77,7 @@ impl App {
         }
     }
 
-    /// "Next view: Table" when the preview offers views, else just "Next view".
+    /// "Next view: table" when the preview offers views, else just "Next view".
     pub(super) fn next_view_label(&self) -> String {
         if let Some(source) = self.svg_view().filter(|_| self.preview_views().is_none()) {
             return format!("Next view: {}", if source { "picture" } else { "source" });
