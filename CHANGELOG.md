@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.19.0](https://github.com/nerdterm/nerd/compare/v0.18.1...v0.19.0) (2026-10-28)
+
+
+### Added
+
+* a PDF previews as its first page, with its page count ([#167](https://github.com/nerdterm/nerd/issues/167)) ([cb8322d](https://github.com/nerdterm/nerd/commit/cb8322de43dae7d5061937e5edd9f9006ec8494a))
+* a tab nobody named shows what runs in it, and a space holds nine tabs ([#168](https://github.com/nerdterm/nerd/issues/168)) ([8b9f799](https://github.com/nerdterm/nerd/commit/8b9f799816b38a440623cd429ea7c2addc6b8a30))
+* an SVG file previews as its picture, and a click in the header shows its source ([#164](https://github.com/nerdterm/nerd/issues/164)) ([9af1131](https://github.com/nerdterm/nerd/commit/9af1131fad8c1ee74991e16dde002202d363dfaa))
+* review an agent's changes and send it comments on their lines ([#162](https://github.com/nerdterm/nerd/issues/162)) ([626797a](https://github.com/nerdterm/nerd/commit/626797a85a4b95aef8133a4b414a6cbfed505237))
+
+
+### Fixed
+
+* every click target shows the hand, the New space path the text cursor, and a picture goes while a window is open ([#166](https://github.com/nerdterm/nerd/issues/166)) ([e2838bd](https://github.com/nerdterm/nerd/commit/e2838bd26ae375f5386846ac2421c85d49df9f48))
+
 ## [0.18.1](https://github.com/nerdterm/nerd/compare/v0.18.0...v0.18.1) (2026-10-26)
 
 
