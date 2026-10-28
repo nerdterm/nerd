@@ -283,6 +283,9 @@ impl Tree {
                     self.toggle_changes_shape();
                     return Outcome::None;
                 }
+                if let Some((_, i)) = v.views.iter().find(|(r, _)| r.contains(at)) {
+                    return Outcome::ViewAt(*i);
+                }
                 if v.btn_zoom.contains(at) {
                     return Outcome::Zoom;
                 }

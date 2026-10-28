@@ -795,13 +795,13 @@ impl App {
             return;
         }
         // A client that shows pixels can attach at any time, so the PNG is asked for whenever the view wants it.
-        let (ask, whole, hidden, space, need) = (tree.next_ask(), tree.whole_file(), tree.hidden(), tree.space().to_path_buf(), tree.next_need());
+        let (ask, whole, hidden, space, need) = (tree.next_ask(), tree.whole_file(), (tree.hidden(), tree.svg_source()), tree.space().to_path_buf(), tree.next_need());
         if let Some(w) = ask {
             self.preview_asked = None;
             if w.diff {
                 self.git.ask(GitAsk::Diff(space, w));
             } else {
-                self.preview.ask(PreviewAsk::Load(w.clone(), hidden));
+                self.preview.ask(PreviewAsk::Load(w.clone(), hidden.0, hidden.1));
                 if whole {
                     self.ask_view(w);
                 }
@@ -903,7 +903,7 @@ impl App {
                 // An untracked file has no diff, and falls back to itself; only if still wanted, or it would crowd out the load that is.
                 if text.is_empty() {
                     if tree.wanted().as_ref() == Some(&w) {
-                        self.preview.ask(PreviewAsk::Load(w, tree.hidden()));
+                        self.preview.ask(PreviewAsk::Load(w, tree.hidden(), tree.svg_source()));
                     }
                 } else {
                     let p = crate::preview::Preview::from_text(&w.path, &text, crate::preview::Lang::Diff);
@@ -1008,8 +1008,8 @@ pub enum GitFound {
 }
 
 pub enum PreviewAsk {
-    /// The wanted file or folder; the flag lists hidden entries.
-    Load(crate::tree::Wanted, bool),
+    /// The wanted file or folder; the flags list hidden entries and show an SVG's source.
+    Load(crate::tree::Wanted, bool, bool),
     Make(crate::preview::Need),
     /// A public built-in's view of this file, for request `req`, `cols` wide.
     View(u64, PathBuf, u16),
@@ -1062,14 +1062,14 @@ pub(super) fn preview_work() -> impl FnMut(Vec<PreviewAsk>) -> Vec<PreviewFound>
         for j in jobs {
             match j {
                 PreviewAsk::View(req, p, cols) => view = Some((req, p, cols)),
-                PreviewAsk::Load(w, hidden) => load = Some((w, hidden)),
+                PreviewAsk::Load(w, hidden, source) => load = Some((w, hidden, source)),
                 PreviewAsk::Make(Need::Png(p)) => png = Some(p),
                 PreviewAsk::Make(Need::Pixels(p, dims)) => px = Some((p, dims)),
             }
         }
         let mut out = Vec::new();
-        if let Some((w, hidden)) = load {
-            let p = crate::tree::load(&w.path, hidden);
+        if let Some((w, hidden, source)) = load {
+            let p = crate::tree::load(&w.path, hidden, source);
             out.push(PreviewFound::Loaded(w, p));
         }
         if let Some(m) = view.and_then(|(req, p, cols)| crate::previews::answer(req, &p, cols)) {
@@ -1100,7 +1100,7 @@ pub(super) fn preview_failed(j: &PreviewAsk) -> Option<PreviewFound> {
     use crate::preview::Need;
     Some(match j {
         PreviewAsk::View(..) => return None,
-        PreviewAsk::Load(w, _) => PreviewFound::Loaded(w.clone(), crate::preview::Preview::note(&w.path, "the preview failed; the log says why")),
+        PreviewAsk::Load(w, ..) => PreviewFound::Loaded(w.clone(), crate::preview::Preview::note(&w.path, "the preview failed; the log says why")),
         PreviewAsk::Make(Need::Png(p)) => PreviewFound::Png(p.clone(), None),
         PreviewAsk::Make(Need::Pixels(p, _)) => PreviewFound::Pixels(p.clone(), None),
     })

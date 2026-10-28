@@ -636,8 +636,9 @@ impl App {
         {
             return s.into();
         }
+        // The preview's header holds clickable views: a click target wins over the text it sits on.
         if self.view.preview_rect.as_ref().is_some_and(hit) {
-            return TEXT.into();
+            return if self.view.tree.clickable(x, y) { POINTER } else { TEXT }.into();
         }
         if self.view.tree_frame.or(self.view.tree_rect).as_ref().is_some_and(hit) {
             return if self.view.tree.clickable(x, y) { POINTER } else { DEFAULT }.into();

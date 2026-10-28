@@ -44,6 +44,12 @@ impl App {
 
     /// The next view the preview's plugin offers of this file; remembered for that plugin, so the next file opens in it.
     pub(super) fn next_view(&mut self) {
+        if self.preview_views().is_none() && self.svg_view().is_some() {
+            if let Some(t) = self.tree.as_mut() {
+                t.toggle_svg_source();
+            }
+            return;
+        }
         let Some((by, next)) = self.preview_views().and_then(|(by, modes, mode)| {
             let at = modes.iter().position(|(id, _)| *id == mode).map_or(0, |i| i + 1) % modes.len();
             Some((by, modes.get(at)?.0.clone()))
@@ -56,14 +62,44 @@ impl App {
         }
     }
 
+    /// The view at `i` of those the preview's header names: a plugin's, or an SVG's picture (0) and source (1).
+    pub(super) fn pick_view(&mut self, i: usize) {
+        if let Some((by, modes, _)) = self.preview_views() {
+            let Some((id, _)) = modes.get(i) else { return };
+            self.preview_modes.insert(by, id.clone());
+            if let Some(w) = self.preview_asked.as_ref().map(|a| a.w.clone()) {
+                self.ask_view(w);
+            }
+        } else if self.svg_view().is_some_and(|source| source != (i == 1))
+            && let Some(t) = self.tree.as_mut()
+        {
+            t.toggle_svg_source();
+        }
+    }
+
     /// "Next view: Table" when the preview offers views, else just "Next view".
     pub(super) fn next_view_label(&self) -> String {
+        if let Some(source) = self.svg_view().filter(|_| self.preview_views().is_none()) {
+            return format!("Next view: {}", if source { "Picture" } else { "Source" });
+        }
         match self.preview_views() {
             Some((_, modes, mode)) => {
                 let at = modes.iter().position(|(id, _)| *id == mode).map_or(0, |i| i + 1) % modes.len();
                 format!("Next view: {}", modes[at].1)
             }
             None => "Next view".into(),
+        }
+    }
+
+    /// An SVG's picture in the preview, or its source asked for: whether it is the source. Not its diff.
+    pub(super) fn svg_view(&self) -> Option<bool> {
+        use crate::preview::{ImageFormat, Kind};
+        let t = self.tree.as_ref()?;
+        let p = t.shown_preview()?;
+        match &p.kind {
+            Kind::Image { format: ImageFormat::Svg, .. } => Some(false),
+            Kind::Text { .. } if t.svg_source() && crate::preview::is_svg_source(p) => Some(true),
+            _ => None,
         }
     }
 
@@ -737,6 +773,7 @@ impl App {
             Outcome::Zoom => self.tree_zoom = !self.tree_zoom && self.cfg.preview,
             Outcome::Wrap => self.toggle_wrap(),
             Outcome::View => self.next_view(),
+            Outcome::ViewAt(i) => self.pick_view(i),
             Outcome::Hide => self.close_tree(),
                 // Editor opens in the active pane, since the human pressed `e` themselves.
             Outcome::OpenInEditor(p, line) => {
@@ -1217,7 +1254,7 @@ impl App {
             moves,
             vec![
                 Item::new(if self.tree_zoom { "Leave full screen" } else { "Full screen" }, Action::TreeZoom).key(k(Char('z'), false)).enabled(self.cfg.preview),
-                Item::new(self.next_view_label(), Action::NextView).key(k(Char('v'), false)).enabled(self.preview_views().is_some()),
+                Item::new(self.next_view_label(), Action::NextView).key(k(Char('v'), false)).enabled(self.preview_views().is_some() || self.svg_view().is_some()),
                 Item::new(if self.cfg.preview_wrap { "Don't wrap long lines" } else { "Wrap long lines" }, Action::TreeWrap).key(k(Char('w'), false)).enabled(self.cfg.preview),
             ],
             plugin_group(if is_dir { crate::agents::Place::Folder } else { crate::agents::Place::File }, self.builtins),

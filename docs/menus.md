@@ -32,6 +32,11 @@ taste.
     and Enter closes it too: two buttons that do the same thing offer a choice that is not there.
 12. **Plugins get their own group,** after the object's own tools and before rename and destroy. A plugin's panel
     ends in "…"; its command does not.
+13. **What answers a click shows the hand:** every button, chip, row and named view a left click acts on gives
+    the pointer shape, wherever it sits, even on text; text gives the text cursor; anything else the arrow. A new
+    click target enters the list the pointer reads (`pointer_at`, the tree's `clickable`) in the same change.
+14. **A picture leaves with what it showed:** a Kitty image goes from the terminal the moment the preview under it
+    is no longer that picture: another file, its source, its diff, blocks instead of pixels, or no preview.
 
 ## Windows
 
