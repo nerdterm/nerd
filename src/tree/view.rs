@@ -309,7 +309,7 @@ impl Tree {
         // Handed over once per file (and again if the area moved): ratatui doesn't
         // touch or refresh the image itself, so a preview of the same file that is no picture (its source, its diff) takes it away.
         let picture = self.preview.as_ref().is_some_and(|p| matches!(p.kind, crate::preview::Kind::Image { .. }));
-        if v.covered || self.image_view != crate::preview::ImageView::Pixels || !picture {
+        if v.covered.is_some_and(|c| c.intersects(content)) || self.image_view != crate::preview::ImageView::Pixels || !picture {
             v.hide_image();
         } else if v.sent_img.as_ref().map(|(sp, sa)| (sp.as_path(), *sa)) != Some((path.as_path(), content)) {
             match self.preview.as_ref().and_then(|p| p.image_bytes(content, IMG_ID)) {
@@ -691,8 +691,8 @@ impl TreeView {
         }
     }
 
-    /// A window or menu is open: the picture would be drawn on top of it, so it goes until the window does.
-    pub fn cover(&mut self, open: bool) {
-        self.covered = open;
+    /// A window, menu or notice card is drawn over `over`: a picture there would be drawn on top of it, so it goes until that does.
+    pub fn cover(&mut self, over: Option<Rect>) {
+        self.covered = over;
     }
 }

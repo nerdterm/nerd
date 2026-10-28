@@ -1534,7 +1534,8 @@ mod tests {
         assert!(made.is_ok_and(|o| o.status.success()), "sips makes a jpeg");
         std::fs::remove_file(dir.join("a.ppm")).unwrap();
         let mut app = App::new(Config::default());
-        app.spaces.push(Space { name: None, cwd: dir.clone(), tabs: Vec::new(), active_tab: 0, isolation_new: None });
+        let tab = Tab { name: None, layout: Layout::new(1), panes: HashMap::new(), isolation_new: None };
+        app.spaces.push(Space { name: None, cwd: dir.clone(), tabs: vec![tab], active_tab: 0, isolation_new: None });
         app.screen = Rect::new(0, 0, 160, 30);
         app.caps.mux = true;
         app.toggle_tree();
@@ -1548,6 +1549,13 @@ mod tests {
         let next = String::from_utf8_lossy(&frame(&mut app).1).into_owned();
         assert!(!next.contains("a=T") && !next.contains("a=d,d=i,i=1"), "and is neither encoded nor deleted again while the menu stays");
         app.overlay = Overlay::None;
+        assert!(String::from_utf8_lossy(&frame(&mut app).1).contains("a=T,f=100,i=1"), "and is sent again once it closes");
+        // The notice card is no window, but the picture would cover it just the same.
+        app.notice = Some("the server on studio stopped".into());
+        let (shown, out) = frame(&mut app);
+        assert!(shown.contains("the server on studio stopped"), "the card is drawn: {shown}");
+        assert!(String::from_utf8_lossy(&out).contains("a=d,d=i,i=1"), "the picture goes under the notice card");
+        app.notice = None;
         assert!(String::from_utf8_lossy(&frame(&mut app).1).contains("a=T,f=100,i=1"), "and is sent again once it closes");
         let _ = std::fs::remove_dir_all(&dir);
     }
