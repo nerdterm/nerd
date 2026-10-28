@@ -3274,7 +3274,7 @@ fn a_flood_of_slot_messages_ends_in_its_last_state_and_undeclared_slots_are_refu
     let mut daemon = spawn_daemon(&env);
     let mut client = connect(&env, 160, 30);
     let mut term = vt100::Parser::new(30, 160, 0);
-    let (ok, row) = top_until(&mut client, &mut term, Duration::from_secs(15), |r| r.contains("final-state") && r.contains("1 \u{b7} tb "));
+    let (ok, row) = top_until(&mut client, &mut term, Duration::from_secs(15), |r| r.contains("final-state") && r.contains("1 sh \u{b7} tb "));
     assert!(ok, "the last state did not stay: {row:?}\n{}", daemon_log(&env));
     let log = daemon_log(&env);
     let refused: Vec<&str> = log.lines().filter(|l| l.contains("plugin flood: Segment refused") || l.contains("plugin flood: Badges refused")).collect();
@@ -3298,7 +3298,7 @@ fn what_a_plugin_showed_goes_when_it_dies() {
     let _daemon = spawn_daemon(&env);
     let mut client = connect(&env, 160, 30);
     let mut term = vt100::Parser::new(30, 160, 0);
-    let (ok, row) = top_until(&mut client, &mut term, Duration::from_secs(10), |r| r.contains("gone-soon") && r.contains("1 \u{b7} zz "));
+    let (ok, row) = top_until(&mut client, &mut term, Duration::from_secs(10), |r| r.contains("gone-soon") && r.contains("1 sh \u{b7} zz "));
     assert!(ok, "{row:?}\n{}", daemon_log(&env));
     let pid = plugin_pid(&data).unwrap();
     nix::sys::signal::killpg(nix::unistd::Pid::from_raw(pid), nix::sys::signal::Signal::SIGKILL).unwrap();

@@ -286,6 +286,9 @@ pub struct ViewState {
     pub sidebar_mail: Vec<(Rect, String)>,
 }
 
+/// Tabs in one space: as many as the number keys switch to.
+pub const MAX_TABS: usize = 9;
+
 /// A dialog's rows and buttons from the last frame, for its mouse; each dialog fills what it has.
 #[derive(Default)]
 pub struct DialogView {
@@ -2998,6 +3001,56 @@ mod tests {
             let o = app.run_action(Action::RenamePane, &MenuCtx::Pane(id));
             assert!(matches!(&o, Overlay::Prompt(p, Ask::RenamePane(i)) if p.value == want && *i == id), "pane {id}");
         }
+    }
+
+    #[test]
+    fn an_unnamed_tab_is_shown_with_what_runs_in_it_and_a_named_one_by_its_name() {
+        let app = App::new(Config::default());
+        let repo = std::env::temp_dir().join(format!("nerd-tab-work-{}", std::process::id()));
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(repo.join(".git/HEAD"), "ref: refs/heads/feat/31\n").unwrap();
+        let mut p = crate::app::snapshots::agent_pane(&app, 1, AgentState::Idle, 0);
+        p.term.feed("\x1b]0;\u{2802} Fix tab names\x07".as_bytes());
+        let mut tab = Tab { name: None, layout: Layout::new(1), panes: HashMap::from([(1, p)]), isolation_new: None };
+        assert_eq!(tab.work().as_deref(), Some("Fix tab names"), "the agent's topic, its spinner off");
+        let p = tab.panes.get_mut(&1).unwrap();
+        p.term.feed("\x1b]0;\u{2733} Claude Code\x07".as_bytes());
+        assert_eq!(tab.work().as_deref(), Some("claude"), "its own name is no topic; / is no repository");
+        let p = tab.panes.get_mut(&1).unwrap();
+        p.term.feed("\x1b]0;\u{2802} Review \u{202E}the diff (12s)\x07".as_bytes());
+        assert_eq!(tab.work().as_deref(), Some("Review the diff"), "no direction mark, no counter that would move the tabs each second");
+        let p = tab.panes.get_mut(&1).unwrap();
+        (p.agent, p.command, p.cwd) = (None, "zsh".into(), repo.join(".git").parent().unwrap().to_path_buf());
+        p.term.feed("\x1b]0;user@host:~\x07".as_bytes());
+        assert_eq!(tab.work().as_deref(), Some("zsh · feat/31"), "a shell's title is not read: its program and branch");
+        let p = tab.panes.get_mut(&1).unwrap();
+        p.command = "ssh".into();
+        assert_eq!(tab.work().as_deref(), Some("ssh"), "a remote shell is not in this folder's branch");
+        tab.name = Some("notes".into());
+        assert_eq!((tab.work(), tab.label(0)), (None, "notes".to_string()), "a name given wins");
+        tab.name = None;
+        assert_eq!(tab.label(0), "1", "routes and menus keep the number, never the work");
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn a_space_holds_nine_tabs() {
+        let mut app = named();
+        let full = |app: &App| app.spaces[0].tabs.len();
+        assert!(app.tab_room());
+        while full(&app) < MAX_TABS {
+            let id = 90 + full(&app);
+            app.spaces[0].tabs.push(Tab { name: None, layout: Layout::new(id), panes: HashMap::new(), isolation_new: None });
+        }
+        app.notice = None;
+        app.run_action(Action::NewTab, &MenuCtx::Global);
+        assert_eq!(full(&app), MAX_TABS, "no tenth tab");
+        assert_eq!(app.notice.as_deref(), Some("a space holds at most 9 tabs: close one or open another space"));
+        assert!(!app.tab_room());
+        screen(&mut app);
+        assert!(app.view.hits.new_tab.is_none(), "+ is greyed and answers no click");
+        let menu = rows(app.tab_menu(0, (1, 1)));
+        assert!(menu.iter().any(|r| r.starts_with("~New tab")), "New tab is greyed: {menu:?}");
     }
 
     #[test]

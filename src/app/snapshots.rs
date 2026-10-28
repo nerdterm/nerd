@@ -301,8 +301,8 @@ fn golden_tabs_with_badges_that_drop_before_any_tab_does() {
     let theme = crate::render::Theme::dark();
     let tabs = || {
         vec![
-            TabItem { index: 0, name: "main".into(), active: true, badges: vec![("7".into(), theme.teal), ("9".into(), theme.warn)] },
-            TabItem { index: 1, name: "logs".into(), active: false, badges: vec![("界".into(), theme.accent)] },
+            TabItem { index: 0, name: "main".into(), active: true, badges: vec![("7".into(), theme.teal), ("9".into(), theme.warn)], ..TabItem::default() },
+            TabItem { index: 1, name: "logs".into(), active: false, badges: vec![("界".into(), theme.accent)], ..TabItem::default() },
         ]
     };
     let full = tabs().iter().map(|t| chip_width(&t.name, &t.badges)).sum::<u16>() + chip_width("+", &[]);
@@ -420,7 +420,7 @@ fn golden_top_row_with_segments_in_the_free_gap() {
     out += &format!("== all\n{row}");
     let line = row.lines().next().unwrap();
     assert!(line.ends_with("alpha-a · alpha-b · zeta · 09:05  "), "plugins by name, then the clock, right-aligned: {line:?}");
-    assert!(line.contains("  1 ▕  logs ▕  +") && !line.contains("need"), "nothing of nerd's own but the clock: {line:?}");
+    assert!(line.contains("  1 claude ▕  logs ▕  +") && !line.contains("need"), "nothing of nerd's own but the clock: {line:?}");
     let hits: Vec<_> = app.view.hits.segments.iter().filter(|(_, h)| *h != crate::mouse::SegmentHit::Clock).cloned().collect();
     assert_eq!(hits.len(), 1, "only the one with a command, besides the clock");
     assert_eq!(hits[0].1, crate::mouse::SegmentHit::Command("alpha".into(), "go".into()));
@@ -516,7 +516,7 @@ fn a_tab_shows_the_badge_of_its_focused_pane_first() {
     for (focus, want) in [(2, "two"), (1, "one")] {
         app.spaces[0].tabs[0].layout.focus(focus);
         let row = top_row(&mut app, 120);
-        assert!(row.lines().next().unwrap().contains(&format!("  1 \u{b7} {want} ")), "focused {focus}: {row}");
+        assert!(row.lines().next().unwrap().contains(&format!("  1 claude \u{b7} {want} ")), "focused {focus}: {row}");
     }
 }
 

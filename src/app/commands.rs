@@ -950,7 +950,19 @@ impl App {
         self.new_tab_in(self.active);
     }
 
+    /// Whether space `si` has room for another tab; says so when it has not.
+    fn room_for_a_tab(&mut self, si: usize) -> bool {
+        let room = self.spaces.get(si).is_some_and(|sp| sp.tabs.len() < crate::app::MAX_TABS);
+        if !room {
+            self.notice = Some(format!("a space holds at most {} tabs: close one or open another space", crate::app::MAX_TABS));
+        }
+        room
+    }
+
     fn new_tab_in(&mut self, si: usize) {
+        if !self.room_for_a_tab(si) {
+            return;
+        }
         let cwd = self
             .spaces
             .get(si)
@@ -960,18 +972,14 @@ impl App {
             .or_else(|| self.spaces.get(si).map(|sp| sp.cwd.clone()))
             .or_else(crate::paths::home)
             .unwrap_or_default();
-        let name = cwd
-            .file_name()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "shell".to_string());
-
         let iso = self.isolation_for_new(si, None, None);
         if let Some(pane) = self.spawn_pane(cwd, shell_argv(), iso) {
             let layout = Layout::new(pane.id);
             let mut panes = HashMap::new();
             panes.insert(pane.id, pane);
+            // Unnamed: the tab bar shows what runs in it.
             if let Some(sp) = self.spaces.get_mut(si) {
-                sp.tabs.push(Tab { name: Some(name), layout, panes, isolation_new: None });
+                sp.tabs.push(Tab { name: None, layout, panes, isolation_new: None });
                 sp.active_tab = sp.tabs.len() - 1;
                 self.dirty = true;
             }
@@ -1026,7 +1034,7 @@ impl App {
         rename.push(Item::new("Move up", Action::MoveUp).enabled(self.space_neighbour(index, -1).is_some()));
         rename.push(Item::new("Move down", Action::MoveDown).enabled(self.space_neighbour(index, 1).is_some()));
         let items = grouped(vec![
-            vec![Item::new("New tab in this space", Action::NewTab)],
+            vec![Item::new("New tab in this space", Action::NewTab).enabled(self.spaces.get(index).is_some_and(|sp| sp.tabs.len() < crate::app::MAX_TABS))],
             git,
             vec![Item::new("Isolation for new panes…", Action::IsolationNew)],
             rename,
@@ -1035,10 +1043,15 @@ impl App {
         Some(Overlay::Menu(Menu::new(items, at), MenuCtx::Space(index)))
     }
 
+    /// The space in hand has room for another tab.
+    pub(crate) fn tab_room(&self) -> bool {
+        self.space().is_none_or(|sp| sp.tabs.len() < crate::app::MAX_TABS)
+    }
+
     pub fn tab_menu(&self, index: usize, at: (u16, u16)) -> Overlay {
         use crate::menu::{Item, Menu};
         let items = grouped(vec![
-            vec![Item::new("New tab", Action::NewTab).key(global_label(KeyActionName::Act(KeyAction::NewTab)))],
+            vec![Item::new("New tab", Action::NewTab).key(global_label(KeyActionName::Act(KeyAction::NewTab))).enabled(self.tab_room())],
             vec![Item::new("Isolation for new panes…", Action::IsolationNew)],
             vec![Item::new("Rename tab…", Action::Rename), Item::new("Close tab…", Action::Close)],
         ]);
@@ -1102,7 +1115,7 @@ impl App {
         let items = grouped(vec![
             vec![
                 Item::new("New space…", Action::NewSpace),
-                Item::new("New tab", Action::NewTab).key(global_label(KeyActionName::Act(KeyAction::NewTab))),
+                Item::new("New tab", Action::NewTab).key(global_label(KeyActionName::Act(KeyAction::NewTab))).enabled(self.tab_room()),
                 Item::new("Search…", Action::SearchAll).key(global_label(KeyActionName::Surface(7))),
             ],
             vec![
@@ -1204,6 +1217,9 @@ impl App {
 
     /// A new tab in this space running `argv`.
     fn open_tab(&mut self, name: String, argv: Vec<String>) {
+        if !self.room_for_a_tab(self.active) {
+            return;
+        }
         let cwd = crate::paths::home().unwrap_or_default();
         let iso = self.isolation_for_new(self.active, None, None);
         if let Some(pane) = self.spawn_pane(cwd, argv, iso) {
