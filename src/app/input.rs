@@ -603,6 +603,7 @@ impl App {
         let shape = match &self.overlay {
             Overlay::None => None,
             Overlay::Menu(m, _) => Some(if m.points_at(screen, x, y) { POINTER } else { DEFAULT }),
+            Overlay::NewSpace(w) if w.field(screen).contains(at) => Some(TEXT),
             _ => {
                 let prompt = matches!(&self.overlay, Overlay::Prompt(p, _) if p.buttons(screen).iter().any(hit));
                 let row = prompt
@@ -610,6 +611,7 @@ impl App {
                     || d.rows.iter().any(|(r, _)| hit(r))
                     || d.panel.rows.iter().any(|(r, _)| hit(r))
                     || hit(&d.panel.close)
+                    || d.panel.buttons.iter().any(hit)
                     || d.messages.hits.iter().any(|(r, _)| hit(r))
                     || d.review.hits.iter().any(|(r, _)| hit(r))
                     || d.isolation.hits.iter().any(|(r, _)| hit(r))
@@ -624,6 +626,17 @@ impl App {
         let h = &self.view.hits;
         // The notice card lies over a pane: all of it is a button, "… more" and × with it.
         if [h.notice, h.notice_close].iter().flatten().any(hit) {
+            return POINTER.into();
+        }
+        // The sidebar's buttons and rows answer a click before its edge does, so they win its slack too.
+        let sidebar = h.sidebar_rows.iter().any(|(r, _)| hit(r))
+            || h.sidebar_spaces.iter().any(|(r, _)| hit(r))
+            || h.sidebar_group_toggles.iter().any(|(r, _)| hit(r))
+            || [h.sidebar_new, h.sidebar_menu, h.sidebar_toggle].iter().flatten().any(hit)
+            || h.sidebar_subagents.iter().any(|(r, _)| hit(r))
+            || h.sidebar_subagent_rows.iter().any(|(r, _, _)| hit(r))
+            || self.view.sidebar_mail.iter().any(|(r, _)| hit(r));
+        if sidebar {
             return POINTER.into();
         }
         // the same slack a drag gets
@@ -646,15 +659,7 @@ impl App {
         if let Some(b) = h.borders.iter().find(|b| near(&b.rect)) {
             return if b.dir == crate::layout::Dir::Horizontal { EW } else { NS }.into();
         }
-        let clickable = h.tabs.iter().any(|(r, _)| hit(r))
-            || h.new_tab.as_ref().is_some_and(hit)
-            || h.segments.iter().any(|(r, _)| hit(r))
-            || h.sidebar_rows.iter().any(|(r, _)| hit(r))
-            || h.sidebar_spaces.iter().any(|(r, _)| hit(r))
-            || h.sidebar_group_toggles.iter().any(|(r, _)| hit(r))
-            || [h.sidebar_new, h.sidebar_menu, h.sidebar_toggle].iter().flatten().any(hit)
-            || h.sidebar_subagents.iter().any(|(r, _)| hit(r))
-            || h.sidebar_subagent_rows.iter().any(|(r, _, _)| hit(r));
+        let clickable = h.tabs.iter().any(|(r, _)| hit(r)) || h.new_tab.as_ref().is_some_and(hit) || h.segments.iter().any(|(r, _)| hit(r));
         if clickable {
             return POINTER.into();
         }

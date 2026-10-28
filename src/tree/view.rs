@@ -309,7 +309,7 @@ impl Tree {
         // Handed over once per file (and again if the area moved): ratatui doesn't
         // touch or refresh the image itself, so a preview of the same file that is no picture (its source, its diff) takes it away.
         let picture = self.preview.as_ref().is_some_and(|p| matches!(p.kind, crate::preview::Kind::Image { .. }));
-        if self.image_view != crate::preview::ImageView::Pixels || !picture {
+        if v.covered || self.image_view != crate::preview::ImageView::Pixels || !picture {
             v.hide_image();
         } else if v.sent_img.as_ref().map(|(sp, sa)| (sp.as_path(), *sa)) != Some((path.as_path(), content)) {
             match self.preview.as_ref().and_then(|p| p.image_bytes(content, IMG_ID)) {
@@ -683,8 +683,15 @@ impl TreeView {
         }
     }
 
-    /// A new client has none of our images: the next frame sends it again.
+    /// A new client or a cleared screen: a terminal that kept the image is told to drop it, and the next frame that shows it sends it again.
     pub fn forget_image(&mut self) {
-        self.sent_img = None;
+        if self.sent_img.take().is_some() {
+            self.pending_img = crate::preview::clear_image_bytes(IMG_ID);
+        }
+    }
+
+    /// A window or menu is open: the picture would be drawn on top of it, so it goes until the window does.
+    pub fn cover(&mut self, open: bool) {
+        self.covered = open;
     }
 }
