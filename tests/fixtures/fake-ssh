@@ -8,6 +8,7 @@ case $last in
 *"nerd --list --json")
     case $mode in
     refused) echo "ssh: connect to host fake-host port 22: Connection refused" >&2; exit 255 ;;
+    denied) echo "fake-host: Permission denied (publickey,password)." >&2; exit 255 ;;
     timeout) echo "ssh: connect to host fake-host port 22: Operation timed out" >&2; exit 255 ;;
     nonerd) echo "zsh:1: command not found: nerd" >&2; exit 127 ;;
     garbage) printf 'Last login: yesterday\nnerd 0.5.0\n'; exit 0 ;;

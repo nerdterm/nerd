@@ -179,7 +179,7 @@ impl App {
                 if let Some(w) = self.servers_window() {
                     w.listed(&name, Machine::Failed(e.clone()));
                 }
-                // Only ssh itself failing can be a prompt BatchMode refused; the rest are answers.
+                // Only a prompt ssh refused is answered by a terminal; the rest show in the machine's section.
                 if !ssh_failed {
                     return;
                 }

@@ -849,7 +849,7 @@ fn last_line(stderr: &str) -> String {
     stderr.lines().map(str::trim).rfind(|l| !l.is_empty()).map(printable).unwrap_or_default()
 }
 
-/// The instances on a machine, through `nerd --list --json` there; the error says whether ssh itself failed.
+/// The instances on a machine, through `nerd --list --json` there; the error says whether ssh refused a prompt a terminal can answer.
 /// With a limit (the menu) ssh runs in BatchMode and is killed when it runs out; without one (a terminal) a human waits.
 fn list_remote(ssh: &Path, entry: &crate::config::RemoteEntry, limit: Option<Duration>) -> Result<Vec<crate::proto::RemoteInstance>, (bool, String)> {
     use std::process::Stdio;
@@ -895,7 +895,12 @@ fn list_remote(ssh: &Path, entry: &crate::config::RemoteEntry, limit: Option<Dur
     };
     match status.code() {
         Some(0) => parse_listing(&stdout, &entry.name).map_err(|e| (false, e)),
-        code => Err((code == Some(255), ssh_failure(&entry.name, code, &String::from_utf8_lossy(&stderr)))),
+        code => {
+            let said = String::from_utf8_lossy(&stderr);
+            // what ssh says when BatchMode refused a password or a host key, which a terminal can answer
+            let prompt = code == Some(255) && ["Permission denied (", "Host key verification failed"].iter().any(|p| said.contains(p));
+            Err((prompt, ssh_failure(&entry.name, code, &said)))
+        }
     }
 }
 
@@ -2151,6 +2156,7 @@ mod remote_tests {
 
         for (mode, want) in [
             ("refused", "ssh to studio failed: ssh: connect to host fake-host port 22: Connection refused"),
+            ("denied", "ssh to studio failed: fake-host: Permission denied (publickey,password)."),
             ("timeout", "ssh to studio timed out"),
             ("nonerd", "studio has no nerd (looked in PATH, ~/.local/bin, /opt/homebrew/bin, /usr/local/bin)"),
             ("garbage", "nerd on studio is older than this one, or its shell startup prints text: Last login: yesterday"),
@@ -2158,7 +2164,7 @@ mod remote_tests {
             std::fs::write(fake.dir.join("mode"), mode).unwrap();
             let (ssh_failed, said) = list_remote(&fake.ssh(), &fake.entry(), None).unwrap_err();
             assert_eq!(said, want, "{mode}");
-            assert_eq!(ssh_failed, matches!(mode, "refused" | "timeout"), "{mode}: only ssh's own exit offers a terminal");
+            assert_eq!(ssh_failed, mode == "denied", "{mode}: only a prompt ssh refused offers a terminal");
         }
     }
 

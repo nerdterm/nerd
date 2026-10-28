@@ -82,7 +82,7 @@ pub enum ClientMsg {
         result: Result<Vec<RemoteInstance>, String>,
         #[serde(default)]
         window: bool,
-        /// ssh itself failed (exit 255): perhaps a prompt BatchMode refused, which a terminal can answer.
+        /// ssh refused a password or host key prompt under BatchMode, which a terminal can answer.
         #[serde(default)]
         ssh_failed: bool,
     },
