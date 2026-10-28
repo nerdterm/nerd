@@ -594,12 +594,12 @@ fn elide_left(s: &str, max: usize) -> String {
 /// The views of this file and the one shown: a plugin's, or an SVG's picture and, asked for, its source.
 fn views(p: Option<&crate::preview::Preview>, svg_source: bool) -> Option<(Vec<String>, usize)> {
     use crate::preview::{ImageFormat, Kind};
-    let svg = || vec!["Picture".to_string(), "Source".to_string()];
+    let svg = || vec!["picture".to_string(), "source".to_string()];
     match p.map(|p| &p.kind) {
         Some(Kind::Image { format: ImageFormat::Svg, .. }) => Some((svg(), 0)),
         Some(Kind::Text { .. }) if svg_source && p.is_some_and(crate::preview::is_svg_source) => Some((svg(), 1)),
         Some(Kind::Styled { modes, mode, .. }) if modes.len() > 1 => {
-            Some((modes.iter().map(|(_, label)| label.clone()).collect(), modes.iter().position(|(id, _)| id == mode).unwrap_or(0)))
+            Some((modes.iter().map(|(_, label)| label.to_lowercase()).collect(), modes.iter().position(|(id, _)| id == mode).unwrap_or(0)))
         }
         _ => None,
     }

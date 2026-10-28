@@ -80,12 +80,12 @@ impl App {
     /// "Next view: Table" when the preview offers views, else just "Next view".
     pub(super) fn next_view_label(&self) -> String {
         if let Some(source) = self.svg_view().filter(|_| self.preview_views().is_none()) {
-            return format!("Next view: {}", if source { "Picture" } else { "Source" });
+            return format!("Next view: {}", if source { "picture" } else { "source" });
         }
         match self.preview_views() {
             Some((_, modes, mode)) => {
                 let at = modes.iter().position(|(id, _)| *id == mode).map_or(0, |i| i + 1) % modes.len();
-                format!("Next view: {}", modes[at].1)
+                format!("Next view: {}", modes[at].1.to_lowercase())
             }
             None => "Next view".into(),
         }
