@@ -13,6 +13,8 @@ use crate::render::Theme;
 pub struct TabItem {
     pub index: usize,
     pub name: String,
+    /// After an unnamed tab's number: what runs in it, cut to fit.
+    pub work: Option<String>,
     pub active: bool,
     /// After the name: one per plugin.
     pub badges: Vec<(String, Color)>,
@@ -314,13 +316,14 @@ pub fn chip_width(label: &str, badges: &[(String, Color)]) -> u16 {
     cells(label) + badges.iter().enumerate().map(|(i, (t, _))| cells(badge_sep(i)) + cells(t)).sum::<u16>() + 2 * CHIP_PAD
 }
 
-pub fn draw_tabs(
-    buf: &mut Buffer,
-    area: Rect,
-    tabs: &[TabItem],
-    keys: bool,
-    theme: &Theme,
-) -> (Vec<(Rect, usize)>, Option<Rect>) {
+#[cfg(test)]
+pub fn draw_tabs(buf: &mut Buffer, area: Rect, tabs: &[TabItem], keys: bool, theme: &Theme) -> (Vec<(Rect, usize)>, Option<Rect>) {
+    draw_tabs_keeping(buf, area, tabs, keys, theme, 0, true)
+}
+
+/// `keep`: cells at the end the work in tabs is cut shorter to leave free (the clock's), but no tab is dropped for.
+/// `more`: the space has room for another tab; without it + is greyed and answers no click.
+pub fn draw_tabs_keeping(buf: &mut Buffer, area: Rect, tabs: &[TabItem], keys: bool, theme: &Theme, keep: u16, more: bool) -> (Vec<(Rect, usize)>, Option<Rect>) {
     if area.is_empty() {
         return (Vec::new(), None);
     }
@@ -329,19 +332,31 @@ pub fn draw_tabs(
     fn shown(t: &TabItem, all: bool) -> &[(String, Color)] {
         if all { &t.badges } else { &[] }
     }
-    let all = tabs.iter().map(|t| chip_width(&t.name, &t.badges) as u32).sum::<u32>() + chip_width("+", &[]) as u32 <= area.width as u32;
+    // What runs in a tab is cut shorter, then left out, then the badges go: a tab is dropped only past all that.
+    let label = |t: &TabItem, room: usize| match &t.work {
+        Some(w) if room > 0 => format!("{} {}", t.name, cut_cells(w, room)),
+        _ => t.name.clone(),
+    };
+    let fits = |room: usize, badges: bool| {
+        tabs.iter().map(|t| chip_width(&label(t, room), shown(t, badges)) as u32).sum::<u32>() + chip_width("+", &[]) as u32 <= area.width.saturating_sub(keep) as u32
+    };
+    let (room, all) = [(20, true), (12, true), (6, true), (0, true), (0, false)].into_iter().find(|(r, b)| fits(*r, *b)).unwrap_or((0, false));
     let mut rects = Vec::with_capacity(tabs.len());
     let mut x = area.x;
     for tab in tabs {
+        let name = label(tab, room);
         // stop rather than truncate a tab that doesn't fit
-        if x + chip_width(&tab.name, shown(tab, all)) > right {
+        if x + chip_width(&name, shown(tab, all)) > right {
             break;
         }
-        let rect = draw_chip(buf, x, area.y, &tab.name, shown(tab, all), tab.active, keys, theme);
+        let rect = draw_chip(buf, x, area.y, &name, shown(tab, all), tab.active, keys, theme);
         rects.push((rect, tab.index));
         x = rect.right();
     }
     let plus = (x + chip_width("+", &[]) <= right).then(|| draw_chip(buf, x, area.y, "+", &[], false, false, theme));
+    if let Some(p) = plus.filter(|_| !more) {
+        buf.set_style(p, Style::default().fg(theme.faint));
+    }
     // side by side, the chips join into one bar, parted by hairline seams
     for (rect, _) in &rects {
         if let Some(cell) = buf.cell_mut((rect.right() - 1, rect.y)) {
@@ -480,7 +495,7 @@ pub(crate) mod tests {
     #[test]
     fn a_numeric_tab_name_with_a_todo_badge_does_not_read_as_two_tabs() {
         let theme = Theme::dark();
-        let one = TabItem { index: 0, name: "1".into(), active: true, badges: vec![("12 todo".into(), theme.teal)] };
+        let one = TabItem { index: 0, name: "1".into(), active: true, badges: vec![("12 todo".into(), theme.teal)], ..TabItem::default() };
         let chip = chip_width(&one.name, &one.badges);
         let area = Rect::new(0, 0, chip + chip_width("+", &[]), 1);
         let mut buf = Buffer::empty(area);
@@ -490,12 +505,36 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn what_runs_in_a_tab_is_cut_then_left_out_before_a_tab_is_dropped() {
+        let theme = Theme::dark();
+        let work = |i: usize, w: &str| TabItem { index: i, name: (i + 1).to_string(), work: Some(w.into()), active: i == 0, ..TabItem::default() };
+        let tabs = vec![work(0, "Fix the tab names from the agent's title"), work(1, "zsh · feat/31-tab-names"), TabItem { index: 2, name: "notes".into(), ..TabItem::default() }];
+        let row = |w: u16| {
+            let area = Rect::new(0, 0, w, 1);
+            let mut buf = Buffer::empty(area);
+            let (rects, _) = draw_tabs(&mut buf, area, &tabs, false, &theme);
+            ((0..w).map(|x| buf[(x, 0)].symbol()).collect::<String>(), rects.len())
+        };
+        let (wide, n) = row(200);
+        assert!(wide.contains("1 Fix the tab names f…") && wide.contains("2 zsh · feat/31-tab-n…") && wide.contains("notes") && n == 3, "20 cells: {wide}");
+        let (mid, n) = row(56);
+        assert!(mid.contains("1 Fix the tab…") && mid.contains("notes") && n == 3, "12 cells: {mid}");
+        let (narrow, n) = row(26);
+        assert!(narrow.contains(" 1 ") && narrow.contains(" 2 ") && narrow.contains("notes") && n == 3, "numbers only, every tab still there: {narrow}");
+        // cells left for the clock shorten the work, but no tab goes for them
+        let area = Rect::new(0, 0, 26, 1);
+        let mut buf = Buffer::empty(area);
+        assert_eq!(draw_tabs_keeping(&mut buf, area, &tabs, false, &theme, 10, true).0.len(), 3);
+        assert_eq!(cut_cells("日本語のタイトル", 6), "日本…", "a wide character counts two");
+    }
+
+    #[test]
     fn a_longer_badge_still_drops_before_any_tab_does() {
         let theme = Theme::dark();
         // a plugin's count at the 8-cell cap
         let tabs = || {
             vec![
-                TabItem { index: 0, name: "main".into(), active: true, badges: vec![("999 todo".into(), theme.teal)] },
+                TabItem { index: 0, name: "main".into(), active: true, badges: vec![("999 todo".into(), theme.teal)], ..TabItem::default() },
                 TabItem { index: 1, name: "logs".into(), active: false, ..TabItem::default() },
             ]
         };

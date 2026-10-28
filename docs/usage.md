@@ -41,6 +41,8 @@ With a terminal that sends Option as Alt, `⌥` and the same key does the same i
 
 The file tree's own keys (**Tree** in **Keys and mouse…**) work after `⌃`+`B` too, while the tree has the keys.
 
+A tab you did not name shows its number and what runs in its focused pane: the agent's topic from its terminal title, else the program and its git branch (`2 zsh · main`). It is cut to 20 cells, and shorter when the tabs do not all fit, then to the number alone, so a tab is not dropped for its name; the clock keeps its time. A name you give with **Rename tab…** stays as you wrote it. Routes, menus and Search name a tab by its number or your name, never by what runs in it. A space holds at most 9 tabs, as many as `⌥`+`1`…`9` reach: **New tab** and **+** are greyed then.
+
 ### Terminal presets
 
 `⌥` and a key needs the terminal to send Option as Alt, which no macOS terminal does on every layout out of the box. `nerd --preset <terminal>`, or **Settings… → Terminal preset…**, sets it up for Ghostty, kitty, WezTerm or iTerm2, together with a 16 point margin and nerd's colours. It shows every change first and makes it only on your word; `nerd --preset <terminal> --undo` takes it back, and `nerd --preset` alone says which are applied. What each one does:

@@ -329,7 +329,9 @@ pub fn draw(f: &mut Frame, app: &App, view: &mut ViewState, geometry: &[crate::a
     // The tabs, and with them the + button, stop a cell short of the badge.
     let tabs_w = badge.map_or(right.width, |b| right.width.min(b.x.saturating_sub(right.x + 1)));
     let tabs_area = Rect { x: right.x, y: top.y, width: tabs_w, height: 1 };
-    let (tab_rects, plus) = crate::chrome::draw_tabs(f.buffer_mut(), tabs_area, &tabs, app.focus == crate::app::Focus::Tabs, &theme);
+    // The clock's time keeps its cells from what runs in a tab, which is cut short first; a tab itself is never dropped for it.
+    let time = app.clock.rsplit(' ').next().filter(|t| !t.is_empty()).map_or(0, |t| crate::slots::cells(t) as u16 + 2);
+    let (tab_rects, plus) = crate::chrome::draw_tabs_keeping(f.buffer_mut(), tabs_area, &tabs, app.focus == crate::app::Focus::Tabs, &theme, time, app.tab_room());
     let mut from = plus.or(tab_rects.last().map(|(r, _)| *r)).map_or(tabs_area.x, |r| r.right() + 1);
     let end = badge.map_or(full.right().saturating_sub(TEXT_INSET), |b| b.x.saturating_sub(1));
     if app.prefix {
@@ -343,7 +345,8 @@ pub fn draw(f: &mut Frame, app: &App, view: &mut ViewState, geometry: &[crate::a
     let seg_hits = draw_segments(f.buffer_mut(), app, from, end, top.y);
     view.hits.segments = seg_hits;
     view.hits.tabs = tab_rects;
-    view.hits.new_tab = plus;
+    // a greyed + still takes its cells, but answers no click
+    view.hits.new_tab = plus.filter(|_| app.tab_room());
 
     let panes_area = right;
 
@@ -583,7 +586,7 @@ fn tab_item(app: &App, index: usize, t: &crate::app::Tab, active: bool) -> TabIt
     let mut ids = t.layout.pane_ids();
     ids.sort_unstable_by_key(|id| (*id != focused, *id));
     let badges = app.plugins.slots.tab_badges(&ids).into_iter().map(|b| (b.text.clone(), b.role.color(&app.theme))).collect();
-    TabItem { index, name: t.label(index), active, badges }
+    TabItem { index, name: t.label(index), work: t.work(), active, badges }
 }
 
 /// The top row's segments in `[from, end)`: the plugins', the battery, then the clock; returns what a click reaches.

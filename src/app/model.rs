@@ -133,10 +133,46 @@ pub struct Tab {
     pub isolation_new: Option<crate::policy::Isolation>,
 }
 
+/// An agent's terminal title, its mark already off, as a topic: not the agent's own name, which it shows when idle.
+/// ceiling: an agent whose idle title is a product name other than "<agent>" or "<agent> code" shows it as a topic.
+/// Its controls and direction marks go (a title is any program's text), and a trailing counter such as "(12s)",
+/// which would move every tab after it each second.
+fn topic(title: &str, agent: &str) -> Option<String> {
+    let mut t = crate::mail::clean(title).replace(['\n', '\t'], " ");
+    if t.ends_with(')')
+        && let Some(open) = t.rfind('(')
+        && t[open..].chars().any(|c| c.is_ascii_digit())
+    {
+        t.truncate(open);
+    }
+    let t = t.trim().to_string();
+    let low = t.to_lowercase();
+    (!t.is_empty() && low != agent && low != format!("{agent} code")).then_some(t)
+}
+
 impl Tab {
-    /// What the tab bar calls it: the human's name, or its number.
+    /// Its name for routes, menus and search: the human's name, or its number. The tab bar adds `work`.
     pub fn label(&self, index: usize) -> String {
         self.name.clone().unwrap_or_else(|| (index + 1).to_string())
+    }
+
+    /// What runs in a tab the human has not named, after its number in the tab bar: the focused pane's agent's
+    /// topic from its terminal title, else its program and git branch. Shown only: a route never names it.
+    pub fn work(&self) -> Option<String> {
+        if self.name.is_some() {
+            return None;
+        }
+        let p = self.panes.get(&self.layout.focused())?;
+        let program = p.agent.clone().unwrap_or_else(|| p.command.clone());
+        if let Some(topic) = p.agent.as_deref().and_then(|a| topic(p.term.clean_title()?, a)) {
+            return Some(topic);
+        }
+        // A remote shell's folder is not this Mac's: no branch for it.
+        let remote = matches!(p.command.as_str(), "ssh" | "mosh" | "et");
+        Some(match crate::chrome::git_branch(&p.cwd).filter(|_| !remote) {
+            Some(b) => format!("{program} · {b}"),
+            None => program,
+        })
     }
 
     pub(super) fn focused_mut(&mut self) -> Option<&mut Pane> {
