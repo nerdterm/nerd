@@ -38,10 +38,10 @@ taste.
 14. **A picture leaves with what it showed:** a Kitty image goes from the terminal the moment the preview under it
     is no longer that picture: another file, its source, its diff, blocks instead of pixels, or no preview.
 15. **A choice on screen shows every option:** where one of a few views or modes is shown in place (the tree's
-    `files · changes`, a preview's `Picture · Source` or a plugin's views), all of them are named, joined by " · ",
+    `files · changes`, a preview's `picture · source` or a plugin's views), all of them are named, joined by " · ",
     the one shown in bold and each other one a click away with the hand. One word that changes on a click is not
     used: it cannot say whether it names what is shown or what a click gives. A menu item stays rule 6's verb
-    ("Next view: Source").
+    ("Next view: source"); the names are lowercase, as rule 10's values are.
 
 ## Windows
 
