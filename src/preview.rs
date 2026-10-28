@@ -76,6 +76,8 @@ pub enum ImageFormat {
     Webp,
     /// Found by its extension and an `<svg` tag, not by magic bytes: it is text.
     Svg,
+    /// Its first page.
+    Pdf,
 }
 
 impl ImageFormat {
@@ -86,6 +88,7 @@ impl ImageFormat {
             Self::Gif => "gif",
             Self::Webp => "webp",
             Self::Svg => "svg",
+            Self::Pdf => "pdf",
         }
     }
 
@@ -98,6 +101,8 @@ impl ImageFormat {
             Some(Self::Gif)
         } else if b.starts_with(b"RIFF") && b.len() >= 12 && &b[8..12] == b"WEBP" {
             Some(Self::Webp)
+        } else if b.starts_with(b"%PDF-") {
+            Some(Self::Pdf)
         } else {
             None
         }
@@ -109,7 +114,8 @@ pub enum Kind {
     /// Lines a plugin or a public built-in drew; `by` names the view in the header.
     Styled { lines: Vec<crate::slots::Line>, cut: bool, by: String, modes: Vec<(String, String)>, mode: String },
     /// `dims` from the header; `png`/`pixels` are made off the loop when first wanted (`need`), `Some(None)` = failed.
-    Image { format: ImageFormat, size: u64, dims: Option<(u32, u32)>, png: Option<Option<Arc<Vec<u8>>>>, pixels: Option<Option<Arc<Pixels>>> },
+    /// `pages`: a PDF's page count, when its file says it where it can be read.
+    Image { format: ImageFormat, size: u64, dims: Option<(u32, u32)>, pages: Option<u32>, png: Option<Option<Arc<Vec<u8>>>>, pixels: Option<Option<Arc<Pixels>>> },
     Binary { size: u64 },
     /// The tree draws a folder itself, from the listing its loader adds.
     Dir(Option<Listing>),
@@ -217,7 +223,8 @@ impl Preview {
         // An SVG whose size cannot be read shows its source: sips would draw it at whatever size it declares.
         let svg = || !source && is_svg(path) && svg_size(&head).is_some();
         if let Some(format) = ImageFormat::sniff(&head).or_else(|| svg().then_some(ImageFormat::Svg)) {
-            if md.len() > IMAGE_LIMIT {
+            // sips reads a PDF itself; only its first 4 MiB are read here, for its page size and count.
+            if md.len() > IMAGE_LIMIT && format != ImageFormat::Pdf {
                 return note(format!("{}, {} - more than 4 MiB, not showing", format.name(), kib(md.len())));
             }
             let mut bytes = head;
@@ -230,8 +237,10 @@ impl Preview {
                 return note(format!("{}, {w}x{h} - more than 50 megapixels, not showing", format.name()));
             }
             // Kitty takes PNG as is; other formats go through the system converter, and only once Kitty is there to show them.
+            // A root page node may lie past what was read: no count rather than a wrong one.
+            let pages = if format == ImageFormat::Pdf && md.len() <= IMAGE_LIMIT { pdf_pages(&bytes) } else { None };
             let png = (format == ImageFormat::Png).then_some(Some(Arc::new(bytes)));
-            return mk(Kind::Image { format, size: md.len(), dims, png, pixels: None });
+            return mk(Kind::Image { format, size: md.len(), dims, pages, png, pixels: None });
         }
 
         if head.contains(&0) {
@@ -411,11 +420,16 @@ impl Preview {
 
     fn draw_image(&self, buf: &mut Buffer, area: Rect, theme: &Theme) {
         let view = self.view;
-        let Kind::Image { format, size, dims, png, pixels } = &self.kind else {
+        let Kind::Image { format, size, dims, pages, png, pixels } = &self.kind else {
             return;
         };
         let dims = *dims;
-        let mut caption = format!("{}, {}{}", format.name(), dims.map(|(w, h)| format!("{w}×{h}, ")).unwrap_or_default(), kib(*size));
+        let page = match (format, pages) {
+            (ImageFormat::Pdf, Some(n)) => format!("page 1 of {n}, "),
+            (ImageFormat::Pdf, None) => "page 1, ".to_string(),
+            _ => String::new(),
+        };
+        let mut caption = format!("{}, {page}{}{}", format.name(), dims.map(|(w, h)| format!("{w}×{h}, ")).unwrap_or_default(), kib(*size));
         let hint = match view {
             ImageView::Pixels | ImageView::Off => None,
             ImageView::Blocks { hint } => {
@@ -518,7 +532,19 @@ pub fn to_png(path: &Path) -> Option<Arc<Vec<u8>>> {
 
 fn convert_to_png(path: &Path) -> Result<Vec<u8>, String> {
     let tmp = temp_path("png");
+    // A PDF page whose size could not be read, or a large one, is drawn no larger than this; -Z upscales too, so not a small one.
+    let mut head = Vec::new();
+    let _ = std::fs::File::open(path).map(|f| {
+        let mut f = f.take(IMAGE_LIMIT);
+        let _ = f.by_ref().take(5).read_to_end(&mut head);
+        if head == b"%PDF-" {
+            let _ = f.read_to_end(&mut head);
+        }
+    });
+    let unread = head.starts_with(b"%PDF-") && pdf_page(&head).is_none_or(|(w, h)| w.max(h) > 2048);
+    let cap: &[&str] = if unread { &["-Z", "2048"] } else { &[] };
     let out = crate::spawn::cmd("/usr/bin/sips")
+        .args(cap)
         .args(["-s", "format", "png"])
         .arg(path)
         .arg("--out")
@@ -708,6 +734,7 @@ fn image_size(b: &[u8], format: ImageFormat) -> Option<(u32, u32)> {
     let (w, h) = match format {
         ImageFormat::Png => return png_size(b),
         ImageFormat::Svg => return svg_size(b),
+        ImageFormat::Pdf => return pdf_page(b),
         ImageFormat::Gif => (u16_le(6)?, u16_le(8)?),
         ImageFormat::Webp => match b.get(12..16)? {
             b"VP8 " => (u16_le(26)? & 0x3fff, u16_le(28)? & 0x3fff),
@@ -783,6 +810,50 @@ fn svg_size(b: &[u8]) -> Option<(u32, u32)> {
         }
     };
     (w.is_finite() && h.is_finite() && w >= 1.0 && h >= 1.0 && w < 1e6 && h < 1e6).then(|| (w.round() as u32, h.round() as u32))
+}
+
+/// The first page's size in points, which sips draws one to a pixel, from the first `/MediaBox` in the file.
+/// ceiling: a box inside a compressed object stream is not read; such a page is drawn capped by `-Z`, its
+/// size bounded only by PDF's own 200-inch limit (about 0.9 GB in sips for a moment), and `/UserUnit` is ignored.
+fn pdf_page(b: &[u8]) -> Option<(u32, u32)> {
+    let s = String::from_utf8_lossy(b);
+    let at = s.find("/MediaBox")?;
+    let open = at + s[at..].find('[')?;
+    let close = open + s[open..].find(']')?;
+    let n: Vec<f64> = s[open + 1..close].split_whitespace().filter_map(|x| x.parse().ok()).collect();
+    let [x0, y0, x1, y1] = n[..] else { return None };
+    let (w, h) = ((x1 - x0).abs(), (y1 - y0).abs());
+    (w.is_finite() && h.is_finite() && w >= 1.0 && h >= 1.0 && w < 1e6 && h < 1e6).then(|| (w.round() as u32, h.round() as u32))
+}
+
+/// The page count a `/Type /Pages` dictionary gives, the largest one (the root's) in the whole file `b`.
+/// ceiling: not found when the page tree lives in a compressed object stream, nor past the first 64 such
+/// dictionaries, each looked for within 4 KiB of its `/Type` so a crafted file cannot make this slow.
+fn pdf_pages(b: &[u8]) -> Option<u32> {
+    let find = |h: &[u8], n: &[u8]| h.windows(n.len()).position(|w| w == n);
+    let mut most = None;
+    let (mut at, mut nodes) = (0, 0);
+    while nodes < 64
+        && let Some(i) = find(&b[at..], b"/Type")
+    {
+        let t = at + i;
+        at = t + 5;
+        let rest = b[at..].trim_ascii_start();
+        if !rest.starts_with(b"/Pages") || rest.get(6).is_some_and(u8::is_ascii_alphanumeric) {
+            continue;
+        }
+        nodes += 1;
+        let lo = t.saturating_sub(4096);
+        let from = b[lo..t].windows(2).rposition(|w| w == b"<<").map_or(lo, |i| lo + i);
+        let hi = (t + 4096).min(b.len());
+        let dict = &b[from..find(&b[t..hi], b">>").map_or(hi, |i| t + i)];
+        let n = find(dict, b"/Count").and_then(|c| {
+            let digits: Vec<u8> = dict[c + 6..].trim_ascii_start().iter().take_while(|d| d.is_ascii_digit()).copied().collect();
+            std::str::from_utf8(&digits).ok()?.parse::<u32>().ok().filter(|n| *n > 0)
+        });
+        most = most.max(n);
+    }
+    most
 }
 
 /// A path that names an SVG file.
@@ -1621,6 +1692,76 @@ mod tests {
         std::fs::write(&huge, r#"<svg xmlns="http://www.w3.org/2000/svg" width="20000" height="20000"></svg>"#).unwrap();
         assert!(matches!(Preview::load(&huge).kind, Kind::Note(n) if n.contains("50 megapixels")));
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// A PDF of `n` pages, `w`×`h` points, each with its number on it, uncompressed.
+    fn pdf(n: usize, w: u32, h: u32) -> Vec<u8> {
+        let kids: Vec<String> = (0..n).map(|i| format!("{} 0 R", 3 + 2 * i)).collect();
+        let mut objs = vec!["<< /Type /Catalog /Pages 2 0 R >>".to_string(), format!("<< /Type /Pages /Kids [{}] /Count {n} >>", kids.join(" "))];
+        for i in 0..n {
+            let content = format!("BT /F1 48 Tf 72 {} Td (page {}) Tj ET", h.saturating_sub(120), i + 1);
+            objs.push(format!("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {w} {h}] /Contents {} 0 R /Resources << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> >>", 4 + 2 * i));
+            objs.push(format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len()));
+        }
+        let mut b = b"%PDF-1.4\n".to_vec();
+        let mut at = Vec::new();
+        for (i, o) in objs.iter().enumerate() {
+            at.push(b.len());
+            b.extend(format!("{} 0 obj\n{o}\nendobj\n", i + 1).bytes());
+        }
+        let xref = b.len();
+        b.extend(format!("xref\n0 {}\n0000000000 65535 f \n", objs.len() + 1).bytes());
+        for a in at {
+            b.extend(format!("{a:010} 00000 n \n").bytes());
+        }
+        b.extend(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objs.len() + 1).bytes());
+        b
+    }
+
+    #[test]
+    fn a_pdf_previews_as_its_first_page_with_its_page_count() {
+        let d = std::env::temp_dir().join(format!("nerd-pdf-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let doc = d.join("report");
+        std::fs::write(&doc, pdf(3, 612, 792)).unwrap();
+        let mut p = Preview::load(&doc);
+        match &p.kind {
+            Kind::Image { format, dims, pages, png, .. } => assert_eq!((*format, *dims, *pages, png.is_none()), (ImageFormat::Pdf, Some((612, 792)), Some(3), true), "by its magic bytes, not its name"),
+            other => panic!("expected an image, got {:?}", std::mem::discriminant(other)),
+        }
+        let png = to_png(&doc);
+        assert_eq!(png.as_deref().and_then(|b| png_size(b)), Some((612, 792)), "sips draws page 1: {:?}", convert_to_png(&doc).err());
+        p.give_png(png);
+        p.view = ImageView::Off;
+        let area = Rect::new(0, 0, 60, 12);
+        let mut buf = Buffer::empty(area);
+        p.draw(&mut buf, area, 0, 0, false, &Theme::dark());
+        let shown: String = (0..area.height).flat_map(|y| (0..area.width).map(move |x| (x, y))).map(|(x, y)| buf[(x, y)].symbol().to_string()).collect();
+        assert!(shown.contains("pdf, page 1 of 3, 612×792"), "{shown}");
+        let huge = d.join("poster.pdf");
+        std::fs::write(&huge, pdf(1, 14400, 14400)).unwrap();
+        assert!(matches!(Preview::load(&huge).kind, Kind::Note(n) if n.contains("50 megapixels")), "a page too big is not drawn");
+        let big = d.join("big.pdf");
+        let mut b = pdf(1, 100, 100);
+        b.extend(std::iter::repeat_n(b'%', (IMAGE_LIMIT + 10) as usize));
+        std::fs::write(&big, b).unwrap();
+        assert!(matches!(Preview::load(&big).kind, Kind::Image { format: ImageFormat::Pdf, pages: None, .. }), "a PDF over 4 MiB is still drawn, sips reads it, but its count is not guessed from a part");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_pdf_page_size_and_count_come_from_its_dictionaries() {
+        assert_eq!(pdf_page(b"<< /MediaBox [ 0 0 595.28 841.89 ] >>"), Some((595, 842)));
+        assert_eq!(pdf_page(b"/MediaBox[-10 -10 90 40]"), Some((100, 50)));
+        assert_eq!(pdf_page(b"/MediaBox [0 0 0 9]"), None);
+        assert_eq!(pdf_page(b"no box"), None);
+        assert_eq!(pdf_pages(b"<</Type/Pages/Kids[3 0 R]/Count 12>> <</Type /Pages /Count 4>>"), Some(12), "the root's, the largest");
+        assert_eq!(pdf_pages(b"<< /Type /Outlines /Count 40 >>"), None, "an outline's count is not pages");
+        assert_eq!(pdf_pages(b"<< /Type /Page /Count 7 >>"), None);
+        assert_eq!(pdf_pages(b"<< /Type /Pages /Count 0 >>"), None, "no pages is no count");
+        assert_eq!(pdf_pages(b"<< /Count 5 /Resources << >> /Type /Pages >>"), None, "a nested dictionary hides it: no count, not a wrong one");
+        let many = b"/Type /Pages ".repeat(100_000);
+        assert_eq!(pdf_pages(&many), None, "a crafted file is looked at 64 times, not 100 000");
     }
 
     #[test]

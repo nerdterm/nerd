@@ -630,6 +630,7 @@ fn kind_name(p: Option<&crate::preview::Preview>) -> &str {
             F::Gif => "gif",
             F::Webp => "webp",
             F::Svg => "svg",
+            F::Pdf => "pdf",
         },
         Some(Kind::Styled { by, .. }) => by,
         Some(Kind::Binary { .. }) => "binary",
