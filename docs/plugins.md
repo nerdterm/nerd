@@ -270,8 +270,8 @@ preview's header names the plugin that drew it. Nothing is asked for a folder, a
 
 **Views.** A `Preview` may offer up to 4 ways to show the file, `modes: [{"id": "table", "label": "Table"}, …]` (an
 `id` of at most 64 bytes, a `label` of at most 16 cells), and say which one its `lines` are with `mode`. With two or
-more, the header names the one shown (`… · Table`), and **v** or **Next view** in the tree's menu asks for the next:
-nerd sends `preview_request` again with `"mode": "<id>"`, and remembers that view for this plugin, so the next file is
+more, the header names them all (`… · Table · Raw`, the one shown in bold), and a click on another, **v** or **Next
+view** in the tree's menu asks for it: nerd sends `preview_request` again with `"mode": "<id>"`, and remembers that view for this plugin, so the next file is
 asked for in it too. A plugin that does not offer the mode it was asked for answers in its own choice. Wrapping long
 lines is nerd's (**w**), not a view.
 

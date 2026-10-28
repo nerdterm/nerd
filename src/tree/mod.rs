@@ -78,6 +78,8 @@ pub enum Outcome {
     Wrap,
     /// The next of the views the preview's plugin offers.
     View,
+    /// That one of the views named in the preview's header.
+    ViewAt(usize),
     /// Close the tree (the header's × button).
     Hide,
 }
@@ -176,6 +178,8 @@ pub struct Tree {
     /// A query is being typed: printable keys go into the string, not into commands.
     typing: bool,
     hidden: bool,
+    /// An SVG previews as its text, not its picture.
+    svg_source: bool,
     focus: Focus,
     preview: Option<crate::preview::Preview>,
     pscroll: usize,
@@ -246,6 +250,8 @@ pub struct TreeView {
     pub(super) btn_files: Rect,
     pub(super) btn_changes: Rect,
     pub(super) btn_shape: Rect,
+    /// The preview header's views other than the one shown, by their place in the list: a click picks one.
+    pub(super) views: Vec<(Rect, usize)>,
     /// The two halves from the last frame - the mouse uses them to tell what to scroll.
     pub(super) tree_area: Rect,
     pub(super) prev_area: Rect,
@@ -1344,7 +1350,7 @@ mod tests {
         let T { t: mut tree, .. } = at(&d);
         let mut v = TreeView::default();
         let old = tree.wanted().unwrap();
-        assert!(tree.set_preview(&mut v, &old, load(&jpg, false)));
+        assert!(tree.set_preview(&mut v, &old, load(&jpg, false, false)));
         assert_eq!(tree.next_need(), Some(Need::Png(jpg.clone())));
         assert_eq!(tree.next_need(), None, "asked once");
 
@@ -1353,8 +1359,8 @@ mod tests {
         assert_ne!(old, new, "a reload wants the file read again");
         // One turn takes the PNG made for the old preview, a load for the old selection, then the new load.
         assert!(tree.give_png(&jpg, None));
-        assert!(!tree.set_preview(&mut v, &old, load(&jpg, false)), "a result for what is no longer wanted is dropped");
-        assert!(tree.set_preview(&mut v, &new, load(&jpg, false)));
+        assert!(!tree.set_preview(&mut v, &old, load(&jpg, false, false)), "a result for what is no longer wanted is dropped");
+        assert!(tree.set_preview(&mut v, &new, load(&jpg, false, false)));
         assert_eq!(tree.next_need(), Some(Need::Png(jpg.clone())), "the new preview asks again");
         rm(&d);
     }
@@ -1382,6 +1388,21 @@ mod tests {
         assert_eq!(t.take_image_bytes(), crate::preview::clear_image_bytes(IMG_ID));
         draw(&mut t, 40, 24);
         assert!(t.take_image_bytes().is_empty(), "nothing left to send while on text");
+        rm(&d);
+    }
+
+    #[test]
+    fn the_same_file_shown_as_text_takes_its_picture_away() {
+        let d = tmp("img-same-file");
+        fs::write(d.join("a.png"), png_1x1()).unwrap();
+        let mut t = at(&d);
+        draw(&mut t, 40, 24);
+        assert!(String::from_utf8_lossy(&t.take_image_bytes()).contains("a=T"));
+        // an SVG's source, a picture's diff: the same path, no longer a picture
+        let w = t.t.wanted().unwrap();
+        assert!(t.t.set_preview(&mut t.v, &w, crate::preview::Preview::from_text(&d.join("a.png"), "now text", crate::preview::Lang::Plain)));
+        draw(&mut t, 40, 24);
+        assert_eq!(t.take_image_bytes(), crate::preview::clear_image_bytes(IMG_ID));
         rm(&d);
     }
 

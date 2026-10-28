@@ -121,6 +121,7 @@ impl Tree {
         v.btn_files = Rect::ZERO;
         v.btn_changes = Rect::ZERO;
         v.btn_shape = Rect::ZERO;
+        v.views.clear();
         let mut words: Vec<(&str, bool)> = vec![("files", self.view == View::Files), ("changes", self.view == View::Changes)];
         if self.view == View::Changes {
             words.push((if self.changes_flat { "as a tree" } else { "as a list" }, false));
@@ -246,10 +247,27 @@ impl Tree {
         if top > inner.y {
             // Size/kind stay whole; the long path is trimmed on the left instead,
             // since the tail matters more.
-            let tail = format!(" · {} · {}{}", human(size), kind_name(self.preview.as_ref()), view_name(self.preview.as_ref()));
+            let (names, shown) = views(self.preview.as_ref(), self.svg_source).unwrap_or_default();
+            let named = names.iter().map(|n| format!(" · {n}")).collect::<String>();
+            let tail = format!(" · {} · {}{named}", human(size), kind_name(self.preview.as_ref()));
             let room = w.saturating_sub(tail.chars().count());
             let head = format!("{}{tail}", elide_left(&crate::paths::shown(&path), room));
-            buf.set_stringn(inner.x, inner.y, head, w, Style::default().fg(theme.muted));
+            buf.set_stringn(inner.x, inner.y, &head, w, Style::default().fg(theme.muted));
+            // The views end the header: the one shown is bold, each other one a click away, as in the title.
+            let mut x = inner.x + head.chars().count().min(w) as u16 - named.chars().count().min(w) as u16;
+            for (i, n) in names.iter().enumerate() {
+                x += 3;
+                let cells = n.chars().count() as u16;
+                if x + cells > inner.right() {
+                    break;
+                }
+                if i == shown {
+                    buf.set_stringn(x, inner.y, n, cells as usize, Style::default().fg(theme.text).add_modifier(Modifier::BOLD));
+                } else {
+                    v.views.push((Rect::new(x, inner.y, cells, 1), i));
+                }
+                x += cells;
+            }
         }
 
         // Until the new one is loaded, the previous preview stays.
@@ -289,8 +307,9 @@ impl Tree {
         self.paint_selection(v, buf, content, theme);
 
         // Handed over once per file (and again if the area moved): ratatui doesn't
-        // touch or refresh the image itself.
-        if self.image_view != crate::preview::ImageView::Pixels {
+        // touch or refresh the image itself, so a preview of the same file that is no picture (its source, its diff) takes it away.
+        let picture = self.preview.as_ref().is_some_and(|p| matches!(p.kind, crate::preview::Kind::Image { .. }));
+        if self.image_view != crate::preview::ImageView::Pixels || !picture {
             v.hide_image();
         } else if v.sent_img.as_ref().map(|(sp, sa)| (sp.as_path(), *sa)) != Some((path.as_path(), content)) {
             match self.preview.as_ref().and_then(|p| p.image_bytes(content, IMG_ID)) {
@@ -572,13 +591,17 @@ fn elide_left(s: &str, max: usize) -> String {
     format!("…{}", s.chars().skip(n - max + 1).collect::<String>())
 }
 
-/// " · Table" when a plugin offers views of this file: the one shown.
-fn view_name(p: Option<&crate::preview::Preview>) -> String {
+/// The views of this file and the one shown: a plugin's, or an SVG's picture and, asked for, its source.
+fn views(p: Option<&crate::preview::Preview>, svg_source: bool) -> Option<(Vec<String>, usize)> {
+    use crate::preview::{ImageFormat, Kind};
+    let svg = || vec!["Picture".to_string(), "Source".to_string()];
     match p.map(|p| &p.kind) {
-        Some(crate::preview::Kind::Styled { modes, mode, .. }) if modes.len() > 1 => {
-            modes.iter().find(|(id, _)| id == mode).map(|(_, label)| format!(" · {label}")).unwrap_or_default()
+        Some(Kind::Image { format: ImageFormat::Svg, .. }) => Some((svg(), 0)),
+        Some(Kind::Text { .. }) if svg_source && p.is_some_and(crate::preview::is_svg_source) => Some((svg(), 1)),
+        Some(Kind::Styled { modes, mode, .. }) if modes.len() > 1 => {
+            Some((modes.iter().map(|(_, label)| label.clone()).collect(), modes.iter().position(|(id, _)| id == mode).unwrap_or(0)))
         }
-        _ => String::new(),
+        _ => None,
     }
 }
 
@@ -606,6 +629,7 @@ fn kind_name(p: Option<&crate::preview::Preview>) -> &str {
             F::Jpeg => "jpeg",
             F::Gif => "gif",
             F::Webp => "webp",
+            F::Svg => "svg",
         },
         Some(Kind::Styled { by, .. }) => by,
         Some(Kind::Binary { .. }) => "binary",
@@ -626,10 +650,10 @@ fn human(n: u64) -> String {
 }
 
 impl TreeView {
-    /// A row or a title button a click acts on is under (x, y).
+    /// A row, a title button or a view in the preview's header a click acts on is under (x, y).
     pub fn clickable(&self, x: u16, y: u16) -> bool {
         let at = (x, y).into();
-        self.hits.iter().any(|(r, _)| r.contains(at))
+        self.hits.iter().chain(&self.views).any(|(r, _)| r.contains(at))
             || [self.btn_zoom, self.btn_close, self.btn_files, self.btn_changes, self.btn_shape].iter().any(|r| r.contains(at))
     }
 

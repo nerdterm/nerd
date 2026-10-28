@@ -27,6 +27,7 @@ impl Tree {
             complete: None,
             typing: false,
             hidden: false,
+            svg_source: false,
             focus: Focus::Tree,
             preview: None,
             pscroll: 0,
@@ -227,7 +228,7 @@ impl Tree {
         if let Some(w) = self.wanted().filter(|w| self.shown.as_ref() != Some(w)) {
             let text = if w.diff { crate::git::diff(&self.space, &w.path) } else { String::new() };
             let p = if text.is_empty() {
-                load(&w.path, self.hidden)
+                load(&w.path, self.hidden, self.svg_source)
             } else {
                 crate::preview::Preview::from_text(&w.path, &text, crate::preview::Lang::Diff)
             };
@@ -265,6 +266,15 @@ impl Tree {
         if let Some(i) = at {
             self.selected = i;
         }
+    }
+
+    pub fn svg_source(&self) -> bool {
+        self.svg_source
+    }
+
+    pub fn toggle_svg_source(&mut self) {
+        self.svg_source = !self.svg_source;
+        self.reload();
     }
 
     pub fn toggle_hidden(&mut self) {
@@ -871,9 +881,9 @@ fn only_child(dir: &Path, hidden: bool, keep: Option<&HashSet<PathBuf>>) -> Opti
     seen.next().is_none().then_some(one)
 }
 
-/// A file's preview, or a folder's with its listing: what the preview worker runs.
-pub fn load(path: &Path, hidden: bool) -> crate::preview::Preview {
-    let mut p = crate::preview::Preview::load(path);
+/// A file's preview, or a folder's with its listing: what the preview worker runs; `svg_source` shows an SVG's text.
+pub fn load(path: &Path, hidden: bool, svg_source: bool) -> crate::preview::Preview {
+    let mut p = crate::preview::Preview::load_as(path, svg_source);
     if let crate::preview::Kind::Dir(listing) = &mut p.kind {
         *listing = Some(list(path, hidden));
     }

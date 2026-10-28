@@ -1914,7 +1914,7 @@ mod tests {
             app.bell.clone(),
             move |jobs: Vec<PreviewAsk>| {
                 for j in jobs {
-                    if let PreviewAsk::Load(w, _) = j {
+                    if let PreviewAsk::Load(w, ..) = j {
                         log.lock().unwrap().push(w.path);
                     }
                 }
@@ -2029,6 +2029,39 @@ mod tests {
     }
 
     #[test]
+    fn an_svg_shows_its_picture_and_next_view_its_source_which_stays_for_the_next_svg() {
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="12" height="8"><circle cx="6" cy="4" r="3"/></svg>"#;
+        let (mut app, dir) = tree_on("svg-view", &[("a.svg", svg), ("b.svg", svg), ("c.svg", r#"<svg width="100%"/>"#)]);
+        app.toggle_tree();
+        select(&mut app, &dir.join("a.svg"));
+        until(&mut app, "the picture", |a| screen(a).contains("a.svg · 97B · svg · Picture"));
+        assert_eq!(app.next_view_label(), "Next view: Source");
+        // the header names both views; a click on the other one switches, as the menu item and v do
+        let views = app.view.tree.views.clone();
+        assert_eq!(views.iter().map(|(_, i)| *i).collect::<Vec<_>>(), [1], "Source is the one to click: {views:?}");
+        let r = views[0].0;
+        assert_eq!(app.pointer_at(app.screen, r.x, r.y), crate::pointer::POINTER, "a view to click shows the pointer");
+        assert_eq!(app.pointer_at(app.screen, r.x, r.y + 3), crate::pointer::TEXT, "the preview under it stays text");
+        mouse_at(&mut app, crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left), (r.x, r.y));
+        until(&mut app, "the source", |a| screen(a).contains("· Source") && screen(a).contains("1 <svg xmlns"));
+        assert_eq!(app.view.tree.views.iter().map(|(_, i)| *i).collect::<Vec<_>>(), [0], "now Picture is the one to click");
+        assert_eq!(app.next_view_label(), "Next view: Picture");
+        select(&mut app, &dir.join("b.svg"));
+        until(&mut app, "the next svg's source", |a| screen(a).contains("b.svg · 97B") && screen(a).contains("· Source"));
+        select(&mut app, &dir.join("c.svg"));
+        until(&mut app, "an svg it cannot size, the source asked for", |a| screen(a).contains("1 <svg width"));
+        { let s = screen(&mut app); assert!(!s.contains("· Source"), "no picture to go back to: no view\n{s}"); }
+        select(&mut app, &dir.join("b.svg"));
+        until(&mut app, "b's source", |a| screen(a).contains("1 <svg xmlns") && screen(a).contains("b.svg"));
+        app.run_action(Action::NextView, &MenuCtx::Global);
+        until(&mut app, "the picture again", |a| screen(a).contains("b.svg · 97B · svg · Picture"));
+        select(&mut app, &dir.join("c.svg"));
+        until(&mut app, "an svg it cannot size", |a| screen(a).contains("1 <svg width"));
+        assert!(!screen(&mut app).contains("· Picture") && !screen(&mut app).contains("· Source"), "plain text: no views");
+        assert_eq!(app.next_view_label(), "Next view");
+    }
+
+    #[test]
     fn a_plugin_s_views_show_in_the_header_and_v_asks_for_the_next_one_which_stays_for_the_next_file() {
         crate::session::tests::with_temp_state_dir("preview-views", || {
             let pdir = crate::paths::state_root().join("plugins/viewer");
@@ -2053,7 +2086,7 @@ mod tests {
             let req = app.preview_asked.as_ref().unwrap().req;
             app.plugins.slot("viewer", answer(req, "as a chat", "chat"));
             let s = screen(&mut app);
-            assert!(s.contains("as a chat") && s.contains("viewer · Conversation"), "the view shown is named in the header: {s}");
+            assert!(s.contains("as a chat") && s.contains("viewer · Conversation · Records"), "the views are named in the header: {s}");
             assert_eq!(app.next_view_label(), "Next view: Records");
 
             // The menu item and v run the same; the key's mapping is checked in the tree's own test.
@@ -2063,7 +2096,12 @@ mod tests {
             assert!(again > req, "the file is asked for again, in that view");
             app.plugins.slot("viewer", answer(again, "as records", "raw"));
             let s = screen(&mut app);
-            assert!(s.contains("as records") && s.contains("viewer · Records"), "{s}");
+            assert!(s.contains("as records") && s.contains("viewer · Conversation · Records"), "{s}");
+            // a click on a view the header names picks it, as the menu item does
+            let r = app.view.tree.views.iter().find(|(_, i)| *i == 0).expect("Conversation is clickable").0;
+            mouse_at(&mut app, crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left), (r.x, r.y));
+            assert_eq!(app.preview_modes.get("viewer").map(String::as_str), Some("chat"));
+            let again = app.preview_asked.as_ref().unwrap().req;
 
             // A plugin that names a view it does not offer is refused, and an answer with one view shows no view at all.
             assert!(crate::slots::over_cap(&answer(again, "x", "table")).is_some());

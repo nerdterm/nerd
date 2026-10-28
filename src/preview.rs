@@ -74,6 +74,8 @@ pub enum ImageFormat {
     Jpeg,
     Gif,
     Webp,
+    /// Found by its extension and an `<svg` tag, not by magic bytes: it is text.
+    Svg,
 }
 
 impl ImageFormat {
@@ -83,6 +85,7 @@ impl ImageFormat {
             Self::Jpeg => "jpeg",
             Self::Gif => "gif",
             Self::Webp => "webp",
+            Self::Svg => "svg",
         }
     }
 
@@ -171,7 +174,13 @@ impl Preview {
         }
     }
 
+    #[cfg(test)]
     pub fn load(path: &Path) -> Preview {
+        Self::load_as(path, false)
+    }
+
+    /// `source`: an SVG shows its text, not its picture.
+    pub fn load_as(path: &Path, source: bool) -> Preview {
         let mk = |kind| Preview { path: path.to_path_buf(), kind, target: None, carries: Vec::new(), view: ImageView::Pixels };
         let note = |s: String| Preview {
             path: path.to_path_buf(),
@@ -205,7 +214,9 @@ impl Preview {
             return note(format!("failed to read: {e}"));
         }
 
-        if let Some(format) = ImageFormat::sniff(&head) {
+        // An SVG whose size cannot be read shows its source: sips would draw it at whatever size it declares.
+        let svg = || !source && is_svg(path) && svg_size(&head).is_some();
+        if let Some(format) = ImageFormat::sniff(&head).or_else(|| svg().then_some(ImageFormat::Svg)) {
             if md.len() > IMAGE_LIMIT {
                 return note(format!("{}, {} - more than 4 MiB, not showing", format.name(), kib(md.len())));
             }
@@ -696,6 +707,7 @@ fn image_size(b: &[u8], format: ImageFormat) -> Option<(u32, u32)> {
     let u24_le = |o: usize| b.get(o..o + 3).map(|s| u32::from_le_bytes([s[0], s[1], s[2], 0]));
     let (w, h) = match format {
         ImageFormat::Png => return png_size(b),
+        ImageFormat::Svg => return svg_size(b),
         ImageFormat::Gif => (u16_le(6)?, u16_le(8)?),
         ImageFormat::Webp => match b.get(12..16)? {
             b"VP8 " => (u16_le(26)? & 0x3fff, u16_le(28)? & 0x3fff),
@@ -725,6 +737,65 @@ fn image_size(b: &[u8], format: ImageFormat) -> Option<(u32, u32)> {
         }
     };
     (w > 0 && h > 0).then_some((w, h))
+}
+
+/// The pixels the first `<svg>` tag outside comments declares (px, in, cm, mm, pt, pc or none), else its viewBox's.
+fn svg_size(b: &[u8]) -> Option<(u32, u32)> {
+    let s = String::from_utf8_lossy(b);
+    let mut rest: &str = &s;
+    let tag = loop {
+        let t = rest.find("<svg")?;
+        match rest.find("<!--").filter(|c| *c < t) {
+            Some(c) => {
+                let after = &rest[c + 4..];
+                rest = &after[after.find("-->")? + 3..];
+            }
+            None => break &rest[t..],
+        }
+    };
+    let tag = &tag[..tag.find('>')?];
+    let attr = |name: &str| {
+        let key = format!("{name}=");
+        let (at, _) = tag.match_indices(&key).find(|(i, _)| tag[..*i].ends_with(char::is_whitespace))?;
+        let v = &tag[at + key.len()..];
+        let q = v.chars().next().filter(|q| *q == '"' || *q == '\'')?;
+        v[1..].split(q).next()
+    };
+    let px = |v: &str| {
+        let v = v.trim();
+        let (n, unit) = v.split_at(v.find(|c: char| c.is_ascii_alphabetic() || c == '%').unwrap_or(v.len()));
+        let per = match unit {
+            "" | "px" => 1.0,
+            "in" => 96.0,
+            "cm" => 96.0 / 2.54,
+            "mm" => 96.0 / 25.4,
+            "pt" => 4.0 / 3.0,
+            "pc" => 16.0,
+            _ => return None,
+        };
+        n.trim().parse::<f64>().ok().map(|n| n * per)
+    };
+    let (w, h) = match (attr("width").and_then(px), attr("height").and_then(px)) {
+        (Some(w), Some(h)) => (w, h),
+        _ => {
+            let v: Vec<f64> = attr("viewBox")?.split([' ', ',']).filter(|x| !x.is_empty()).filter_map(|x| x.parse().ok()).collect();
+            (*v.get(2)?, *v.get(3)?)
+        }
+    };
+    (w.is_finite() && h.is_finite() && w >= 1.0 && h >= 1.0 && w < 1e6 && h < 1e6).then(|| (w.round() as u32, h.round() as u32))
+}
+
+/// A path that names an SVG file.
+pub fn is_svg(path: &Path) -> bool {
+    path.extension().is_some_and(|e| e.eq_ignore_ascii_case("svg"))
+}
+
+/// The source of an SVG that could show as a picture: not its diff, and not a file whose size cannot be read.
+pub fn is_svg_source(p: &Preview) -> bool {
+    match &p.kind {
+        Kind::Text { lines, lang, .. } => *lang != Lang::Diff && is_svg(&p.path) && svg_size(lines.join("\n").as_bytes()).is_some(),
+        _ => false,
+    }
 }
 
 /// The IHDR chunk is always first, at fixed offsets - no need for a real PNG parser.
@@ -1513,6 +1584,57 @@ mod tests {
         v.extend(*b"IEND");
         v.extend([0xae, 0x42, 0x60, 0x82]);
         v
+    }
+
+    #[test]
+    fn an_svg_previews_as_its_picture_or_as_its_source() {
+        let d = std::env::temp_dir().join(format!("nerd-svg-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let svg = d.join("logo.SVG");
+        std::fs::write(&svg, r##"<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" width="120" height="80"><rect width="120" height="80" fill="#9FD08A"/></svg>"##).unwrap();
+        let mut p = Preview::load(&svg);
+        match &p.kind {
+            Kind::Image { format, dims, png, .. } => assert_eq!((*format, *dims, png.is_none()), (ImageFormat::Svg, Some((120, 80)), true)),
+            other => panic!("expected an image, got {:?}", std::mem::discriminant(other)),
+        }
+        assert_eq!(p.need(), Some(Need::Png(svg.clone())), "drawn by sips, like any picture not already PNG");
+        let png = to_png(&svg);
+        assert_eq!(png.as_deref().and_then(|b| png_size(b)), Some((120, 80)), "{:?}", convert_to_png(&svg).err());
+        p.give_png(png);
+        assert_eq!(p.need(), None);
+        assert!(matches!(Preview::load_as(&svg, true).kind, Kind::Text { .. }), "its source on asking");
+        let not = d.join("notes.svg");
+        std::fs::write(&not, "just words").unwrap();
+        assert!(matches!(Preview::load(&not).kind, Kind::Text { .. }), "no <svg tag: text");
+        let txt = d.join("page.html");
+        std::fs::write(&txt, "<svg width='1' height='1'></svg>").unwrap();
+        assert!(matches!(Preview::load(&txt).kind, Kind::Text { .. }), "an svg tag in another file stays text");
+        let unsized_svg = d.join("unsized.svg");
+        std::fs::write(&unsized_svg, r#"<svg xmlns="http://www.w3.org/2000/svg" width="100%"><rect/></svg>"#).unwrap();
+        assert!(matches!(Preview::load(&unsized_svg).kind, Kind::Text { .. }), "a size it cannot read: its source, not a blind render");
+        assert!(!is_svg_source(&Preview::load_as(&unsized_svg, true)), "no picture to switch to");
+        assert!(is_svg_source(&Preview::load_as(&svg, true)));
+        let quoted = d.join("quoted.svg");
+        std::fs::write(&quoted, "<svg xmlns='http://www.w3.org/2000/svg' width='50000' height='50000'></svg>").unwrap();
+        assert!(matches!(Preview::load(&quoted).kind, Kind::Note(n) if n.contains("50 megapixels")), "single quotes do not get past the guard");
+        let huge = d.join("huge.svg");
+        std::fs::write(&huge, r#"<svg xmlns="http://www.w3.org/2000/svg" width="20000" height="20000"></svg>"#).unwrap();
+        assert!(matches!(Preview::load(&huge).kind, Kind::Note(n) if n.contains("50 megapixels")));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn an_svg_size_comes_from_its_tag() {
+        let size = |s: &str| svg_size(s.as_bytes());
+        assert_eq!(size(r#"<svg width="12px" height="7">"#), Some((12, 7)));
+        assert_eq!(size(r#"<svg width="100%" height="100%" viewBox="0 0 640 480">"#), Some((640, 480)), "a relative size falls back to the viewBox");
+        assert_eq!(size(r#"<svg viewBox="0,0,24.4,24.6">"#), Some((24, 25)));
+        assert_eq!(size(r#"<svg width="10cm" height="5mm">"#), Some((378, 19)), "lengths in other units, at 96 per inch");
+        assert_eq!(size("<svg\n  width='50000'\theight='50000'>"), Some((50000, 50000)), "single quotes, any space before");
+        assert_eq!(size(r#"<svg width="2em" height="2em">"#), None, "a size relative to text is unknown");
+        assert_eq!(size(r#"<!-- <svg width="1" height="1"> --><svg width="300" height="200">"#), Some((300, 200)), "not a tag in a comment");
+        assert_eq!(size(r#"<svg width="0" height="9">"#), None);
+        assert_eq!(size("<svg>"), None);
     }
 
     #[test]
