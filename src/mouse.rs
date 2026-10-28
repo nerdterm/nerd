@@ -296,15 +296,16 @@ impl Router {
                 self.drag.preview = true;
                 return Action::None;
             }
-            if hits.sidebar_divider.is_some_and(|r| near(r, x, y)) {
-                // A press only starts the drag; jumping to the click's position would ignore the set width.
-                self.drag.sidebar = true;
-                return Action::None;
-            }
+            // a row by the sidebar's edge is the row's, as its hand says
             for (r, id) in &hits.sidebar_rows {
                 if hit(*r, x, y) {
                     return Action::FocusPane(*id);
                 }
+            }
+            if hits.sidebar_divider.is_some_and(|r| near(r, x, y)) {
+                // A press only starts the drag; jumping to the click's position would ignore the set width.
+                self.drag.sidebar = true;
+                return Action::None;
             }
             // Borders get an extra cell of slack: a strip one character wide is nearly impossible to hit.
             let border = hits

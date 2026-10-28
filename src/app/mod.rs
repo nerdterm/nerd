@@ -494,7 +494,9 @@ impl App {
     /// A setting was changed on screen: written to file immediately, so a restart doesn't lose it.
     /// The client's screen no longer shows our images: a new client, or a cleared screen.
     pub fn images_lost(&mut self) {
-        self.view.logo_at = None;
+        if self.view.logo_at.take().is_some() {
+            self.to_client.extend(crate::preview::clear_image_bytes(crate::ui::LOGO_ID));
+        }
         if self.tree.is_some() {
             self.view.tree.forget_image();
         }
@@ -1537,6 +1539,13 @@ mod tests {
         // Now a terminal that draws images takes the screen: the PNG is made for it, and sent.
         (app.graphics, app.caps.mux) = (true, false);
         until(&mut app, "kitty bytes", |a| String::from_utf8_lossy(&frame(a).1).contains("a=T,f=100,i=1"));
+        // A menu over the preview: the picture goes while it is open, and comes back after.
+        app.overlay = app.global_menu((1, 1));
+        assert!(String::from_utf8_lossy(&frame(&mut app).1).contains("a=d,d=i,i=1"), "the picture goes under a menu");
+        let next = String::from_utf8_lossy(&frame(&mut app).1).into_owned();
+        assert!(!next.contains("a=T") && !next.contains("a=d,d=i,i=1"), "and is neither encoded nor deleted again while the menu stays");
+        app.overlay = Overlay::None;
+        assert!(String::from_utf8_lossy(&frame(&mut app).1).contains("a=T,f=100,i=1"), "and is sent again once it closes");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -2992,6 +3001,32 @@ mod tests {
     }
 
     #[test]
+    fn click_targets_by_an_edge_show_the_hand_and_a_field_the_text_cursor() {
+        use crate::pointer::{POINTER, TEXT};
+        let mut app = named();
+        screen(&mut app);
+        let m = app.view.hits.sidebar_menu.expect("the sidebar's menu button");
+        assert_eq!(app.pointer_at(app.screen, m.right() - 1, m.y), POINTER, "the sidebar's ≡ beside its edge answers a click");
+        let (r, id) = *app.view.hits.sidebar_rows.first().expect("a pane's row");
+        let (x, y) = (r.right() - 1, r.y);
+        assert!(app.view.hits.sidebar_divider.is_some_and(|d| crate::mouse::near(d, x, y)), "the row's last cell is in the edge's slack");
+        assert_eq!(app.pointer_at(app.screen, x, y), POINTER, "a pane's row by the sidebar's edge");
+        let down = crossterm::event::MouseEvent { kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left), column: x, row: y, modifiers: crossterm::event::KeyModifiers::NONE };
+        assert!(matches!(app.router.route(down, &app.view.hits), crate::mouse::Action::FocusPane(p) if p == id), "and a click there focuses the pane, as the hand says");
+        app.overlay = app.new_space_overlay();
+        screen(&mut app);
+        let f = match &app.overlay {
+            Overlay::NewSpace(w) => w.field(app.screen),
+            _ => panic!("New space is open"),
+        };
+        assert_eq!(app.pointer_at(app.screen, f.x + 1, f.y), TEXT, "a click puts the caret in the path");
+        app.overlay = app.plugins_overlay();
+        screen(&mut app);
+        let b = *app.view.dialog.panel.buttons.first().expect("Plugins has buttons");
+        assert_eq!(app.pointer_at(app.screen, b.x, b.y), POINTER, "a window's button");
+    }
+
+    #[test]
     fn the_sidebar_lists_held_mail_and_puts_no_mark_after_names() {
         use crossterm::event::{MouseButton, MouseEventKind};
         let mut app = named();
@@ -3006,6 +3041,7 @@ mod tests {
         let mail = row("coder → planner");
         assert!(mail.contains("● coder → planner · held"), "a held message needs you, marked as a blocked agent is: {side:#?}");
         let (r, _) = app.view.sidebar_mail[0].clone();
+        assert_eq!(app.pointer_at(app.screen, r.x + 2, r.y), crate::pointer::POINTER, "a row a click opens shows the hand");
         mouse_at(&mut app, MouseEventKind::Down(MouseButton::Left), (r.x + 2, r.y));
         assert!(matches!(&app.overlay, Overlay::Messages(w) if w.message.as_deref() == Some(held.id.as_str())), "a click opens that message");
     }

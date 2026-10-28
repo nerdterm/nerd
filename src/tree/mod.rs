@@ -232,6 +232,8 @@ pub struct TreeView {
     pub(super) sent_img: Option<(PathBuf, Rect)>,
     /// Set by `draw_preview`, reset by `take_image_bytes`: a frame without the preview clears the image.
     pub(super) preview_drawn: bool,
+    /// A window is open over the screen: the picture is not sent, since Kitty would draw it on top.
+    pub(super) covered: bool,
     /// Row rects from the last frame with their index into `rows`, since `mouse()`
     /// runs separately from `draw()`.
     pub(super) hits: Vec<(Rect, usize)>,
@@ -1388,6 +1390,21 @@ mod tests {
         assert_eq!(t.take_image_bytes(), crate::preview::clear_image_bytes(IMG_ID));
         draw(&mut t, 40, 24);
         assert!(t.take_image_bytes().is_empty(), "nothing left to send while on text");
+        rm(&d);
+    }
+
+    #[test]
+    fn a_forgotten_picture_is_also_cleared_in_case_the_terminal_kept_it() {
+        let d = tmp("img-forget");
+        fs::write(d.join("a.png"), png_1x1()).unwrap();
+        let mut t = at(&d);
+        draw(&mut t, 40, 24);
+        assert!(String::from_utf8_lossy(&t.take_image_bytes()).contains("a=T"));
+        t.v.forget_image();
+        t.v.preview_drawn = true;
+        assert_eq!(t.take_image_bytes(), crate::preview::clear_image_bytes(IMG_ID));
+        draw(&mut t, 40, 24);
+        assert!(String::from_utf8_lossy(&t.take_image_bytes()).contains("a=T"), "and sent again by the next frame that shows it");
         rm(&d);
     }
 

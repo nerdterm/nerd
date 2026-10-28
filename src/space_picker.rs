@@ -189,10 +189,10 @@ impl SpacePicker {
                     return Outcome::None;
                 }
                 let r = self.rect(screen);
-                let inner = r.inner(crate::chrome::DIALOG_FRAME);
-                if at.1 == inner.y && (inner.x..inner.right()).contains(&at.0) {
-                    let col = (at.0 - inner.x) as usize;
-                    let from = self.field_from(inner.width as usize);
+                let field = self.field(screen);
+                if field.contains(at.into()) {
+                    let col = (at.0 - field.x) as usize;
+                    let from = self.field_from(field.width as usize);
                     let (mut i, mut acc) = (from, 0);
                     for c in self.value.chars().skip(from) {
                         let w = crate::slots::cells(c.encode_utf8(&mut [0; 4]));
@@ -217,6 +217,12 @@ impl SpacePicker {
                 Outcome::None
             }
         }
+    }
+
+    /// The folder path's row, where a click puts the caret.
+    pub fn field(&self, screen: Rect) -> Rect {
+        let inner = self.rect(screen).inner(crate::chrome::DIALOG_FRAME);
+        Rect { height: 1, ..inner }
     }
 
     /// A fixed size, so it does not move while the list changes under it.

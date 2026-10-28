@@ -30,7 +30,7 @@ macro_rules! wordmarks {
 /// The logo's wordmark, one row high, where the terminal draws images; letters at about 80% of the height.
 /// (row height in device pixels, dark, light), one per height scripts/brand.mjs renders.
 static LOGOS: [(u16, &[u8], &[u8]); 9] = wordmarks!(16, 20, 24, 28, 32, 36, 40, 48, 64);
-const LOGO_ID: u32 = 2;
+pub(crate) const LOGO_ID: u32 = 2;
 /// Cells the wordmark takes at one row high (its canvas is 4.5:1, a cell about 1:2).
 const LOGO_COLS: u16 = 9;
 
@@ -283,6 +283,7 @@ pub fn draw(f: &mut Frame, app: &App, view: &mut ViewState, geometry: &[crate::a
     let kitty = app.graphics && !app.caps.mux;
     match (app.tree.as_ref(), a.pair) {
         (Some(tree), Some(pair_area)) => {
+            view.tree.cover(app.overlay.is_open());
             let pair = tree.draw_pair(&mut view.tree, f.buffer_mut(), pair_area, &theme, tw);
             // preview image goes to the client as Kitty graphics, outside the frame - ratatui cells can't hold it
             let img = view.tree.take_image_bytes();
