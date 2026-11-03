@@ -610,17 +610,7 @@ fn serve(started: &mut bool) -> std::io::Result<()> {
                 }
             }
             if let Some((info, changes)) = probe.take(&exe, &bell, PROBE_LIMIT) {
-                app.update_available = true;
-                app.update_info = info;
-                app.update_changes = changes;
-                let skipped = std::fs::read_to_string(crate::paths::state_root().join("update-skipped")).unwrap_or_default();
-                app.update_skipped = skipped.trim() == app.update_info;
-                if !app.update_skipped {
-                    // A standing notice would otherwise hide this card until a key.
-                    app.notice = None;
-                    app.toast_with_more("Update available".into(), crate::app::More::Update);
-                    redraw = true;
-                }
+                redraw |= app.new_build(info, changes);
             }
             redraw |= app.tick_states();
             redraw |= app.autoscroll_selection();
@@ -1153,6 +1143,31 @@ mod tests {
         let got = answer(&mut p, &exe, limit, std::time::Duration::from_secs(8));
         assert_eq!(got, Some(("nerd 2".into(), vec![vec!["Added".into(), "build 2".into()]])));
         assert_eq!(answer(&mut p, &exe, limit, std::time::Duration::from_millis(500)), None, "one answer");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_brew_upgrade_behind_the_link_is_a_new_build() {
+        let dir = std::env::temp_dir().join(format!("nerd-probe-brew-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let keg = |v: &str| script(&dir.join(format!("Cellar/nerd/{v}/bin")), &format!("echo 'nerd {v}'"));
+        keg("1.0.0");
+        std::fs::create_dir_all(dir.join("bin")).unwrap();
+        let link = dir.join("bin/nerd");
+        std::os::unix::fs::symlink("../Cellar/nerd/1.0.0/bin/nerd", &link).unwrap();
+        let before = super::file_id(&link);
+        // As brew upgrade does it: a new keg, the link moved, the old keg removed.
+        keg("1.1.0");
+        std::fs::remove_file(&link).unwrap();
+        std::os::unix::fs::symlink("../Cellar/nerd/1.1.0/bin/nerd", &link).unwrap();
+        std::fs::remove_dir_all(dir.join("Cellar/nerd/1.0.0")).unwrap();
+        let after = super::file_id(&link);
+        assert!(before.is_some() && after.is_some() && after != before, "{before:?} -> {after:?}");
+        let (bell, _door) = crate::bell::new();
+        let limit = std::time::Duration::from_secs(5);
+        let mut p = super::Probe::default();
+        p.start(&link, &bell, limit);
+        assert_eq!(answer(&mut p, &link, limit, std::time::Duration::from_secs(8)).map(|a| a.0), Some("nerd 1.1.0".into()));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

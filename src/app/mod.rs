@@ -1676,6 +1676,34 @@ mod tests {
     }
 
     #[test]
+    fn a_release_already_installed_at_the_server_s_path_is_left_to_update() {
+        use crate::release::Said;
+        with_release_home("release-on-disk", || {
+            let mut app = with_one_space();
+            let marked = |app: &App, label: &str| matches!(app.global_menu((0, 0)), Overlay::Menu(m, _) if m.items.iter().any(|i| i.mark && i.label == label));
+            app.release_job = Some((7, ReleaseAsk::Daily));
+            release_ends(&mut app, Said::Found(found("v9.1.0")));
+            assert!(marked(&app, "Check for a new release…"), "found before brew upgrade: news");
+            // brew upgrade: the build at the server's path is that release now.
+            assert!(app.new_build("nerd 9.1.0 (abc, 2026-11-03 12:00)".into(), Vec::new()));
+            assert!(marked(&app, "Update…") && !marked(&app, "Check for a new release…"), "Update… holds it; Check no longer offers it");
+            app.toast = None;
+            app.release_job = Some((8, ReleaseAsk::Daily));
+            release_ends(&mut app, Said::Found(found("v9.1.0")));
+            assert!(app.toast.is_none() && !marked(&app, "Check for a new release…"), "the daily check shows no card for it");
+            app.overlay = app.check_release();
+            release_ends(&mut app, Said::Found(crate::release::Found { newer: false, ..found("v9.1.0") }));
+            let Overlay::Confirm(c, Pending::Dismiss) = &app.overlay else { panic!("only told") };
+            let body = c.body_lines(200).join(" ");
+            assert!(body.contains("nerd 9.1.0 (abc, 2026-11-03 12:00) is already installed here: Update… switches"), "{body}");
+            app.new_build("nerd 9.0.5 (def)".into(), Vec::new());
+            app.release_job = Some((9, ReleaseAsk::Daily));
+            release_ends(&mut app, Said::Found(found("v9.1.0")));
+            assert!(marked(&app, "Check for a new release…"), "an older build on disk leaves the release news");
+        });
+    }
+
+    #[test]
     fn the_first_window_asks_once_and_only_nerd_s_own_window_answers() {
         with_release_home("release-ask", || {
             let mut app = with_one_space();
