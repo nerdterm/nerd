@@ -140,10 +140,15 @@ pub fn escape(s: &str) -> std::borrow::Cow<'_, str> {
 
 /// A warning a plugin can cause at will: at most one a second of each kind, or it could roll the log over.
 pub fn warn_limited(kind: &'static str, line: &str) {
+    warn_every(kind, std::time::Duration::from_secs(1), line);
+}
+
+/// A warning written at most once per `every` of each kind.
+pub fn warn_every(kind: &'static str, every: std::time::Duration, line: &str) {
     static LAST: std::sync::Mutex<Vec<(&'static str, std::time::Instant, u64)>> = std::sync::Mutex::new(Vec::new());
     let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
     let held = match last.iter_mut().find(|(k, _, _)| *k == kind) {
-        Some((_, at, held)) if at.elapsed() < std::time::Duration::from_secs(1) => {
+        Some((_, at, held)) if at.elapsed() < every => {
             *held += 1;
             return;
         }

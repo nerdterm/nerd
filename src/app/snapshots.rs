@@ -248,6 +248,8 @@ pub(crate) fn agent_pane(app: &App, id: PaneId, state: AgentState, subs: usize) 
         activity_key: [None, None],
         mouse_left_on: false,
         isolation: Default::default(),
+        unanswered: None,
+        behind: false,
     };
     p.term.set_hook_state(Some(state));
     p.term.tick_state();

@@ -1495,6 +1495,8 @@ mod tests {
             activity_key: [None, None],
             mouse_left_on: false,
             isolation: Default::default(),
+            unanswered: None,
+            behind: false,
         }
     }
 
@@ -5172,7 +5174,195 @@ mod tests {
         assert_eq!(app.pump_pty(Duration::ZERO), (true, true), "one round leaves the flood queued");
         assert!(app.pane(2).unwrap().term.screen().contents().contains("quiet"), "the quiet pane had its turn");
         let p = app.spaces[0].tabs[0].panes.get_mut(&1).unwrap();
-        assert_eq!(std::iter::from_fn(|| p.pty.next()).count(), crate::pty::QUEUE - QUANTUM, "the flood gave up one quantum");
+        assert!(p.term.queued(), "the flood stopped inside its first chunk");
+        assert_eq!(std::iter::from_fn(|| p.pty.next()).count(), crate::pty::QUEUE - 1, "the flood gave up after one slice");
+    }
+
+    #[test]
+    fn three_flooding_panes_each_parse_one_slice_a_round() {
+        let mut app = with_one_space();
+        let mut keep = Vec::new();
+        for (tab, id) in [(0, 1), (0, 2), (1, 3)] {
+            let (pane, tx) = fed_pane(&app, id, None);
+            for _ in 0..crate::pty::QUEUE {
+                tx.send(vec![b'y'; 8192]).unwrap();
+            }
+            app.spaces[0].tabs[tab].panes.insert(id, pane);
+            keep.push(tx);
+        }
+        let (quiet, qtx) = fed_pane(&app, 4, None);
+        app.spaces[0].tabs[1].panes.insert(4, quiet);
+        qtx.send(b"quiet".to_vec()).unwrap();
+        assert_eq!(app.pump_pty(Duration::ZERO), (true, true));
+        for id in [1, 2, 3] {
+            assert_eq!(app.pane(id).unwrap().term.queued_len(), 8192 - crate::term::SLICE, "pane {id}");
+        }
+        assert!(app.pane(4).unwrap().term.screen().contents().contains("quiet"));
+    }
+
+    #[test]
+    fn a_flood_in_chunks_smaller_than_a_slice_gives_way_after_one() {
+        let mut app = with_one_space();
+        let (flood, tx) = fed_pane(&app, 1, None);
+        app.spaces[0].tabs[0].panes.insert(1, flood);
+        for _ in 0..crate::pty::QUEUE {
+            tx.send(vec![b'y'; crate::term::SLICE / 2]).unwrap();
+        }
+        assert_eq!(app.pump_pty(Duration::ZERO), (true, true));
+        let p = app.spaces[0].tabs[0].panes.get_mut(&1).unwrap();
+        assert_eq!(std::iter::from_fn(|| p.pty.next()).count(), crate::pty::QUEUE - 1);
+    }
+
+    /// A stream sent as 8 KiB chunks and pumped to the end, each turn with `deadline`.
+    fn pumped(app: &App, raw: &[u8], deadline: Option<Instant>) -> (String, Vec<u8>) {
+        let (mut pane, tx) = fed_pane(app, 1, None);
+        pane.term = Term::new(120, 40, 1000);
+        let mut chunks = raw.chunks(8192);
+        let theme = app.theme;
+        loop {
+            let sent = chunks.next().map(|c| tx.send(c.to_vec()).unwrap()).is_some();
+            let (_, left) = pane.pump(QUANTUM, deadline, false, &theme);
+            if !sent && !left {
+                break;
+            }
+        }
+        pane.term.finish();
+        (pane.term.full_state(), pane.term.dump())
+    }
+
+    #[test]
+    fn output_parsed_a_slice_a_turn_ends_as_it_does_parsed_at_once() {
+        let app = with_one_space();
+        for (name, raw) in crate::term::corpus() {
+            let sliced = pumped(&app, &raw, Some(Instant::now()));
+            let whole = pumped(&app, &raw, None);
+            assert!(sliced == whole, "{name}");
+        }
+    }
+
+    #[test]
+    fn a_chunk_is_answered_once_after_its_last_slice() {
+        use std::io::Read;
+        let mut app = with_one_space();
+        let (ours, theirs) = std::os::unix::net::UnixStream::pair().unwrap();
+        let (pane, tx) = fed_pane(&app, 1, Some(std::fs::File::from(std::os::fd::OwnedFd::from(theirs))));
+        app.spaces[0].tabs[0].panes.insert(1, pane);
+        let chunk = [&b"\r\n"[..], &vec![b'x'; 3 * crate::term::SLICE], b"\x1b[6n"].concat();
+        let mut want = Term::new(80, 24, 100);
+        want.feed(&chunk);
+        let (row, col) = want.screen().cursor_position();
+        tx.send(chunk).unwrap();
+        let mut turns = 0;
+        while app.pump_pty(Duration::ZERO).1 {
+            turns += 1;
+        }
+        assert!(turns >= 3, "{turns} turns");
+        ours.set_read_timeout(Some(Duration::from_millis(300))).unwrap();
+        let mut got = Vec::new();
+        let mut b = [0u8; 64];
+        while let Ok(n) = (&ours).read(&mut b) {
+            got.extend_from_slice(&b[..n]);
+        }
+        assert_eq!(String::from_utf8_lossy(&got), format!("\x1b[{};{}R", row + 1, col + 1), "one answer, from after the whole chunk");
+    }
+
+    #[test]
+    fn an_update_that_ends_is_parsed_whole_beside_a_flood() {
+        let mut app = with_one_space();
+        let (flood, ftx) = fed_pane(&app, 1, None);
+        let (frame, tx) = fed_pane(&app, 2, None);
+        app.spaces[0].tabs[0].panes.insert(1, flood);
+        app.spaces[0].tabs[1].panes.insert(2, frame);
+        for _ in 0..crate::pty::QUEUE {
+            ftx.send(b"\x1b#8".repeat(2730)).unwrap();
+        }
+        let update = [&b"\x1b[?2026h"[..], &b"0123456789abcdef\r\n".repeat(40 * 1024 / 18), b"\x1b[?2026l"].concat();
+        for c in update.chunks(8192) {
+            tx.send(c.to_vec()).unwrap();
+        }
+        app.pump_pty(Duration::ZERO);
+        assert!(app.pane(2).unwrap().term.holding(), "the update is held while it lasts");
+        // The round that takes its end: the update is released and parsed in that same turn.
+        for _ in 0..8 {
+            app.pump_pty(Duration::ZERO);
+            if !app.pane(2).unwrap().term.holding() {
+                break;
+            }
+        }
+        let t = &app.pane(2).unwrap().term;
+        assert!(!t.holding() && !t.queued(), "the ended update was parsed whole in the turn that took its end");
+        assert!(t.screen().contents().contains("0123456789abcdef"));
+        assert!(app.pane(1).unwrap().term.queued(), "the flood still gave way after one slice");
+    }
+
+    /// S6: `cargo test --release --bin nerd -- --ignored --nocapture measure_rounds`.
+    #[test]
+    #[ignore]
+    fn measure_rounds() {
+        let mut app = with_one_space();
+        let mut keep = Vec::new();
+        for id in 1..=4 {
+            let (mut pane, tx) = fed_pane(&app, id, None);
+            pane.term = Term::new(600, 170, 1000);
+            for _ in 0..8 {
+                tx.send(b"\x1b#8".repeat(2730)).unwrap();
+            }
+            app.spaces[0].tabs[id % 2].panes.insert(id, pane);
+            keep.push(tx);
+        }
+        let frame = crate::term::corpus().into_iter().find(|(n, _)| n == "agent-wide").unwrap().1;
+        let (start, end) = (frame.windows(8).position(|w| w == b"\x1b[?2026h").unwrap(), frame.windows(8).position(|w| w == b"\x1b[?2026l").unwrap() + 8);
+        let (mut pane, tx) = fed_pane(&app, 5, None);
+        pane.term = Term::new(600, 170, 1000);
+        app.spaces[0].tabs[1].panes.insert(5, pane);
+        tx.send(frame[start..end].to_vec()).unwrap();
+        let (mut longest, mut rounds) = (Duration::ZERO, 0);
+        loop {
+            let t = Instant::now();
+            let (_, more) = app.pump_pty(PUMP_BUDGET);
+            longest = longest.max(t.elapsed());
+            rounds += 1;
+            if rounds == 1 {
+                println!("frame of {} bytes beside four DECALN floods: parsed whole in round 1: {}", end - start, !app.pane(5).unwrap().term.queued());
+            }
+            if !more {
+                break;
+            }
+        }
+        println!("four panes flooding DECALN at 600x170: {rounds} rounds, longest pump_pty {:.1} ms", longest.as_secs_f64() * 1e3);
+    }
+
+    #[test]
+    fn a_pane_whose_program_left_parses_its_flood_a_turn_at_a_time_then_closes() {
+        let mut app = with_one_space();
+        let (mut pane, tx) = fed_pane(&app, 1, None);
+        pane.argv = vec!["claude".into()];
+        app.spaces[0].tabs[0].panes.insert(1, pane);
+        for _ in 0..crate::pty::QUEUE {
+            tx.send(b"\x1b#8".repeat(2730)).unwrap();
+        }
+        app.exited((1, None));
+        let t0 = Instant::now();
+        app.pump_pty(Duration::ZERO);
+        assert!(!app.settle_exits_at(t0 + Duration::from_millis(150)), "past its wait, output still queued: it stays");
+        assert!(app.pane(1).unwrap().term.queued());
+        drop(tx);
+        while app.pump_pty(Duration::from_millis(50)).1 {}
+        assert!(app.settle_exits_at(t0 + Duration::from_millis(200)), "the reader ended and the queue drained");
+        assert!(app.pane(1).is_none());
+
+        let (mut pane, tx) = fed_pane(&app, 2, None);
+        pane.argv = vec!["claude".into()];
+        app.spaces[0].tabs[0].panes.insert(2, pane);
+        for _ in 0..crate::pty::QUEUE {
+            tx.send(b"\x1b#8".repeat(2730)).unwrap();
+        }
+        app.exited((2, None));
+        let t0 = Instant::now();
+        app.pump_pty(Duration::ZERO);
+        assert!(!app.settle_exits_at(t0 + Duration::from_millis(1900)));
+        assert!(app.settle_exits_at(t0 + Duration::from_millis(2100)), "2 s after the exit the rest goes");
+        assert!(app.pane(2).is_none());
     }
 
     #[test]
@@ -5184,7 +5374,7 @@ mod tests {
         app.spaces[0].tabs[0].panes.insert(1, pane);
         tx.send(b"ab\x1b[6n".to_vec()).unwrap();
         tx.send(b"\r\n\x1b[6n".to_vec()).unwrap();
-        app.pump_pty(Duration::ZERO);
+        while app.pump_pty(Duration::ZERO).1 {}
         ours.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
         let mut got = Vec::new();
         while got.len() < 12 {
@@ -5202,12 +5392,15 @@ mod tests {
         app.spaces[0].tabs[0].panes.insert(1, pane);
         tx.send(b"queued before the notice\r\n".to_vec()).unwrap();
         app.exited((1, None));
+        app.pump_pty(PUMP_BUDGET);
         assert!(!app.settle_exits(), "its reader is still there");
         tx.send(b"resume with: claude --resume x".to_vec()).unwrap();
+        app.pump_pty(PUMP_BUDGET);
         assert!(!app.settle_exits());
         let text = app.pane(1).unwrap().term.screen().contents();
         assert!(text.contains("queued before the notice") && text.contains("claude --resume x"), "{text}");
         drop(tx);
+        app.pump_pty(PUMP_BUDGET);
         assert!(app.settle_exits(), "the reader ended: the pane goes at once");
         assert!(app.pane(1).is_none());
 
@@ -5398,7 +5591,7 @@ mod tests {
             let mut first_drop = None;
             for i in 0..crate::pty::WRITES + 64 {
                 tx.send(b"\x1b[6n".repeat(2000)).unwrap();
-                app.pump_pty(Duration::ZERO);
+                while app.pump_pty(Duration::ZERO).1 {}
                 if first_drop.is_none() && log().contains("replies dropped") {
                     first_drop = Some(i);
                 }
