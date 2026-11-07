@@ -306,7 +306,7 @@ pub fn clean(text: &str) -> String {
 
 /// Format characters and line separators: invisible on screen, yet read by an agent. ZWNJ and ZWJ stay for scripts and emoji.
 // ceiling: a fixed list of Unicode's format characters; a general-category table would follow new Unicode versions.
-fn hidden(c: char) -> bool {
+pub(crate) fn hidden(c: char) -> bool {
     matches!(c, '\u{AD}' | '\u{600}'..='\u{605}' | '\u{61C}' | '\u{6DD}' | '\u{70F}' | '\u{180E}' | '\u{200B}' | '\u{200E}'..='\u{200F}' | '\u{2028}'..='\u{202E}' | '\u{2060}'..='\u{206F}' | '\u{FEFF}' | '\u{FFF9}'..='\u{FFFB}' | '\u{E0000}'..='\u{E007F}')
 }
 

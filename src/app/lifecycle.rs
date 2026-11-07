@@ -753,9 +753,12 @@ impl App {
     /// What git says about a folder, asked once when a space opens there, before any frame shows it.
     pub(super) fn learn_repo(&mut self, cwd: &std::path::Path) {
         if !self.repos.contains_key(cwd) {
-            let key = crate::git::group_key(cwd);
+            // git runs here on the loop: a HEAD that cannot be read as a small file (a FIFO a pane made) would hold it until git's timeout.
+            // ceiling: a FIFO elsewhere in .git (config) still holds the loop up to 10 s once per folder; asking on the git worker is the way past.
+            let branch = crate::chrome::git_branch(cwd);
+            let key = branch.as_ref().and_then(|_| crate::git::group_key(cwd));
             let main = key.is_some() && crate::git::is_main_checkout(cwd);
-            self.repos.insert(cwd.to_path_buf(), Repo { key, main, branch: crate::chrome::git_branch(cwd) });
+            self.repos.insert(cwd.to_path_buf(), Repo { key, main, branch });
         }
     }
 
