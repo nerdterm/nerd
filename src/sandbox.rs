@@ -15,6 +15,17 @@ pub const PROFILE: &str = concat!(
 unsafe extern "C" {
     fn sandbox_init(profile: *const c_char, flags: u64, errorbuf: *mut *mut c_char) -> c_int;
     fn sandbox_free_error(errorbuf: *mut c_char);
+    fn sandbox_check(pid: c_int, operation: *const c_char, filter: c_int, ...) -> c_int;
+}
+
+/// Whether this process's Seatbelt lets it write the existing `path`, asked without touching it; a missing path reads as refused.
+pub fn may_write(path: &std::path::Path) -> bool {
+    use std::os::unix::ffi::OsStrExt as _;
+    const SANDBOX_FILTER_PATH: c_int = 1;
+    const SANDBOX_CHECK_NO_REPORT: c_int = 0x4000_0000;
+    let Ok(path) = CString::new(path.as_os_str().as_bytes()) else { return false };
+    // SAFETY: both strings are NUL-terminated and outlive the call.
+    unsafe { sandbox_check(std::process::id() as c_int, c"file-write-data".as_ptr(), SANDBOX_FILTER_PATH | SANDBOX_CHECK_NO_REPORT, path.as_ptr()) == 0 }
 }
 
 pub fn apply() -> Result<(), String> {

@@ -32,10 +32,21 @@ try() {
     "$@" > /dev/null 2>&1 < /dev/null || r=$?
     echo "$what $r" >> results.log
 }
+# The exit code cannot tell a refused exec from a program that ran and failed; the shell's message can.
+exec_refused() {
+    what=$1
+    shift
+    e=$("$@" 2>&1 > /dev/null < /dev/null) || true
+    case $e in
+        *"$1: Operation not permitted"*) echo "$what refused" >> results.log ;;
+        *) echo "$what ran" >> results.log ;;
+    esac
+}
 probe() {
-    try open /usr/bin/open -a TextEdit
-    try launchctl /bin/launchctl submit -l "dev.nerd.probe.$$" -- /usr/bin/true
-    try osascript /usr/bin/osascript -e 'return 1'
+    # Arguments that start nothing even if exec were allowed.
+    exec_refused open /usr/bin/open
+    exec_refused launchctl /bin/launchctl version
+    exec_refused osascript /usr/bin/osascript -e 'return 1'
     try tcp /usr/bin/nc -z -w 2 1.1.1.1 80
     try main-socket /usr/bin/nc -w 2 -U "$main"
     try write-manifest /bin/sh -c "echo x >> '$here/plugin.json'"

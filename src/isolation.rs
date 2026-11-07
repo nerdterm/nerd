@@ -211,6 +211,21 @@ struct Places {
 }
 
 impl Places {
+    /// What a This-folder-only pane may not write: files, and folders with all they hold.
+    fn denied(&self) -> (Vec<PathBuf>, Vec<PathBuf>) {
+        let files = [self.exe.clone()].into_iter().chain(RUN_LATER.iter().map(|f| self.home.join(f))).chain(self.terminal_files.iter().cloned()).chain(self.hook_files.iter().cloned()).chain(self.agent.clone());
+        let dirs = [self.root.clone(), self.tmp.join("podman")].into_iter().chain(RUN_LATER_DIRS.iter().map(|d| self.home.join(d))).chain(self.terminal_dirs.iter().cloned()).chain(self.hook_dirs.iter().cloned());
+        (files.collect(), dirs.collect())
+    }
+
+    /// Agents' data folders that hold a denied place, made when missing and their folder is there: one moved in whole would bring what runs later.
+    fn make_agent_folders(&self) {
+        let (files, dirs) = self.denied();
+        for a in self.data.iter().filter(|a| !a.to_string_lossy().contains('*') && files.iter().chain(&dirs).any(|d| d != *a && d.starts_with(a))) {
+            let _ = std::fs::create_dir(a);
+        }
+    }
+
     fn here() -> Result<Places, String> {
         let home = crate::paths::home().unwrap_or_default();
         if !home.is_absolute() || home == Path::new("/") {
@@ -239,11 +254,15 @@ impl Places {
 /// Under HOME, run later by a shell, git, ssh, an editor, tmux, a package manager or toolchain from its cache, launchd or `defaults`, or ahead on PATH:
 /// never writable, even when the pane's folder is HOME itself.
 const RUN_LATER: &[&str] = &[".zshrc", ".zprofile", ".zshenv", ".zlogin", ".zlogout", ".bashrc", ".bash_profile", ".bash_login", ".bash_logout", ".profile", ".gitconfig", ".netrc", ".npmrc", ".cargo/config.toml", ".vimrc", ".tmux.conf", ".emacs", ".wezterm.lua"];
+// ceiling: a denylist, so a cache that runs code and is not named here stays writable; an allowlist of the agents' own caches under ~/Library/Caches is the way past.
 const RUN_LATER_DIRS: &[&str] = &[
     ".config/git", ".config/fish", "Library/LaunchAgents", ".ssh", ".aws", ".gnupg", ".docker", ".kube", ".azure", ".config/gh", ".config/gcloud", ".cargo/bin", ".local/bin",
     ".vim", ".config/nvim", ".config/tmux", ".emacs.d", "Library/Preferences", ".pyenv/shims", ".rbenv/shims", ".nvm", ".bun/bin", "go/bin", ".volta/bin", ".deno/bin", ".asdf/shims", ".local/share/nvim",
     "Library/Caches/pnpm", "Library/Caches/uv", "Library/Caches/deno", "Library/Caches/go-build", "Library/Caches/ms-playwright", "Library/Caches/pypoetry", "Library/Caches/Yarn", "Library/Caches/node-gyp",
     "Library/Caches/pip", "Library/Caches/Cypress", "Library/Caches/org.swift.swiftpm", "Library/Caches/copilot", "go/pkg/mod",
+    // The system Python's bytecode, Homebrew's downloads and bootsnap, compiler caches, downloaded build tools.
+    "Library/Caches/com.apple.python", "Library/Caches/Homebrew", "Library/Caches/ccache", "Library/Caches/Mozilla.sccache", "Library/Caches/esbuild",
+    "Library/Caches/bazelisk", "Library/Caches/Coursier",
     // Agents' own: sourced before each command, ahead on PATH, downloaded tools, git repos the agent runs git in, tasks other sessions take up.
     ".claude/shell-snapshots", ".claude/session-env", ".codex/shell_snapshots", ".codex/tmp", ".codex/.tmp", ".gemini/tmp/bin", ".gemini/history", ".local/share/opencode/snapshot", ".claude/tasks",
     // Terminals' configs, which start programs and which `nerd --preset` edits.
@@ -258,11 +277,27 @@ const UNREAD: &[&str] = &[".ssh", ".aws", ".gnupg", ".netrc", ".docker", ".kube"
 
 /// The pane's Seatbelt profile. An account pane passes `Everything` or `Account`: the account confines its files.
 pub fn profile(files: &Files, network: &Network, cwd: &Path, msock: &Path, port: Option<u16>) -> Result<String, String> {
-    text(&Places::here()?, files, network, cwd, msock, port)
+    let p = Places::here()?;
+    if *files == Files::Folder {
+        p.make_agent_folders();
+    }
+    text(&p, files, network, cwd, msock, port)
+}
+
+/// At hook install: the agent's folders a This-folder-only pane could otherwise move in whole.
+pub fn make_agent_folders(data: Vec<PathBuf>, home: &Path) {
+    if let Ok(p) = Places::here() {
+        Places { data, home: home.to_path_buf(), ..p }.make_agent_folders();
+    }
 }
 
 fn rules(kind: &str, ps: impl IntoIterator<Item = PathBuf>) -> Result<String, String> {
-    ps.into_iter().map(|p| quote(&canon(&p)).map(|s| format!(" ({kind} {s})"))).collect()
+    raw_rules(kind, ps.into_iter().map(|p| canon(&p)))
+}
+
+/// Paths as given: a link itself, not where it points.
+fn raw_rules(kind: &str, ps: impl IntoIterator<Item = PathBuf>) -> Result<String, String> {
+    ps.into_iter().map(|p| quote(&p).map(|s| format!(" ({kind} {s})"))).collect()
 }
 
 /// A data path as a rule: a subpath, or a regex when its last part has a `*` (`~/.copilot/session-store.db*`).
@@ -302,26 +337,67 @@ fn text(p: &Places, files: &Files, network: &Network, cwd: &Path, msock: &Path, 
         } else {
             String::new()
         };
-        // rules() resolves a linked nerd (Homebrew's) to its target; the link is kept too.
-        // ceiling: the keg folder above the target stays renamable from a pane whose folder holds it; deny the keg's subpath if that matters.
-        let link = match (p.exe.parent(), p.exe.file_name()) {
-            (Some(d), Some(n)) if canon(d).join(n) != canon(&p.exe) => format!(" (literal {})", quote(&canon(d).join(n))?),
-            _ => String::new(),
-        };
-        let literal = [p.exe.clone()].into_iter().chain(RUN_LATER.iter().map(|f| p.home.join(f))).chain(p.terminal_files.iter().cloned()).chain(p.hook_files.iter().cloned());
-        let dirs = [root.clone()].into_iter().chain(RUN_LATER_DIRS.iter().map(|d| p.home.join(d))).chain(p.terminal_dirs.iter().cloned()).chain(p.hook_dirs.iter().cloned());
+        let (literal, dirs) = p.denied();
+        // rules() resolves a link (Homebrew's nerd, a linked cache or dotfile folder) to its target; the link itself is denied too.
+        let raw = |a: &Path| a.parent().zip(a.file_name()).map(|(up, n)| canon(up).join(n));
+        let links: Vec<PathBuf> = p.roots.iter().chain(&dirs).chain(&literal).filter_map(|d| raw(d).filter(|r| *r != canon(d))).collect();
         // The door other accounts exec nerd from, Claude Code's message sockets, agents' memory (Claude, Qwen), Codex's databases shared by its sessions (queued prompts, remote control) and Qwen's workflow scripts a resume runs, which the owner's own sessions read.
-        let doors = format!(
-            " (regex #\"^/private/tmp/nerd-[0-9]+(/|$)\") (regex #\"^/private/tmp/cc-socks\") (regex #\"^{}/cc-socks\") (regex #\"^{esc}/\\.[^/]+/projects/[^/]+/memory(/|$)\") (regex #\"^{esc}/\\.codex/[^/]*\\.sqlite\") (regex #\"^{esc}/\\.qwen/projects/[^/]+/workflows(/|$)\")",
-            crate::plugins::regex_escape(&tmp.to_string_lossy())
-        );
+        let mut doors: Vec<(PathBuf, &[&str], &str)> = vec![
+            ("/private/tmp".into(), &["nerd-[0-9]+"], "(/|$)"),
+            ("/private/tmp".into(), &["cc-socks"], ""),
+            (tmp.clone(), &["cc-socks"], ""),
+            (home.clone(), &["\\.[^/]+", "projects", "[^/]+", "memory"], "(/|$)"),
+            (home.clone(), &["\\.codex", "[^/]*\\.sqlite"], ""),
+            (home.clone(), &["\\.qwen", "projects", "[^/]+", "workflows"], "(/|$)"),
+        ];
+        // A linked agent folder (Stow's ~/.claude) is allowed at its target, so the doors under HOME are denied there too.
+        let fits = |part: &str, name: &str| match part {
+            "[^/]+" => !name.is_empty(),
+            "\\.[^/]+" => name.len() > 1 && name.starts_with('.'),
+            _ => part == crate::plugins::regex_escape(name),
+        };
+        for r in p.roots.iter().chain(&p.data) {
+            let Ok(rel) = r.strip_prefix(&p.home) else { continue };
+            if canon(r) == home.join(rel) {
+                continue;
+            }
+            let names: Vec<String> = rel.iter().map(|n| n.to_string_lossy().into_owned()).collect();
+            for i in 3..6 {
+                let (_, parts, end) = doors[i];
+                if names.len() < parts.len() && names.iter().zip(parts).all(|(n, part)| fits(part, n)) {
+                    doors.push((canon(r), &parts[names.len()..], end));
+                }
+            }
+        }
+        let re = |base: &Path, parts: &[&str], end: &str| format!(" (regex #\"^{}/{}{end}\")", crate::plugins::regex_escape(&base.to_string_lossy()), parts.join("/"));
+        // Seatbelt checks a rename against the moved path, not its folder: every folder above a denied place keeps its name and gets no link put in its place.
+        let mut above = std::collections::BTreeSet::new();
+        for d in p.roots.iter().chain(&dirs).chain(&literal) {
+            above.extend(canon(d).ancestors().skip(1).map(Path::to_path_buf));
+            for a in d.ancestors().skip(1) {
+                above.extend(canon(a).ancestors().map(Path::to_path_buf));
+                above.extend(raw(a));
+            }
+        }
+        above.extend(doors.iter().flat_map(|(base, ..)| canon(base).ancestors().map(Path::to_path_buf).collect::<Vec<_>>()));
+        let door_parents: String = doors.iter().flat_map(|(base, parts, _)| (1..parts.len()).map(move |i| re(base, &parts[..i], "$"))).collect();
+        // Agents make their own folders, so only a link is refused there; the named ones are made at hook install and before each pane starts (make_agent_folders).
+        // ceiling: a missing `~/.<agent>/projects` or project folder in it can still be renamed in whole from a writable one, with memory or Qwen's workflow scripts inside: Seatbelt sees that as creating the folder; so can a named one deleted outside a pane, until the next pane starts.
+        // ceiling: only a place's own path and its first link are denied, so a chain whose middle link sits in a writable folder can be pointed elsewhere and a dangling denied link's future target stays writable; resolving each link in turn is the way past.
+        let data: Vec<PathBuf> = p.data.iter().map(|d| canon(d)).collect();
+        let (theirs, fixed): (Vec<PathBuf>, Vec<PathBuf>) = above.iter().cloned().partition(|a| data.iter().any(|d| a.starts_with(d)));
         out += &format!(
-            "(deny file-write*)\n(allow file-write*{} (regex #\"^/dev/\"))\n{dots}(deny file-write*{})\n(allow file-write*{})\n(deny file-write*{}{}{doors})\n(deny file-read-data{})\n",
+            "(deny file-write*)\n(allow file-write*{} (regex #\"^/dev/\"))\n{dots}(deny file-write*{})\n(allow file-write*{})\n(deny file-write*{}{}{})\n\
+             (deny file-write-unlink{}{door_parents})\n(deny file-write-create{})\n(deny file-write-create (require-all (vnode-type SYMLINK) (require-any{}{door_parents})))\n(deny file-read-data{})\n",
             rules("subpath", writes)?,
             rules("subpath", p.roots.iter().cloned())?,
             data_rules(&p.data)?,
             rules("subpath", dirs)?,
-            rules("literal", literal)? + &link,
+            rules("literal", literal)? + &raw_rules("literal", links)?,
+            doors.iter().map(|(base, parts, end)| re(base, parts, end)).collect::<String>(),
+            raw_rules("literal", above)?,
+            raw_rules("literal", fixed)?,
+            raw_rules("literal", theirs)?,
             rules("subpath", UNREAD.iter().map(|s| p.home.join(s)).chain([root.clone()]))?,
         );
     }
@@ -443,10 +519,8 @@ fn fail(why: impl std::fmt::Display) -> ! {
 /// The first data path that exists and cannot be written here.
 fn unwritable(data: &[PathBuf]) -> Option<&Path> {
     data.iter().map(PathBuf::as_path).find(|p| match std::fs::metadata(p) {
-        Ok(m) if m.is_dir() => {
-            let probe = p.join(format!(".nerd-write-check-{}", std::process::id()));
-            std::fs::OpenOptions::new().write(true).create_new(true).open(&probe).and_then(|_| std::fs::remove_file(&probe)).is_err()
-        }
+        // Asked, not tried: the profile may refuse removing a probe file made here, which would then stay.
+        Ok(m) if m.is_dir() => nix::unistd::access(*p, nix::unistd::AccessFlags::W_OK).is_err() || std::fs::canonicalize(p).is_ok_and(|c| !crate::sandbox::may_write(&c)),
         Ok(_) => std::fs::OpenOptions::new().append(true).open(p).is_err(),
         Err(_) => false,
     })
@@ -565,7 +639,7 @@ mod tests {
         let real = std::fs::canonicalize(env!("CARGO_MANIFEST_DIR")).unwrap();
         assert!(!["/private/tmp", "/private/var/folders"].iter().any(|t| real.starts_with(t)), "the isolation tests need the checkout outside the temp folders a pane may write, not in {}", real.display());
         let _ = std::fs::remove_dir_all(&d);
-        for sub in ["home/.claude/hooks", "home/.claude/projects", "home/.claude/skills", "home/.codex", "home/.copilot", "home/.gemini/tmp", "home/.qwen/projects", "home/.ssh", "home/Library/LaunchAgents", "home/.config/git", "state", "work"] {
+        for sub in ["home/.claude/hooks", "home/.claude/projects", "home/.claude/skills", "home/.codex", "home/.copilot", "home/.gemini/tmp", "home/.qwen/projects", "home/.ssh", "home/Library/Caches", "home/Library/LaunchAgents", "home/.config/git", "state", "work"] {
             std::fs::create_dir_all(d.join(sub)).unwrap();
         }
         std::fs::write(d.join("home/.ssh/id"), "secret").unwrap();
@@ -639,18 +713,34 @@ mod tests {
         };
         let m = Path::new("/Users/u/Library/Application Support/nerd/nerd.msock");
         let t = |f: Files, n: Network, port| text(&p, &f, &n, d, m, port).unwrap();
-        let folder = "(deny file-write*)\n(allow file-write* (subpath \"/Users/u/x\") (subpath \"/private/var/folders/ab/T\") (subpath \"/private/tmp\") (subpath \"/private/var/folders\") (subpath \"/Users/u/Library/Caches\") (regex #\"^/dev/\"))\n\
+        let above = ["/", "/Users", "/Users/u", "/Users/u/.1p", "/Users/u/.asdf", "/Users/u/.bun", "/Users/u/.cargo", "/Users/u/.claude", "/Users/u/.codex", "/Users/u/.config", "/Users/u/.deno", "/Users/u/.gemini"]
+            .into_iter()
+            .chain(["/Users/u/.gemini/tmp", "/Users/u/.local", "/Users/u/.local/bin", "/Users/u/.local/share", "/Users/u/.local/share/opencode", "/Users/u/.pyenv", "/Users/u/.rbenv", "/Users/u/.volta", "/Users/u/Library"])
+            .chain(["/Users/u/Library/Application Support", "/Users/u/Library/Application Support/iTerm2", "/Users/u/Library/Caches", "/Users/u/go", "/Users/u/go/pkg"])
+            .chain(["/private", "/private/tmp", "/private/var", "/private/var/folders", "/private/var/folders/ab", "/private/var/folders/ab/T"])
+            .map(|a| format!("(literal \"{a}\")"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let parents = ["\\.[^/]+", "\\.[^/]+/projects", "\\.[^/]+/projects/[^/]+", "\\.codex", "\\.qwen", "\\.qwen/projects", "\\.qwen/projects/[^/]+"].map(|r| format!("(regex #\"^/Users/u/{r}$\")")).join(" ");
+        let folder = &format!(
+            "(deny file-write*)\n(allow file-write* (subpath \"/Users/u/x\") (subpath \"/private/var/folders/ab/T\") (subpath \"/private/tmp\") (subpath \"/private/var/folders\") (subpath \"/Users/u/Library/Caches\") (regex #\"^/dev/\"))\n\
              (deny file-write* (subpath \"/Users/u/.claude.json\") (subpath \"/Users/u/.claude\"))\n\
              (allow file-write* (subpath \"/Users/u/.claude/projects\") (regex #\"^/Users/u/\\.codex/[^/]*\\.sqlite[^/]*$\"))\n\
-             (deny file-write* (subpath \"/Users/u/Library/Application Support/nerd\") (subpath \"/Users/u/.config/git\") (subpath \"/Users/u/.config/fish\") (subpath \"/Users/u/Library/LaunchAgents\") (subpath \"/Users/u/.ssh\") (subpath \"/Users/u/.aws\") (subpath \"/Users/u/.gnupg\") (subpath \"/Users/u/.docker\") (subpath \"/Users/u/.kube\") (subpath \"/Users/u/.azure\") (subpath \"/Users/u/.config/gh\") (subpath \"/Users/u/.config/gcloud\") (subpath \"/Users/u/.cargo/bin\") (subpath \"/Users/u/.local/bin\") \
+             (deny file-write* (subpath \"/Users/u/Library/Application Support/nerd\") (subpath \"/private/var/folders/ab/T/podman\") (subpath \"/Users/u/.config/git\") (subpath \"/Users/u/.config/fish\") (subpath \"/Users/u/Library/LaunchAgents\") (subpath \"/Users/u/.ssh\") (subpath \"/Users/u/.aws\") (subpath \"/Users/u/.gnupg\") (subpath \"/Users/u/.docker\") (subpath \"/Users/u/.kube\") (subpath \"/Users/u/.azure\") (subpath \"/Users/u/.config/gh\") (subpath \"/Users/u/.config/gcloud\") (subpath \"/Users/u/.cargo/bin\") (subpath \"/Users/u/.local/bin\") \
              (subpath \"/Users/u/.vim\") (subpath \"/Users/u/.config/nvim\") (subpath \"/Users/u/.config/tmux\") (subpath \"/Users/u/.emacs.d\") (subpath \"/Users/u/Library/Preferences\") (subpath \"/Users/u/.pyenv/shims\") (subpath \"/Users/u/.rbenv/shims\") (subpath \"/Users/u/.nvm\") (subpath \"/Users/u/.bun/bin\") (subpath \"/Users/u/go/bin\") (subpath \"/Users/u/.volta/bin\") (subpath \"/Users/u/.deno/bin\") (subpath \"/Users/u/.asdf/shims\") (subpath \"/Users/u/.local/share/nvim\") \
              (subpath \"/Users/u/Library/Caches/pnpm\") (subpath \"/Users/u/Library/Caches/uv\") (subpath \"/Users/u/Library/Caches/deno\") (subpath \"/Users/u/Library/Caches/go-build\") (subpath \"/Users/u/Library/Caches/ms-playwright\") (subpath \"/Users/u/Library/Caches/pypoetry\") (subpath \"/Users/u/Library/Caches/Yarn\") (subpath \"/Users/u/Library/Caches/node-gyp\") \
              (subpath \"/Users/u/Library/Caches/pip\") (subpath \"/Users/u/Library/Caches/Cypress\") (subpath \"/Users/u/Library/Caches/org.swift.swiftpm\") (subpath \"/Users/u/Library/Caches/copilot\") (subpath \"/Users/u/go/pkg/mod\") \
+             (subpath \"/Users/u/Library/Caches/com.apple.python\") (subpath \"/Users/u/Library/Caches/Homebrew\") (subpath \"/Users/u/Library/Caches/ccache\") (subpath \"/Users/u/Library/Caches/Mozilla.sccache\") (subpath \"/Users/u/Library/Caches/esbuild\") \
+             (subpath \"/Users/u/Library/Caches/bazelisk\") (subpath \"/Users/u/Library/Caches/Coursier\") \
              (subpath \"/Users/u/.claude/shell-snapshots\") (subpath \"/Users/u/.claude/session-env\") (subpath \"/Users/u/.codex/shell_snapshots\") (subpath \"/Users/u/.codex/tmp\") (subpath \"/Users/u/.codex/.tmp\") (subpath \"/Users/u/.gemini/tmp/bin\") (subpath \"/Users/u/.gemini/history\") (subpath \"/Users/u/.local/share/opencode/snapshot\") (subpath \"/Users/u/.claude/tasks\") \
              (subpath \"/Users/u/.config/ghostty\") (subpath \"/Users/u/Library/Application Support/com.mitchellh.ghostty\") (subpath \"/Users/u/.config/kitty\") (subpath \"/Users/u/.config/wezterm\") (subpath \"/Users/u/Library/Application Support/iTerm2/DynamicProfiles\") (subpath \"/Users/u/.claude/hooks\") \
-             (literal \"/Users/u/.local/bin/nerd\") (literal \"/Users/u/.zshrc\") (literal \"/Users/u/.zprofile\") (literal \"/Users/u/.zshenv\") (literal \"/Users/u/.zlogin\") (literal \"/Users/u/.zlogout\") (literal \"/Users/u/.bashrc\") (literal \"/Users/u/.bash_profile\") (literal \"/Users/u/.bash_login\") (literal \"/Users/u/.bash_logout\") (literal \"/Users/u/.profile\") (literal \"/Users/u/.gitconfig\") (literal \"/Users/u/.netrc\") (literal \"/Users/u/.npmrc\") (literal \"/Users/u/.cargo/config.toml\") (literal \"/Users/u/.vimrc\") (literal \"/Users/u/.tmux.conf\") (literal \"/Users/u/.emacs\") (literal \"/Users/u/.wezterm.lua\") (literal \"/Users/u/.claude/settings.json\") \
+             (literal \"/Users/u/.local/bin/nerd\") (literal \"/Users/u/.zshrc\") (literal \"/Users/u/.zprofile\") (literal \"/Users/u/.zshenv\") (literal \"/Users/u/.zlogin\") (literal \"/Users/u/.zlogout\") (literal \"/Users/u/.bashrc\") (literal \"/Users/u/.bash_profile\") (literal \"/Users/u/.bash_login\") (literal \"/Users/u/.bash_logout\") (literal \"/Users/u/.profile\") (literal \"/Users/u/.gitconfig\") (literal \"/Users/u/.netrc\") (literal \"/Users/u/.npmrc\") (literal \"/Users/u/.cargo/config.toml\") (literal \"/Users/u/.vimrc\") (literal \"/Users/u/.tmux.conf\") (literal \"/Users/u/.emacs\") (literal \"/Users/u/.wezterm.lua\") (literal \"/Users/u/.claude/settings.json\") (literal \"/Users/u/.1p/agent.sock\") \
              (regex #\"^/private/tmp/nerd-[0-9]+(/|$)\") (regex #\"^/private/tmp/cc-socks\") (regex #\"^/private/var/folders/ab/T/cc-socks\") (regex #\"^/Users/u/\\.[^/]+/projects/[^/]+/memory(/|$)\") (regex #\"^/Users/u/\\.codex/[^/]*\\.sqlite\") (regex #\"^/Users/u/\\.qwen/projects/[^/]+/workflows(/|$)\"))\n\
-             (deny file-read-data (subpath \"/Users/u/.ssh\") (subpath \"/Users/u/.aws\") (subpath \"/Users/u/.gnupg\") (subpath \"/Users/u/.netrc\") (subpath \"/Users/u/.docker\") (subpath \"/Users/u/.kube\") (subpath \"/Users/u/.azure\") (subpath \"/Users/u/.config/gh\") (subpath \"/Users/u/.config/gcloud\") (subpath \"/Users/u/Library/Mail\") (subpath \"/Users/u/Library/Messages\") (subpath \"/Users/u/Library/Cookies\") (subpath \"/Users/u/Library/Application Support/nerd\"))\n";
+             (deny file-write-unlink {above} {parents})\n\
+             (deny file-write-create {above})\n\
+             (deny file-write-create (require-all (vnode-type SYMLINK) (require-any {parents})))\n\
+             (deny file-read-data (subpath \"/Users/u/.ssh\") (subpath \"/Users/u/.aws\") (subpath \"/Users/u/.gnupg\") (subpath \"/Users/u/.netrc\") (subpath \"/Users/u/.docker\") (subpath \"/Users/u/.kube\") (subpath \"/Users/u/.azure\") (subpath \"/Users/u/.config/gh\") (subpath \"/Users/u/.config/gcloud\") (subpath \"/Users/u/Library/Mail\") (subpath \"/Users/u/Library/Messages\") (subpath \"/Users/u/Library/Cookies\") (subpath \"/Users/u/Library/Application Support/nerd\"))\n"
+        );
         let head = "(version 1)\n(allow default)\n";
         let msock = "(allow network-outbound (literal \"/Users/u/Library/Application Support/nerd/nerd.msock\"))\n";
         let closed = |local: &str| format!("(deny network*)\n(allow network-bind network-inbound (local unix-socket))\n{msock}(allow network-outbound (remote ip \"localhost:{local}\"))\n");
@@ -960,6 +1050,58 @@ mod tests {
     }
 
     #[test]
+    fn folder_only_cannot_replace_a_linked_denied_place_a_linked_folder_above_one_nor_move_podmans_folder() {
+        let d = scratch("links");
+        let home = d.join("home");
+        for (target, link) in [("ext/pnpm", "home/Library/Caches/pnpm"), ("home/src/go/bin", "")] {
+            std::fs::create_dir_all(d.join(target)).unwrap();
+            if !link.is_empty() {
+                std::os::unix::fs::symlink(d.join(target), d.join(link)).unwrap();
+            }
+        }
+        std::os::unix::fs::symlink(home.join("src/go"), home.join("go")).unwrap();
+        std::fs::create_dir_all(d.join("tmp/podman")).unwrap();
+        for (cwd, what, script) in [
+            (d.join("work"), "a linked denied cache", "rm Library/Caches/pnpm && mkdir -p Library/Caches/pnpm && echo x > Library/Caches/pnpm/x"),
+            (home.clone(), "a linked folder above a denied one", "rm go && mkdir -p go/bin && echo x > go/bin/x"),
+            (d.join("work"), "podman's folder in the temp folder", "mv ../tmp/podman ../tmp/moved"),
+        ] {
+            let profile = text(&places(&d), &Files::Folder, &Network::None, &cwd, Path::new("/tmp/none.msock"), None).unwrap();
+            let Some(rc) = sandboxed(&profile, &format!("cd '{}' && {script}", home.display())) else { return };
+            assert_ne!(rc, 0, "{what}");
+        }
+        assert!(std::fs::symlink_metadata(home.join("Library/Caches/pnpm")).unwrap().is_symlink() && std::fs::symlink_metadata(home.join("go")).unwrap().is_symlink());
+        assert!(d.join("tmp/podman").is_dir());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn folder_only_keeps_memory_and_workflows_in_a_linked_agent_folder() {
+        for (name, linked) in [("stow", ".claude"), ("sync", ".claude/projects")] {
+            let d = scratch(name);
+            let home = d.join("home");
+            for (dir, target) in [(linked, "dotfiles/claude"), (".qwen", "dotfiles/qwen")] {
+                std::fs::remove_dir_all(home.join(dir)).unwrap();
+                std::fs::create_dir_all(d.join(target).join(if dir == ".claude" || dir == ".qwen" { "projects/p" } else { "p" })).unwrap();
+                std::os::unix::fs::symlink(d.join(target), home.join(dir)).unwrap();
+            }
+            let profile = text(&places(&d), &Files::Folder, &Network::None, &d.join("work"), Path::new("/tmp/none.msock"), None).unwrap();
+            let run = |script: String| sandboxed(&profile, &script);
+            let Some(rc) = run(format!("echo s > '{}'", home.join(".claude/projects/p/s.jsonl").display())) else { return };
+            assert_eq!(rc, 0, "a session file, {linked} linked");
+            for (what, script) in [
+                ("memory", format!("mkdir -p '{0}' && echo x > '{0}/M'", home.join(".claude/projects/p/memory").display())),
+                ("Qwen's workflows", format!("mkdir -p '{0}' && echo x > '{0}/x.js'", home.join(".qwen/projects/p/workflows").display())),
+                ("the project folder", format!("mv '{}' '{}'", home.join(".claude/projects/p").display(), d.join("work/moved").display())),
+            ] {
+                assert_ne!(run(script), Some(0), "{what}, {linked} linked");
+            }
+            assert!(home.join(".claude/projects/p").is_dir());
+            let _ = std::fs::remove_dir_all(&d);
+        }
+    }
+
+    #[test]
     fn folder_only_keeps_agents_settings_and_what_runs_later_even_when_the_folder_is_home() {
         let d = scratch("roots");
         let home = d.join("home");
@@ -1024,6 +1166,13 @@ mod tests {
                 "Library/Caches/Cypress/x/Cypress.app/y",
                 "Library/Caches/org.swift.swiftpm/repositories/x/HEAD",
                 "Library/Caches/copilot/pkg/x/index.js",
+                "Library/Caches/com.apple.python/usr/lib/python3.9/__pycache__/os.cpython-39.pyc",
+                "Library/Caches/Homebrew/bootsnap/x",
+                "Library/Caches/ccache/a/b/x.o",
+                "Library/Caches/Mozilla.sccache/a/b/x",
+                "Library/Caches/esbuild/bin/esbuild",
+                "Library/Caches/bazelisk/downloads/x/bin/bazel",
+                "Library/Caches/Coursier/v1/https/x.jar",
                 ".claude/projects/p/memory/MEMORY.md",
                 ".claude/projects/p/memory",
                 "Library/Caches/PNPM/store/x",
@@ -1053,6 +1202,11 @@ mod tests {
             assert_ne!(write(Path::new("/tmp/cc-socks-nt-s5/x")), Some(0), "Claude Code's sockets, cwd {cwd:?}");
             assert_eq!(write(&std::env::temp_dir().join(format!("nt-s5-{}", std::process::id()))), Some(0), "the temp folder stays writable");
             if cwd == home {
+                std::fs::create_dir_all(home.join("staged/bin")).unwrap();
+                let mv = |from: &str, to: &str| sandboxed(&profile, &format!("/bin/mv '{}' '{}'", home.join(from).display(), home.join(to).display()));
+                assert_ne!(mv("staged", "go"), Some(0), "a folder put in whole where a missing one above a denied one goes");
+                assert_ne!(mv("Library/Caches", "moved"), Some(0), "a folder above a denied one keeps its name");
+                assert!(!home.join("go").exists() && home.join("Library/Caches").is_dir());
                 assert_eq!(write(&home.join("notes.txt")), Some(0), "the rest of a home folder chosen as the pane's");
                 assert_eq!(write(&home.join("Documents/x.txt")), Some(0), "a folder of the owner's files");
                 for no in [

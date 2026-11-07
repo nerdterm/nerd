@@ -2734,7 +2734,10 @@ fn a_plugin_hears_only_what_it_subscribed_to_cannot_leave_its_sandbox_and_dies_w
     assert!(events.contains("\"id\":\"probe\"") && !events.contains("pane_opened"), "{events}");
 
     let rc = |what: &str| read(&results).lines().find_map(|l| l.strip_prefix(&format!("{what} "))?.parse::<i32>().ok());
-    for what in ["open", "launchctl", "osascript", "tcp", "main-socket", "write-manifest", "write-outside", "read-ssh", "read-fish", "read-zsh-new", "read-link", "read-session", "list-root", "read-other"] {
+    for what in ["open", "launchctl", "osascript"] {
+        assert!(read(&results).lines().any(|l| l == format!("{what} refused")), "{what} was not refused at exec: {}", read(&results));
+    }
+    for what in ["tcp", "main-socket", "write-manifest", "write-outside", "read-ssh", "read-fish", "read-zsh-new", "read-link", "read-session", "list-root", "read-other"] {
         assert!(rc(what).is_some_and(|r| r != 0), "{what} went through: {}", read(&results));
     }
     for what in ["write-data", "read-own", "read-home"] {
@@ -2743,8 +2746,6 @@ fn a_plugin_hears_only_what_it_subscribed_to_cannot_leave_its_sandbox_and_dies_w
     assert_eq!(read(&data.join("fd3")), "closed\n", "it inherited the broker's socket");
     assert_eq!(read(&env.dir.join("plugins/probe/plugin.json")), manifest);
     assert!(!env.dir.join("outside").exists());
-    let listed = Command::new("/bin/launchctl").arg("list").output().unwrap();
-    assert!(!String::from_utf8_lossy(&listed.stdout).contains("dev.nerd.probe."), "launchd took a job from it");
     assert!(daemon_log(&env).contains("plugin probe: report for pane 1 refused"), "a pane without its agent: {}", daemon_log(&env));
     assert_eq!(read(&data.join("again.out")), "refused: plugin \"probe\" is already connected\n", "a second Connect, answered and closed");
     // Its detached grandchild: only Connect on the plugin socket, and the main socket out of reach.
