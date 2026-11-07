@@ -301,9 +301,13 @@ pub(crate) fn cut_cells(s: &str, max: usize) -> String {
     if cells(s) as usize <= max {
         return s.to_string();
     }
+    if max == 0 {
+        return String::new();
+    }
     let mut out = String::new();
     // The whole string is measured: a sequence such as ☺ + U+FE0F is wider than its characters' widths added up.
-    for c in s.chars() {
+    // A cap on the characters looked at keeps a run of zero-width ones from making this quadratic.
+    for c in s.chars().take(4 * max + 8) {
         out.push(c);
         if cells(&out) as usize + 1 > max {
             out.pop();
@@ -641,6 +645,10 @@ pub(crate) mod tests {
         let mut buf = Buffer::empty(area);
         assert_eq!(draw_tabs_keeping(&mut buf, area, &tabs, false, &theme, 10, true).0.len(), 3);
         assert_eq!(cut_cells("日本語のタイトル", 6), "日本…", "a wide character counts two");
+        assert_eq!(cut_cells("abc", 0), "", "no room, nothing");
+        let marks = format!("ab{}cdef", "\u{301}".repeat(200_000));
+        let started = std::time::Instant::now();
+        assert!(cells(&cut_cells(&marks, 3)) <= 3 && started.elapsed() < std::time::Duration::from_millis(500), "a run of combining marks is cut fast");
     }
 
     #[test]
