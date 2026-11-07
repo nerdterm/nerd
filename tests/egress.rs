@@ -35,7 +35,7 @@ const ALLOW: &[(&str, &str, &str, &str, &str, &str)] = &[
     ("src/isolation.rs", "pane_exec_main", "syscall", "nix :: unistd :: fork", "pane-network", "forks the pane's program off its proxy when the pane may reach only its providers"),
     ("src/proxy.rs", "relay", "socket", "TcpStream", "plugin-network", "copies a tunnel's bytes"),
     // link: a link or a file you open.
-    ("src/links.rs", "open_command", "spawn", "\"open\"", "link", "opens a link or a file in its app"),
+    ("src/links.rs", "open_command", "spawn", "\"/usr/bin/open\"", "link", "opens a link or a file in its app"),
     // clipboard: you copy.
     ("src/select.rs", "copy", "spawn", "\"pbcopy\"", "clipboard", "puts the copied text on the macOS clipboard"),
     // pane: programs in panes are yours; these are the doors nerd opens into them.

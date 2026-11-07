@@ -8,6 +8,8 @@ use std::time::{Duration, Instant};
 struct Pane {
     dir: PathBuf,
     socks: PathBuf,
+    /// A Folder pane's own tmux folder, which its wrapper makes: `$TMPDIR/nm<wrapper pid>`.
+    mux: Option<PathBuf>,
     wrapper: Child,
     /// A stand-in nerd.sock and msock, bound before the pane starts: a refusal is the profile's, not a missing file.
     _listeners: [std::os::unix::net::UnixListener; 2],
@@ -67,7 +69,8 @@ impl Pane {
             .stderr(std::fs::File::create(dir.join("stderr")).unwrap())
             .spawn()
             .unwrap();
-        Pane { dir, socks, wrapper, _listeners }
+        let mux = flags.contains(&"folder").then(|| std::env::temp_dir().join(format!("nm{}", wrapper.id())));
+        Pane { dir, socks, mux, wrapper, _listeners }
     }
 
     fn wait_for(&self, file: &str) -> String {
@@ -109,6 +112,9 @@ impl Drop for Pane {
         let _ = self.wrapper.wait();
         let _ = std::fs::remove_dir_all(&self.dir);
         let _ = std::fs::remove_dir_all(&self.socks);
+        if let Some(m) = &self.mux {
+            let _ = std::fs::remove_dir_all(m);
+        }
     }
 }
 
@@ -257,4 +263,105 @@ fn a_shared_door_that_is_not_nerds_own_starts_nothing() {
     assert_eq!(out.status.code(), Some(1));
     assert_eq!(String::from_utf8_lossy(&out.stderr), format!("nerd: /tmp/nerd-{} is not nerd's own; this pane does not start\n", u32::MAX - 7));
     assert!(!Path::new("/tmp/never").exists());
+}
+
+/// Removed when the test ends, failed or not.
+struct Gone(PathBuf);
+
+impl Drop for Gone {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+#[test]
+fn a_folder_pane_with_open_network_has_a_tmux_folder_of_its_own() {
+    // Another pane's folder: digits only, as the pattern denies, and longer than any real pid.
+    let other = Gone(std::env::temp_dir().join(format!("nm{}{}", u32::MAX, std::process::id())));
+    std::fs::create_dir_all(&other.0).unwrap();
+    let _l = std::os::unix::net::UnixListener::bind(other.0.join("s")).unwrap();
+    let script = format!(
+        "echo $$ > pid\n\
+         if [ \"$TMUX_TMPDIR\" = \"${{TMPDIR%/}}/nm$$\" ] && [ \"$ZELLIJ_SOCKET_DIR\" = \"$TMUX_TMPDIR\" ] && [ \"$SCREENDIR\" = \"$TMUX_TMPDIR/s\" ]; then echo vars; else echo \"novars $TMUX_TMPDIR $ZELLIJ_SOCKET_DIR $SCREENDIR\"; fi > out\n\
+         ls -ld \"$TMUX_TMPDIR\" | cut -c1-10 >> out\n\
+         ls -ld \"$SCREENDIR\" | cut -c1-10 >> out\n\
+         /usr/bin/perl -MIO::Socket::UNIX -e '$l = IO::Socket::UNIX->new(Local => $ARGV[0], Listen => 1) or exit 1; IO::Socket::UNIX->new(Peer => $ARGV[0]) or exit 2' \"$TMUX_TMPDIR/x\"; echo \"own $?\" >> out\n\
+         {CONNECT} \"$3/s\"; echo \"other $?\" >> out\n\
+         echo x 2>/dev/null > \"$3/w\"; echo \"other-write $?\" >> out\n\
+         echo > done\n"
+    );
+    let pane = Pane::start("mux-open", &["--files", "folder", "--network", "open"], &script, &[other.0.to_str().unwrap()]);
+    pane.wait_for("done");
+    assert_eq!(pane.wait_for("out"), "vars\ndrwx------\ndrwx------\nown 0\nother 1\nother-write 1\n", "stderr: {}", pane.read("stderr"));
+    assert!(!other.0.join("w").exists());
+}
+
+#[test]
+fn a_providers_folder_pane_names_its_tmux_folder_in_the_parent() {
+    let script = "echo \"$TMUX_TMPDIR\" > out\n\
+         ls -ld \"$TMUX_TMPDIR\" | cut -c1-10 >> out\n\
+         echo x > \"$TMUX_TMPDIR/x\"; echo \"w $?\" >> out\n\
+         echo > done\n";
+    let pane = Pane::start("mux-provider", &["--files", "folder", "--network", "provider", "--hosts", "example.com;443"], script, &[]);
+    pane.wait_for("done");
+    let out = pane.wait_for("out");
+    let mux = pane.mux.as_ref().unwrap().display().to_string();
+    assert_eq!(out, format!("{mux}\ndrwx------\nw 0\n"), "named from the proxy's pid, before the fork; stderr: {}", pane.read("stderr"));
+}
+
+unsafe extern "C" {
+    fn sandbox_check(pid: nix::libc::pid_t, operation: *const std::ffi::c_char, kind: std::ffi::c_int, ...) -> std::ffi::c_int;
+}
+
+/// `sandboxed lsopen job-creation appleevent-send user-preference-write shortcuts-xpc shortcuts-runner siriactionsd denied-file allowed-file` as this process's sandbox answers them; only asks, launches nothing.
+fn launch_checks(denied: &Path, allowed: &Path) -> String {
+    use std::os::unix::ffi::OsStrExt as _;
+    const NO_REPORT: std::ffi::c_int = 0x4000_0000;
+    let pid = std::process::id() as nix::libc::pid_t;
+    // SAFETY: sandbox_check reads only the NUL-terminated strings passed, which outlive each call.
+    let mut got = vec![unsafe { sandbox_check(pid, std::ptr::null(), 0) }];
+    for op in [c"lsopen", c"job-creation", c"appleevent-send", c"user-preference-write"] {
+        got.push(unsafe { sandbox_check(pid, op.as_ptr(), NO_REPORT) });
+    }
+    for name in [c"com.apple.siri.VoiceShortcuts.xpc", c"com.apple.shortcuts.systemshortcutservice.runner", c"com.apple.siriactionsd.xpc"] {
+        got.push(unsafe { sandbox_check(pid, c"mach-lookup".as_ptr(), 2 | NO_REPORT, name.as_ptr()) });
+    }
+    for f in [denied, allowed] {
+        let path = std::ffi::CString::new(f.as_os_str().as_bytes()).unwrap();
+        got.push(unsafe { sandbox_check(pid, c"file-write-data".as_ptr(), 1 | NO_REPORT, path.as_ptr()) });
+    }
+    got.iter().map(i32::to_string).collect::<Vec<_>>().join(" ")
+}
+
+/// Run by a pane (below) as this test binary: writes the pane's own `launch_checks` to `$NERD_LAUNCH_PROBE`.
+#[test]
+fn launch_probe_helper() {
+    let Some(out) = std::env::var_os("NERD_LAUNCH_PROBE").map(PathBuf::from) else { return };
+    let work = out.parent().unwrap();
+    std::fs::write(work.join("allowed"), "").unwrap();
+    std::fs::write(&out, launch_checks(&work.parent().unwrap().join("pane.sh"), &work.join("allowed")) + "\n").unwrap();
+}
+
+/// The pane's line, then this process's own on the same files, which exist by then.
+fn launch_lines(name: &str, flags: &[&str]) -> (String, String) {
+    let exe = std::env::current_exe().unwrap();
+    let script = "NERD_LAUNCH_PROBE=$PWD/probe \"$3\" --exact launch_probe_helper --nocapture >/dev/null 2>&1\n";
+    let pane = Pane::start(name, flags, script, &[exe.to_str().unwrap()]);
+    let probe = pane.wait_for("probe");
+    (probe.trim_end().to_string(), launch_checks(&pane.dir.join("pane.sh"), &pane.dir.join("work/allowed")))
+}
+
+#[test]
+fn launching_is_refused_in_a_folder_pane() {
+    let (pane, own) = launch_lines("launch-folder", &["--files", "folder", "--network", "none"]);
+    // job-creation reads 1 under any Seatbelt profile, so its deny cannot be told from its absence here; the profile text test pins it.
+    assert_eq!(pane, "1 1 1 1 1 1 1 1 1 0", "sandboxed lsopen job-creation appleevent-send user-preference-write shortcuts-xpc shortcuts-runner siriactionsd denied-file allowed-file");
+    assert_eq!(own, "0 0 0 0 0 0 0 0 0 0", "this test process is not under Seatbelt, so the pane's answers are its profile's");
+}
+
+#[test]
+fn an_account_pane_with_open_network_has_no_profile() {
+    let (pane, own) = launch_lines("launch-account", &["--files", "everything", "--network", "open"]);
+    assert_eq!(pane, "0 0 0 0 0 0 0 0 0 0", "no Seatbelt profile: setuid programs and an agent's own sandbox keep working");
+    assert_eq!(own, "0 0 0 0 0 0 0 0 0 0");
 }

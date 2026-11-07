@@ -3033,7 +3033,9 @@ mod tests {
             let own = "Claude Code: turn /sandbox off; nerd's limits already cover the whole agent";
             std::fs::write(long.join("plugin.json"), serde_json::json!({ "name": "long", "title": "a".repeat(76 - 14), "agent": { "names": ["long"], "own_sandbox": own } }).to_string()).unwrap();
             crate::agents::reload();
-            let Overlay::Isolation(w) = with_one_space().isolation_overlay(IsolationTarget::Space(0)) else { panic!("it opens") };
+            let Overlay::Isolation(mut w) = with_one_space().isolation_overlay(IsolationTarget::Space(0)) else { panic!("it opens") };
+            // Notes show only for a pick with a profile.
+            w.pick = Some(crate::policy::Isolation { files: crate::policy::Files::Folder, network: crate::policy::Network::None });
             let rows = crate::messages::wrap(w.lines(&crate::render::Theme::dark()), 76);
             let text: Vec<String> = rows.iter().map(|l| l.iter().map(|s| s.0.as_str()).collect()).collect();
             assert_eq!(text.iter().filter(|l| l.starts_with("Claude Code:")).count(), 1, "only the built-in's note starts a line so: {text:#?}");

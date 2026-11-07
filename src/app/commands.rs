@@ -1801,18 +1801,18 @@ impl App {
         // wrapped or not, starts where a built-in's does.
         let notes = agents.iter().filter_map(|m| Some(format!("{}{}: {}", if m.builtin { String::new() } else { format!("  plugin {}: ", m.name) }, m.title, m.agent.own_sandbox.as_ref()?))).collect();
         let accounts = crate::policy::current().accounts.iter().map(|a| a.name.clone()).collect();
-        let (about, mut pick, inherit, agent, folder) = match target {
+        let (about, mut pick, inherit, inherited, agent, folder) = match target {
             IsolationTarget::Pane(id) => {
                 let Some(p) = self.pane(id) else { return Overlay::None };
-                (p.label(), Some(p.isolation.clone()), None, p.agent.clone().or_else(|| p.agent_session.as_ref().map(|s| s.0.clone())), p.cwd.clone())
+                (p.label(), Some(p.isolation.clone()), None, Default::default(), p.agent.clone().or_else(|| p.agent_session.as_ref().map(|s| s.0.clone())), p.cwd.clone())
             }
             IsolationTarget::Tab(si, ti) => {
                 let Some((sp, t)) = self.spaces.get(si).and_then(|sp| Some((sp, sp.tabs.get(ti)?))) else { return Overlay::None };
-                (format!("new panes in tab {}/{}", sp.label(), t.label(ti)), t.isolation_new.clone(), Some("as the space"), None, sp.cwd.clone())
+                (format!("new panes in tab {}/{}", sp.label(), t.label(ti)), t.isolation_new.clone(), Some("as the space"), sp.isolation_new.clone().unwrap_or_default(), None, sp.cwd.clone())
             }
             IsolationTarget::Space(si) => {
                 let Some(sp) = self.spaces.get(si) else { return Overlay::None };
-                (format!("new panes in space {}", sp.label()), sp.isolation_new.clone(), Some("as nerd's default"), None, sp.cwd.clone())
+                (format!("new panes in space {}", sp.label()), sp.isolation_new.clone(), Some("as nerd's default"), Default::default(), None, sp.cwd.clone())
             }
         };
         let canon = |p: &std::path::Path| std::fs::canonicalize(p).ok();
@@ -1826,7 +1826,7 @@ impl App {
         if let Some(crate::policy::Isolation { network: crate::policy::Network::Providers(p), .. }) = pick.as_mut() {
             *p = crate::policy::entries(&chosen);
         }
-        Overlay::Isolation(crate::isolation_ui::IsolationWin { target, about, pick, inherit, accounts, providers, groups, chosen, stale, view: None, notes, home, scroll: Default::default() })
+        Overlay::Isolation(crate::isolation_ui::IsolationWin { target, about, pick, inherit, inherited, accounts, providers, groups, chosen, stale, view: None, notes, home, scroll: Default::default() })
     }
 
     pub(super) fn isolation_outcome(&mut self, w: crate::isolation_ui::IsolationWin, out: crate::isolation_ui::Out) -> Overlay {
