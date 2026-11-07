@@ -57,6 +57,9 @@ pub struct Config {
     /// Per-plugin settings, kept exactly as written; nerd reads nothing from it yet.
     #[serde(skip_serializing_if = "serde_json::Value::is_null")]
     pub plugins: serde_json::Value,
+    /// Keys this build does not know (a newer nerd's, or a renamed one's old name): written back as found, never read.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 /// One machine as the human wrote it; a bad one is shown with its reason and never reaches ssh.
@@ -259,6 +262,7 @@ impl Default for Config {
             prefix: Prefix::CtrlB,
             remotes: serde_json::Value::Null,
             plugins: serde_json::Value::Null,
+            extra: serde_json::Map::new(),
         }
     }
 }
@@ -600,6 +604,11 @@ pub(crate) mod tests {
             assert_eq!(loaded.sidebar_width, cfg.sidebar_width);
             std::fs::write(config_path(), r#"{"allow_from_panes": true, "pane_gap": 2}"#).unwrap();
             assert_eq!(load_or_init().pane_gap, 2, "a file with the switch that moved to policy.json still loads");
+            std::fs::write(config_path(), r#"{"pane_gap": 2, "from_a_newer_nerd": {"x": [1]}}"#).unwrap();
+            save(&load_or_init()).unwrap();
+            let kept: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(config_path()).unwrap()).unwrap();
+            assert_eq!(kept["from_a_newer_nerd"], serde_json::json!({"x": [1]}), "a key this build does not know survives a save");
+            assert_eq!(kept["pane_gap"], 2);
         });
     }
 

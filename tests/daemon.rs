@@ -731,7 +731,9 @@ fn only_a_remote_client_hears_the_markers_and_its_way_back() {
     // The server stops: the remote client learns why, and no BYE claims it was on purpose.
     let mut remote = connect_remote(&env);
     assert!(has(&read_until(&mut remote, ARMED, Duration::from_secs(5)), ARMED));
-    ClientMsg::Shutdown.write_to(&mut UnixStream::connect(&env.socket).unwrap()).unwrap();
+    // Held open until the server exits: a peer gone before its pid is read is refused, as a pane's program would be.
+    let mut stop = UnixStream::connect(&env.socket).unwrap();
+    ClientMsg::Shutdown.write_to(&mut stop).unwrap();
     // Read while it stops: the server waits only 1 s for a client that takes none of its bytes, then exits without the marker.
     let rest = read_until(&mut remote, b"\x00", Duration::from_secs(10));
     assert!(wait_exit(&mut daemon.0, Duration::from_secs(10)).success());
@@ -1978,7 +1980,8 @@ fn a_stop_still_reaches_a_client_that_is_behind() {
     client.write_all(format!("{hello}\n").as_bytes()).unwrap();
     assert!(has(&read_until(&mut client, ARMED, Duration::from_secs(5)), ARMED), "{}", daemon_log(&env));
     fall_behind(&mut client, 1);
-    ClientMsg::Shutdown.write_to(&mut UnixStream::connect(&env.socket).unwrap()).unwrap();
+    let mut stop = UnixStream::connect(&env.socket).unwrap();
+    ClientMsg::Shutdown.write_to(&mut stop).unwrap();
     // A slow reader: the marker is queued behind a full frame when the server stops.
     let marker = b"\x1b_nerd;stopped:--stop\x1b\\";
     let (mut got, mut buf, deadline) = (Vec::new(), [0u8; 4096], Instant::now() + Duration::from_secs(5));
@@ -2363,6 +2366,32 @@ fn after_an_update_a_pane_is_still_refused() {
     let _ = std::fs::remove_dir_all(&env.dir);
 }
 
+/// A pane's program that writes Stop and exits at once is refused whether the server read its ancestors in time or not
+/// (the unit test in transport.rs pins the second case).
+#[test]
+fn a_pane_s_program_that_writes_a_stop_and_exits_at_once_is_refused() {
+    let env = setup_env("inside-gone");
+    let mut daemon = spawn_daemon(&env);
+    let mut client = connect(&env, 200, 50);
+    assert!(wait_for(&mut client, "spaces", Duration::from_secs(5)), "no frame: {}", daemon_log(&env));
+    let send = r#"/usr/bin/perl -MIO::Socket::UNIX -e '$s = IO::Socket::UNIX->new(Peer => $ARGV[0]) or die; print $s qq("Shutdown"\n); close $s'"#;
+    type_line(&mut client, &format!("{send} '{}'; echo $? >\"$HOME/rc\"", env.socket.display()));
+    let t = Instant::now();
+    while !std::fs::read_to_string(env.dir.join("rc")).is_ok_and(|s| s.ends_with('\n')) {
+        assert!(t.elapsed() < Duration::from_secs(10), "the command did not finish: {}", daemon_log(&env));
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(std::fs::read_to_string(env.dir.join("rc")).unwrap(), "0\n", "the frame was sent");
+    let t = Instant::now();
+    while !daemon_log(&env).contains("refused stop from pid") && t.elapsed() < Duration::from_secs(5) {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(daemon_log(&env).contains("refused stop from pid"), "{}", daemon_log(&env));
+    assert!(daemon.0.try_wait().unwrap().is_none(), "the server stopped: {}", daemon_log(&env));
+    stop_and_wait(&env, &mut daemon);
+    let _ = std::fs::remove_dir_all(&env.dir);
+}
+
 /// An agent nerd has never heard of, described by a manifest in the plugins folder: hooked after
 /// a yes, found in its pane, and back on its own session after the server restarts.
 #[test]
@@ -2583,6 +2612,24 @@ fn a_silent_connection_to_the_plugin_socket_is_closed() {
     let mut buf = [0u8; 256];
     let _ = std::io::Read::read(&mut idle, &mut buf);
     assert!(t.elapsed() > Duration::from_secs(3) && t.elapsed() < Duration::from_secs(9), "closed after {:?}", t.elapsed());
+    let _ = std::fs::remove_dir_all(&env.dir);
+}
+
+/// A server whose plugin socket did not bind starts no plugin: it would hand it a path no one here answers.
+#[test]
+fn without_its_own_plugin_socket_the_server_starts_no_plugin() {
+    let env = setup_env("plugin-unbound");
+    let data = install_plugin(&env, "badger", serde_json::json!({ "name": "badger", "title": "B", "exec": { "command": "sh", "args": ["plugin.sh"] }, "events": ["command"], "badges": ["tab"] }));
+    std::fs::write(env.dir.join("plugins/badger/plugin.sh"), "touch \"$NERD_PLUGIN_DATA/ran\"\nexec sleep 30\n").unwrap();
+    // A folder that is not empty where the plugin socket goes: the bind fails, the server still starts.
+    std::fs::create_dir_all(env.dir.join("nerd.psock/held")).unwrap();
+    let mut daemon = spawn_daemon(&env);
+    let mut client = connect(&env, 100, 30);
+    assert!(wait_for(&mut client, "spaces", Duration::from_secs(5)), "no frame: {}", daemon_log(&env));
+    assert!(!wait_reading(&mut client, Duration::from_secs(3), || data.join("ran").exists()), "a plugin started: {}", daemon_log(&env));
+    let log = daemon_log(&env);
+    assert!(log.contains("plugin socket failed") && log.contains("plugin badger not started: this server's plugin socket did not bind"), "{log}");
+    stop_and_wait(&env, &mut daemon);
     let _ = std::fs::remove_dir_all(&env.dir);
 }
 

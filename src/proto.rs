@@ -194,14 +194,20 @@ impl PluginMsg {
     }
 }
 
+/// Whether `msg` goes out as a line `read_json` takes whole.
+pub fn fits(msg: &impl Serialize) -> bool {
+    serde_json::to_vec(msg).is_ok_and(|v| (v.len() as u64) < MAX_LINE)
+}
+
 /// One JSON line, capped at `MAX_LINE`; `None` at EOF.
 pub fn read_json<T: serde::de::DeserializeOwned>(r: &mut impl BufRead) -> std::io::Result<Option<T>> {
     let mut line = String::new();
     if r.by_ref().take(MAX_LINE).read_line(&mut line)? == 0 {
         return Ok(None);
     }
+    // InvalidData, not Other: the rest of that line must never be read as the next message, so the connection ends.
     if !line.ends_with('\n') && line.len() as u64 >= MAX_LINE {
-        return Err(std::io::Error::other("message longer than the limit"));
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "message longer than the limit"));
     }
     let msg = serde_json::from_str(line.trim_end()).map_err(std::io::Error::other)?;
     Ok(Some(msg))
@@ -691,10 +697,23 @@ mod tests {
     }
 
     #[test]
+    fn a_paste_that_fits_is_one_the_reader_takes_whole() {
+        use crossterm::event::Event;
+        let at = |n: usize| ClientMsg::Event(Event::Paste("x".repeat(n)));
+        assert!(fits(&at(1000)));
+        assert!(!fits(&at(MAX_LINE as usize)));
+        // Each control character is escaped to six bytes: the line, not the paste, is what counts.
+        assert!(!fits(&ClientMsg::Event(Event::Paste("\u{1}".repeat(MAX_LINE as usize / 6 + 1)))));
+        let mut line = serde_json::to_vec(&at(MAX_LINE as usize - 64)).unwrap();
+        line.push(b'\n');
+        assert!(ClientMsg::read_from(&mut std::io::Cursor::new(line)).is_ok(), "what fits is read");
+    }
+
+    #[test]
     fn a_line_over_the_limit_is_an_error_not_a_hang() {
         let junk = vec![b'x'; (MAX_LINE + 10) as usize];
         let mut r = std::io::Cursor::new(junk);
-        assert!(ClientMsg::read_from(&mut r).is_err());
+        assert_eq!(ClientMsg::read_from(&mut r).unwrap_err().kind(), std::io::ErrorKind::InvalidData, "ends the connection");
     }
 
     #[test]

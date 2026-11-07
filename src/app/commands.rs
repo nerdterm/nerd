@@ -702,6 +702,10 @@ impl App {
                 let main = crate::git::group_key(&cwd)
                     .and_then(|g| g.parent().map(std::path::Path::to_path_buf))
                     .unwrap_or_else(|| cwd.clone());
+                if let Err(e) = crate::git::removable(&main, &cwd) {
+                    self.notice = Some(e);
+                    return;
+                }
                 crate::log::info(&format!("worktree checkout deleted by the user; its space closed with {}", plural_panes(self.space_panes(i).unwrap_or(0))));
                 // Close panes first: their shells sit in this folder.
                 self.close_space(i);
@@ -1624,7 +1628,10 @@ impl App {
                 }
                 if let Some(cwd) = self.spaces.get(*i).map(|s| s.cwd.clone()) {
                     match crate::git::add_worktree(&cwd, &value) {
-                        Ok(path) => self.open_space(path),
+                        Ok((path, skipped)) => {
+                            self.open_space(path);
+                            self.notice = self.notice.take().or(skipped);
+                        }
                         // We show git's own message: it's more precise than any
                         // paraphrase of ours.
                         Err(e) => self.notice = Some(e),

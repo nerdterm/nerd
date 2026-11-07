@@ -88,6 +88,14 @@ fn private_mode(bytes: &[u8], mode: &[u8]) -> Option<bool> {
     found
 }
 
+/// Whether `text` shows the blocked-text entry `t`; a digit in it stands for any of 1-9, the option the cursor is on.
+fn shows(t: &str, text: &str) -> bool {
+    match t.find(|c: char| c.is_ascii_digit()) {
+        Some(i) => ('1'..='9').any(|d| text.contains(&format!("{}{d}{}", &t[..i], &t[i + 1..]))),
+        None => text.contains(t),
+    }
+}
+
 /// Whether a ground counts as dark: its luma under the middle.
 pub fn dark((r, g, b): (u8, u8, u8)) -> bool {
     (r as u32 * 299 + g as u32 * 587 + b as u32 * 114) / 1000 < 128
@@ -404,10 +412,17 @@ impl Term {
 
     /// Whether `text` shows the agent's question; a "❯ 1." row matches whichever option the cursor is on.
     fn asks(&self, text: &str) -> bool {
-        self.blocked_text.iter().any(|t| match t.find(|c: char| c.is_ascii_digit()) {
-            Some(i) => ('1'..='9').any(|d| text.contains(&format!("{}{d}{}", &t[..i], &t[i + 1..]))),
-            None => text.contains(t.as_str()),
-        })
+        self.blocked_text.iter().any(|t| shows(t, text))
+    }
+
+    /// Whether the live screen shows one of the question's numbered choices ("❯ 1."), whatever the hook says:
+    /// a carriage return typed now would answer it.
+    pub fn shows_question(&self) -> bool {
+        let numbered = || self.blocked_text.iter().filter(|t| t.contains(|c: char| c.is_ascii_digit()));
+        numbered().next().is_some() && {
+            let live = self.screen().live_contents();
+            numbered().any(|t| shows(t, &live))
+        }
     }
 
     /// Base state disregarding "seen": what's visible on screen and by timing.

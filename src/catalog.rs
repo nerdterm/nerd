@@ -285,6 +285,29 @@ mod tests {
     }
 
     #[test]
+    fn a_catalog_whose_links_leave_its_folder_on_disk_is_refused() {
+        crate::session::tests::with_temp_state_dir("catalog-links", || {
+            let root = crate::paths::state_root();
+            let cat = root.join("src/catalog");
+            std::fs::create_dir_all(cat.join("plugins")).unwrap();
+            git(&cat, &["init", "-q", "-b", "main"]);
+            std::fs::write(cat.join("revoked.json"), "[]").unwrap();
+            std::os::unix::fs::symlink("revoked.json", cat.join("inside")).unwrap();
+            git(&cat, &["add", "-A"]);
+            git(&cat, &["commit", "-qm", "a link inside"]);
+            refresh_from(&cat.to_string_lossy(), true).expect("a link that stays inside");
+            // Each link's text stays inside; on disk the second one is the folder above the catalog.
+            std::os::unix::fs::symlink(".", cat.join("here")).unwrap();
+            std::os::unix::fs::symlink("here/..", cat.join("up")).unwrap();
+            git(&cat, &["add", "-A"]);
+            git(&cat, &["commit", "-qm", "a link out"]);
+            let e = refresh_from(&cat.to_string_lossy(), true).unwrap_err();
+            assert!(e.contains("up links outside"), "{e}");
+            assert!(!dir().join("up").exists(), "the copy in place is the one before");
+        });
+    }
+
+    #[test]
     fn an_update_whose_lock_cannot_be_written_puts_the_old_files_back() {
         crate::session::tests::with_temp_state_dir("update-lock-fails", || {
             let root = crate::paths::state_root();

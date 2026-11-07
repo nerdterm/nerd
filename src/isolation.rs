@@ -79,6 +79,7 @@ pub fn wrap(id: PaneId, argv: &[String], cwd: &Path, iso: &Isolation, env: &mut 
     };
     let files = if iso.files == Files::Folder { "folder" } else { "everything" };
     flags.extend(["--files", files, "--cwd", &cwd.to_string_lossy(), "--msock", &msock, "--msock-uid", &uid, "--bin", &bin].map(String::from));
+    flags.extend(["--sock".into(), crate::session::socket_path().to_string_lossy().into_owned()]);
     if let Ok(dump) = std::env::var("NERD_HOOK_DUMP") {
         flags.extend(["--dump".into(), dump]);
     }
@@ -208,6 +209,8 @@ struct Places {
     run: PathBuf,
     /// The pane's own `SSH_AUTH_SOCK`.
     agent: Option<PathBuf>,
+    /// The server's own sockets by path: `NERD_SOCKET` may put them outside `root`.
+    nerd: Vec<PathBuf>,
 }
 
 impl Places {
@@ -246,6 +249,7 @@ impl Places {
             terminal_files,
             run: "/private/var/run".into(),
             agent: std::env::var_os("SSH_AUTH_SOCK").map(PathBuf::from).filter(|p| p.is_absolute()),
+            nerd: Vec::new(),
             home,
         })
     }
@@ -276,8 +280,10 @@ const SOCKETS: &[&str] = &[
 const UNREAD: &[&str] = &[".ssh", ".aws", ".gnupg", ".netrc", ".docker", ".kube", ".azure", ".config/gh", ".config/gcloud", "Library/Mail", "Library/Messages", "Library/Cookies"];
 
 /// The pane's Seatbelt profile. An account pane passes `Everything` or `Account`: the account confines its files.
-pub fn profile(files: &Files, network: &Network, cwd: &Path, msock: &Path, port: Option<u16>) -> Result<String, String> {
-    let p = Places::here()?;
+/// `sock`: the server's socket, whose plugin and broker sockets sit beside it; None from a wrapper an older server started.
+pub fn profile(files: &Files, network: &Network, cwd: &Path, msock: &Path, sock: Option<&Path>, port: Option<u16>) -> Result<String, String> {
+    let nerd = sock.map(|s| ["sock", "psock", "xsock"].map(|e| crate::plugins::canon(&s.with_extension(e))).to_vec()).unwrap_or_default();
+    let p = Places { nerd, ..Places::here()? };
     if *files == Files::Folder {
         p.make_agent_folders();
     }
@@ -409,7 +415,7 @@ fn text(p: &Places, files: &Files, network: &Network, cwd: &Path, msock: &Path, 
                 "(deny network-outbound (regex #\"^/private/tmp/cc-socks\") (regex #\"^{}/cc-socks\") (regex #\"^{}/com\\.apple\\.launchd\\.[^/]+/Listeners$\"){}{})\n(allow network-outbound (literal {msock}))\n",
                 crate::plugins::regex_escape(&tmp.to_string_lossy()),
                 crate::plugins::regex_escape(&run.to_string_lossy()),
-                rules("literal", [run.join("docker.sock")].into_iter().chain(p.agent.clone()))?,
+                rules("literal", [run.join("docker.sock")].into_iter().chain(p.agent.clone()).chain(p.nerd.iter().cloned()))?,
                 rules("subpath", [root.clone(), p.home.join(".codex"), tmp.join("podman")].into_iter().chain(SOCKETS.iter().map(|s| p.home.join(s))))?
             );
         }
@@ -589,7 +595,7 @@ pub fn pane_exec_main(args: &[String]) -> std::io::Result<()> {
     };
     if !matches!(network, Network::Providers(_)) {
         let confined = files == Files::Folder || network != Network::Open;
-        let profile = profile(&files, &network, &cwd, &msock, None).unwrap_or_else(|e| fail(e));
+        let profile = profile(&files, &network, &cwd, &msock, get("--sock").map(Path::new), None).unwrap_or_else(|e| fail(e));
         fail(become_pane(cmd, confined.then_some(profile.as_str()), &data));
     }
     let net = crate::proxy::Net::parse(need("--hosts")).unwrap_or_else(|| fail("--pane-exec: --hosts does not parse"));
@@ -599,7 +605,7 @@ pub fn pane_exec_main(args: &[String]) -> std::io::Result<()> {
         cmd.env(k, format!("http://127.0.0.1:{port}"));
     }
     cmd.env("NODE_USE_ENV_PROXY", "1").env("NO_PROXY", "").env("no_proxy", "");
-    let profile = profile(&files, &network, &cwd, &msock, Some(port)).unwrap_or_else(|e| fail(e));
+    let profile = profile(&files, &network, &cwd, &msock, get("--sock").map(Path::new), Some(port)).unwrap_or_else(|e| fail(e));
     // SAFETY: no thread exists yet, so the child may allocate; it never returns into the proxy's code.
     match unsafe { nix::unistd::fork() }? {
         nix::unistd::ForkResult::Child => {
@@ -661,6 +667,7 @@ mod tests {
             terminal_files: vec![],
             run: d.join("run"),
             agent: Some(d.join("agent/s.sock")),
+            nerd: vec![],
             home,
         }
     }
@@ -710,6 +717,7 @@ mod tests {
             terminal_files: vec![],
             run: "/private/var/run".into(),
             agent: Some("/Users/u/.1p/agent.sock".into()),
+            nerd: vec![],
         };
         let m = Path::new("/Users/u/Library/Application Support/nerd/nerd.msock");
         let t = |f: Files, n: Network, port| text(&p, &f, &n, d, m, port).unwrap();
@@ -898,7 +906,8 @@ mod tests {
         let mut env = vec![("NERD_STATE".to_string(), "/s".to_string()), ("NERD_MSOCK".into(), "/m.sock".into()), ("NERD_MSOCK_UID".into(), "501".into())];
         let got = wrap(3, &argv, Path::new("/w"), &Isolation { files: Files::Folder, network: Network::None }, &mut env).unwrap();
         let exe = std::env::current_exe().unwrap().to_string_lossy().into_owned();
-        let want: Vec<String> = [&exe, "--pane-exec", "--pane", "3", "--network", "none", "--files", "folder", "--cwd", "/w", "--msock", "/m.sock", "--msock-uid", "501", "--bin", &exe].iter().map(|s| s.to_string()).collect();
+        let sock = crate::session::socket_path().to_string_lossy().into_owned();
+        let want: Vec<String> = [&exe, "--pane-exec", "--pane", "3", "--network", "none", "--files", "folder", "--cwd", "/w", "--msock", "/m.sock", "--msock-uid", "501", "--bin", &exe, "--sock", &sock].iter().map(|s| s.to_string()).collect();
         assert_eq!(got[..want.len()], want[..], "{got:?}");
         assert_eq!(got[got.len() - 3..], ["--", "/bin/zsh", "-l"], "{got:?}");
         assert!(!env.iter().any(|(k, _)| k == "NERD_STATE"), "{env:?}");
@@ -1012,6 +1021,20 @@ mod tests {
             assert!(m.uid() == 0 && m.mode() & 0o022 == 0, "{} is root's and no one else may write it on every Mac", dir.display());
         }
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn the_servers_own_sockets_are_closed_by_path_when_nerd_socket_puts_them_outside_the_state_root() {
+        let d = scratch("own-sockets");
+        let nerd: Vec<PathBuf> = ["sock", "psock", "xsock"].map(|e| d.join(format!("elsewhere/test.{e}"))).to_vec();
+        let p = Places { nerd: nerd.clone(), ..places(&d) };
+        let profile = text(&p, &Files::Folder, &Network::Open, &d.join("work"), Path::new("/tmp/none.msock"), None).unwrap();
+        let deny = profile.lines().find(|l| l.starts_with("(deny network-outbound")).expect("the folder pane's socket rule");
+        for s in &nerd {
+            assert!(deny.contains(&format!("(literal \"{}\")", s.display())), "{s:?} in {deny}");
+        }
+        assert!(!deny.contains(".msock"), "the message socket stays open: {deny}");
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

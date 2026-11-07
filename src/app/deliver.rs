@@ -24,6 +24,9 @@ const OWNER_QUIET: Duration = Duration::from_secs(10);
 /// A pane whose hand-over failed is not tried again on every tick.
 const RETRY: Duration = Duration::from_secs(5);
 const CURRENT_FOR: Duration = Duration::from_secs(2);
+/// The step note of a message about to be pasted: a restart finds it pasted and not submitted.
+const TYPING: &str = "typing hand-over";
+const NOT_SUBMITTED: &str = "typed, not submitted";
 
 /// `socket_fdinfo` (sys/proc_info.h): `psi.soi_kind`, and `psi.soi_proto.pri_un.unsi_addr.ua_sun.sun_path`
 /// (`struct un_sockinfo`: two u64 handles, then a `sockaddr_un`, whose path follows its length and family bytes).
@@ -47,6 +50,9 @@ struct Hand {
     at: Instant,
     idle: Option<Instant>,
     claimed: Option<Instant>,
+    /// Typed: a question showed after the paste, and whether the owner typed into the pane since.
+    asked: bool,
+    typed_over: bool,
 }
 
 #[derive(Default)]
@@ -132,10 +138,21 @@ impl App {
     }
 
     /// A hand-over the previous run did not finish is made again, once: its frame's id makes a repeat recognisable.
+    /// A message already pasted stays in the agent's input, not submitted.
     fn after_restart(&mut self) -> bool {
-        let unfinished: Vec<String> = self.mail.msgs.iter().filter(|m| m.state == State::Delivered && m.via.is_none()).map(|m| m.id.clone()).collect();
-        for id in &unfinished {
-            self.mail.set(id, State::Queued, None, Some("after a restart".into()));
+        let unfinished: Vec<(String, bool)> = self
+            .mail
+            .msgs
+            .iter()
+            .filter(|m| m.state == State::Delivered && m.via.is_none())
+            .map(|m| (m.id.clone(), m.events.last().is_some_and(|s| s.note.as_deref() == Some(TYPING))))
+            .collect();
+        for (id, pasted) in &unfinished {
+            if *pasted {
+                self.mail.set(id, State::Delivered, Some(Via::Typed), Some(NOT_SUBMITTED.into()));
+            } else {
+                self.mail.set(id, State::Queued, None, Some("after a restart".into()));
+            }
         }
         for e in std::fs::read_dir(crate::hook::state_dir()).into_iter().flatten().flatten() {
             if e.file_name().to_string_lossy().ends_with(".mail") {
@@ -201,6 +218,22 @@ impl App {
             Way::Typed(false) => {
                 if h.at.elapsed() < CR_AFTER {
                     return Some(h);
+                }
+                h.typed_over |= self.mail.owner_typed.is_some_and(|(p, t)| p == pane && t > h.at);
+                // A question that came up after the paste would take this carriage return as its answer: held while it shows.
+                if self.pane(pane).is_some_and(|p| p.term.shows_question()) {
+                    if !h.asked {
+                        crate::log::warn(&format!("pane {pane}: a question came up before a typed message was submitted"));
+                    }
+                    h.asked = true;
+                    return Some(h);
+                }
+                // Once it is gone, Enter only into the input as nerd left it; never typed again, or it would be there twice.
+                let front = || self.pane(pane).is_some_and(|p| p.agent.as_deref().is_some_and(|a| p.pty.agent_in_front(a)));
+                if h.asked && (h.typed_over || !matches!(state, AgentState::Idle | AgentState::Done) || !front()) {
+                    crate::log::warn(&format!("pane {pane}: a typed message was not submitted"));
+                    self.handed(&h.id, Via::Typed, Some(NOT_SUBMITTED.into()));
+                    return None;
                 }
                 self.submit_typed(pane);
                 self.handed(&h.id, Via::Typed, None);
@@ -279,10 +312,11 @@ impl App {
             return true;
         }
         let owner = self.mail.owner_typed.is_some_and(|(p, t)| p == pane && t.elapsed() < OWNER_QUIET);
-        if !matches!(state, AgentState::Idle | AgentState::Done) || owner || !self.pane(pane).is_some_and(|p| p.pty.agent_in_front(agent)) {
+        let asked = self.pane(pane).is_some_and(|p| p.term.shows_question());
+        if !matches!(state, AgentState::Idle | AgentState::Done) || owner || asked || !self.pane(pane).is_some_and(|p| p.pty.agent_in_front(agent)) {
             return false;
         }
-        self.mail.set(&m.id, State::Delivered, None, Some("typing hand-over".into()));
+        self.mail.set(&m.id, State::Delivered, None, Some(TYPING.into()));
         let one_line = if self.pane(pane).is_some_and(|p| p.term.screen().bracketed_paste()) { framed } else { one_line(&framed) };
         if !self.paste_into(pane, &one_line) {
             self.requeue(&m.id, "the pane closed");
@@ -294,7 +328,7 @@ impl App {
     }
 
     fn start(&mut self, pane: PaneId, id: &str, way: Way) {
-        self.mail.delivery.hands.insert(pane, Hand { id: id.to_string(), way, at: Instant::now(), idle: None, claimed: None });
+        self.mail.delivery.hands.insert(pane, Hand { id: id.to_string(), way, at: Instant::now(), idle: None, claimed: None, asked: false, typed_over: false });
     }
 
     fn hook_current(&mut self, agent: &str) -> bool {
@@ -533,6 +567,97 @@ mod tests {
             assert_eq!(read_until(typed, |s| s.ends_with('\r')), format!("{framed}\r"), "the carriage return as a write of its own");
             assert_eq!(rec(app, &id).via, Some(Via::Typed));
         });
+    }
+
+    /// A hook that says idle while the agent's numbered question is on screen: Claude's prompt, as it draws it.
+    fn ask(app: &mut App, text: &str) {
+        let t = &mut app.pane_mut(2).unwrap().term;
+        t.set_blocked_text(crate::agents::blocked_text(Some("claude")));
+        t.feed(text.as_bytes());
+    }
+
+    #[test]
+    fn nothing_is_typed_while_a_numbered_question_is_on_screen_whatever_the_hook_says() {
+        with_app("question", "codex", AgentState::Idle, |app, _, typed| {
+            let id = queue(app);
+            ask(app, "Do you want to proceed?\r\n\u{276f} 1. Yes\r\n  2. No");
+            assert!(!app.tick_deliver());
+            std::thread::sleep(Duration::from_millis(60));
+            assert_eq!((read(typed), rec(app, &id).state), (String::new(), State::Queued));
+        });
+        with_app("question-prose", "codex", AgentState::Idle, |app, _, typed| {
+            let id = queue(app);
+            ask(app, "Do you want me to continue?");
+            assert!(app.tick_deliver(), "prose without a numbered choice is not a question");
+            assert!(read_until(typed, |s| s.contains(&id)).contains(&id));
+        });
+    }
+
+    #[test]
+    fn a_question_after_the_paste_holds_its_carriage_return_and_a_pasted_message_is_never_queued_again() {
+        with_app("question-after", "codex", AgentState::Idle, |app, _, typed| {
+            let id = queue(app);
+            assert!(app.tick_deliver());
+            let pasted = read_until(typed, |s| s.contains(&id));
+            ask(app, "\r\nDo you want to proceed?\r\n\u{276f} 1. Yes");
+            std::thread::sleep(CR_AFTER + Duration::from_millis(20));
+            app.tick_deliver();
+            std::thread::sleep(Duration::from_millis(60));
+            assert_eq!(read(typed), pasted, "no carriage return into the question");
+            assert_eq!(rec(app, &id).via, None, "not handed before its carriage return");
+            // The question is answered and goes: the carriage return follows.
+            app.pane_mut(2).unwrap().term.feed(b"\x1b[2J\x1b[H");
+            app.tick_deliver();
+            assert!(read_until(typed, |s| s.ends_with('\r')).ends_with('\r'));
+            assert_eq!(rec(app, &id).via, Some(Via::Typed));
+        });
+        with_app("question-stays", "codex", AgentState::Idle, |app, _, typed| {
+            let id = queue(app);
+            assert!(app.tick_deliver());
+            let pasted = read_until(typed, |s| s.contains(&id));
+            ask(app, "\r\nDo you want to proceed?\r\n\u{276f} 1. Yes");
+            app.mail.delivery.hands.get_mut(&2).unwrap().at = Instant::now().checked_sub(TAKE_BACK + Duration::from_millis(1)).unwrap();
+            app.tick_deliver();
+            std::thread::sleep(Duration::from_millis(60));
+            assert_eq!(read(typed), pasted, "never a carriage return into the question");
+            let m = rec(app, &id);
+            assert_eq!((m.state.clone(), m.via), (State::Delivered, None), "held while the question shows, never queued again");
+            assert!(log().contains("pane 2: a question came up before a typed message was submitted"), "{}", log());
+            assert!(app.mail.delivery.hands.contains_key(&2), "still held");
+            // The owner answers it in the pane; the question goes.
+            app.mail.owner_typed = Some((2, Instant::now()));
+            app.tick_deliver();
+            app.pane_mut(2).unwrap().term.feed(b"\x1b[2J\x1b[H");
+            app.tick_deliver();
+            std::thread::sleep(Duration::from_millis(60));
+            assert_eq!(read(typed), pasted, "no carriage return after the owner typed");
+            let m = rec(app, &id);
+            assert_eq!((m.state.clone(), m.via), (State::Delivered, Some(Via::Typed)));
+            assert_eq!(notes(&m).last().and_then(|n| n.1.clone()).as_deref(), Some("typed, not submitted"));
+            assert!(log().contains("pane 2: a typed message was not submitted"), "{}", log());
+            assert!(!app.mail.delivery.hands.contains_key(&2), "the hand is over");
+        });
+        for case in ["not idle", "the shell in front"] {
+            with_app(&format!("question-{}", case.replace(' ', "-")), "codex", AgentState::Idle, |app, _, typed| {
+                let id = queue(app);
+                assert!(app.tick_deliver());
+                let pasted = read_until(typed, |s| s.contains(&id));
+                ask(app, "\r\nDo you want to proceed?\r\n\u{276f} 1. Yes");
+                std::thread::sleep(CR_AFTER + Duration::from_millis(20));
+                app.tick_deliver();
+                if case == "not idle" {
+                    app.pane_mut(2).unwrap().term.set_hook_state(Some(AgentState::Working));
+                } else {
+                    let front = app.pane(2).unwrap().pty.foreground().unwrap();
+                    app.pane_mut(2).unwrap().pty.child_pid = Some(front as u32);
+                }
+                app.pane_mut(2).unwrap().term.feed(b"\x1b[2J\x1b[H");
+                app.tick_deliver();
+                std::thread::sleep(Duration::from_millis(60));
+                assert_eq!(read(typed), pasted, "no carriage return: {case}");
+                assert_eq!(notes(&rec(app, &id)).last().and_then(|n| n.1.clone()).as_deref(), Some("typed, not submitted"), "{case}");
+            });
+        }
     }
 
     #[test]
@@ -816,15 +941,19 @@ mod tests {
     }
 
     #[test]
-    fn a_restart_requeues_an_unfinished_hand_over() {
+    fn a_restart_requeues_an_unfinished_hand_over_and_leaves_a_pasted_one_delivered() {
         with_app("restart", "codex", AgentState::Blocked, |app, _, _| {
             let id = queue(app);
             app.mail.set(&id, State::Delivered, None, Some("hook hand-over".into()));
             crate::mail::mailbox_put(2, &id, "out", b"x\n").unwrap();
             crate::mail::mailbox_put(2, "01OTHER", "claim", b"x\n").unwrap();
+            let pasted = queue(app);
+            app.mail.set(&pasted, State::Delivered, None, Some("typing hand-over".into()));
             assert!(app.tick_deliver());
             assert_eq!(notes(&rec(app, &id)).last().unwrap(), &(State::Queued, Some("after a restart".into())));
             assert!(!crate::mail::mailbox(2).exists(), "nothing left from before");
+            let m = rec(app, &pasted);
+            assert_eq!((m.state.clone(), m.via, notes(&m).last().unwrap().1.as_deref()), (State::Delivered, Some(Via::Typed), Some("typed, not submitted")), "pasted already: never typed twice");
         });
     }
 }
