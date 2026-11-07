@@ -95,7 +95,7 @@ A click on a subagent in the sidebar opens its tool calls beside the agent. A re
 
 Other agents are recognised by name, and their state is read from what they print. It can lag, be wrong, or miss "waiting for you".
 
-Each agent is described by a manifest, `plugins/<name>/plugin.json` in the source. To add another agent without a new nerd, put its manifest in `~/Library/Application Support/nerd/plugins/<name>/plugin.json` and choose **Reload plugins and agents** in the main menu. Such a manifest adds its hook to a JSON config under `~/.<name>` or `~/.config/<name>` and never replaces a file. A manifest that breaks a rule, or names a built-in agent, is skipped, and the log says why.
+Each agent is described by a manifest, `plugins/<name>/plugin.json` in the source. To add another agent without a new nerd, put its manifest in `~/Library/Application Support/nerd/plugins/<name>/plugin.json` and choose **Reload plugins and agents** in the main menu, in a nerd window opened from your terminal. Such a manifest adds its hook to a JSON config under `~/.<name>` or `~/.config/<name>` and never replaces a file. A manifest that breaks a rule, or names a built-in agent, is skipped, and the log says why.
 
 ## Requirements
 

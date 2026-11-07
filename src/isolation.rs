@@ -1,5 +1,6 @@
 //! Pane isolation: the wrapper that starts a pane in its folder or account, and its network proxy.
 
+use std::collections::BTreeSet;
 use std::io::Write as _;
 use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
@@ -80,6 +81,8 @@ pub fn wrap(id: PaneId, argv: &[String], cwd: &Path, iso: &Isolation, env: &mut 
     let files = if iso.files == Files::Folder { "folder" } else { "everything" };
     flags.extend(["--files", files, "--cwd", &cwd.to_string_lossy(), "--msock", &msock, "--msock-uid", &uid, "--bin", &bin].map(String::from));
     flags.extend(["--sock".into(), crate::session::socket_path().to_string_lossy().into_owned()]);
+    // The plugins this server let in: a folder put in since never reaches the pane's profile.
+    flags.extend(["--plugins".into(), crate::agents::all().iter().filter(|m| !m.builtin).map(|m| m.name.as_str()).collect::<Vec<_>>().join(",")]);
     if let Ok(dump) = std::env::var("NERD_HOOK_DUMP") {
         flags.extend(["--dump".into(), dump]);
     }
@@ -229,12 +232,12 @@ impl Places {
         }
     }
 
-    fn here() -> Result<Places, String> {
+    fn here(plugins: &BTreeSet<String>) -> Result<Places, String> {
         let home = crate::paths::home().unwrap_or_default();
         if !home.is_absolute() || home == Path::new("/") {
             return Err("nerd has no home folder, so it cannot keep this pane out of ~/.ssh".into());
         }
-        let agents = crate::agents::load_admitting(&crate::paths::state_root().join("plugins"), &|_| true);
+        let agents = crate::agents::load_admitting(&crate::paths::state_root().join("plugins"), &|n| plugins.contains(n));
         let (mut terminal_dirs, terminal_files) = crate::presets::config_places();
         terminal_dirs.retain(|d| !RUN_LATER_DIRS.iter().any(|r| home.join(r) == *d));
         Ok(Places {
@@ -281,9 +284,9 @@ const UNREAD: &[&str] = &[".ssh", ".aws", ".gnupg", ".netrc", ".docker", ".kube"
 
 /// The pane's Seatbelt profile. An account pane passes `Everything` or `Account`: the account confines its files.
 /// `sock`: the server's socket, whose plugin and broker sockets sit beside it; None from a wrapper an older server started.
-pub fn profile(files: &Files, network: &Network, cwd: &Path, msock: &Path, sock: Option<&Path>, port: Option<u16>) -> Result<String, String> {
+pub fn profile(files: &Files, network: &Network, cwd: &Path, msock: &Path, sock: Option<&Path>, port: Option<u16>, plugins: &BTreeSet<String>) -> Result<String, String> {
     let nerd = sock.map(|s| ["sock", "psock", "xsock"].map(|e| crate::plugins::canon(&s.with_extension(e))).to_vec()).unwrap_or_default();
-    let p = Places { nerd, ..Places::here()? };
+    let p = Places { nerd, ..Places::here(plugins)? };
     if *files == Files::Folder {
         p.make_agent_folders();
     }
@@ -292,7 +295,7 @@ pub fn profile(files: &Files, network: &Network, cwd: &Path, msock: &Path, sock:
 
 /// At hook install: the agent's folders a This-folder-only pane could otherwise move in whole.
 pub fn make_agent_folders(data: Vec<PathBuf>, home: &Path) {
-    if let Ok(p) = Places::here() {
+    if let Ok(p) = Places::here(&crate::agents::admitted()) {
         Places { data, home: home.to_path_buf(), ..p }.make_agent_folders();
     }
 }
@@ -586,7 +589,9 @@ pub fn pane_exec_main(args: &[String]) -> std::io::Result<()> {
     if let Some(d) = get("--dump") {
         cmd.env("NERD_HOOK_DUMP", d);
     }
-    let data = if files == Files::Folder { Places::here().map(|p| p.data).unwrap_or_default() } else { Vec::new() };
+    // An older server names none: then the plugins let in on disk.
+    let plugins: BTreeSet<String> = get("--plugins").map_or_else(crate::agents::admitted, |p| p.split(',').filter(|n| !n.is_empty()).map(String::from).collect());
+    let data = if files == Files::Folder { Places::here(&plugins).map(|p| p.data).unwrap_or_default() } else { Vec::new() };
     let network = match need("--network") {
         "open" => Network::Open,
         "none" => Network::None,
@@ -595,7 +600,7 @@ pub fn pane_exec_main(args: &[String]) -> std::io::Result<()> {
     };
     if !matches!(network, Network::Providers(_)) {
         let confined = files == Files::Folder || network != Network::Open;
-        let profile = profile(&files, &network, &cwd, &msock, get("--sock").map(Path::new), None).unwrap_or_else(|e| fail(e));
+        let profile = profile(&files, &network, &cwd, &msock, get("--sock").map(Path::new), None, &plugins).unwrap_or_else(|e| fail(e));
         fail(become_pane(cmd, confined.then_some(profile.as_str()), &data));
     }
     let net = crate::proxy::Net::parse(need("--hosts")).unwrap_or_else(|| fail("--pane-exec: --hosts does not parse"));
@@ -605,7 +610,7 @@ pub fn pane_exec_main(args: &[String]) -> std::io::Result<()> {
         cmd.env(k, format!("http://127.0.0.1:{port}"));
     }
     cmd.env("NODE_USE_ENV_PROXY", "1").env("NO_PROXY", "").env("no_proxy", "");
-    let profile = profile(&files, &network, &cwd, &msock, get("--sock").map(Path::new), Some(port)).unwrap_or_else(|e| fail(e));
+    let profile = profile(&files, &network, &cwd, &msock, get("--sock").map(Path::new), Some(port), &plugins).unwrap_or_else(|e| fail(e));
     // SAFETY: no thread exists yet, so the child may allocate; it never returns into the proxy's code.
     match unsafe { nix::unistd::fork() }? {
         nix::unistd::ForkResult::Child => {
@@ -684,13 +689,32 @@ mod tests {
     }
 
     #[test]
+    fn the_wrapper_is_told_only_the_plugins_the_server_let_in() {
+        crate::session::tests::with_temp_state_dir("wrap-plugins", || {
+            let put = |n: &str| {
+                let d = crate::paths::state_root().join("plugins").join(n);
+                std::fs::create_dir_all(&d).unwrap();
+                std::fs::write(d.join("plugin.json"), serde_json::json!({ "name": n, "title": n, "agent": { "names": [n] } }).to_string()).unwrap();
+            };
+            put("kept");
+            crate::agents::reload();
+            put("planted");
+            let iso = Isolation { files: Files::Folder, network: Network::None };
+            let argv = wrap(1, &["/bin/sh".into()], Path::new("/tmp"), &iso, &mut Vec::new()).unwrap();
+            let at = argv.iter().position(|a| a == "--plugins").expect("named");
+            assert_eq!(argv[at + 1], "kept", "{argv:?}");
+            crate::agents::reload();
+        });
+    }
+
+    #[test]
     fn terminal_configs_the_environment_moved_are_not_writable_either() {
         crate::config::tests::with_temp_home(|| {
             let home = crate::paths::home().unwrap();
             crate::presets::set_env("XDG_CONFIG_HOME", home.join("xdg"));
             crate::presets::set_env("KITTY_CONFIG_DIRECTORY", home.join("k"));
             crate::presets::set_env("WEZTERM_CONFIG_FILE", home.join("w.lua"));
-            let p = Places::here().unwrap();
+            let p = Places::here(&BTreeSet::new()).unwrap();
             let s = text(&p, &Files::Folder, &Network::None, &home.join("work"), &home.join("m.sock"), None).unwrap();
             let rule = |kind: &str, sub: &str| format!("({kind} {})", quote(&canon(&home.join(sub))).unwrap());
             for d in ["xdg/ghostty", "k", "xdg/wezterm", ".config/kitty"] {

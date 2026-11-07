@@ -666,6 +666,7 @@ pub fn remove(name: &str, data: bool) -> Result<(), String> {
     std::fs::rename(&dir, out.join(name)).map_err(|e| format!("{}: {e}", dir.display()))?;
     pins.retain(|p| p.name != name);
     write_lock(&pins)?;
+    crate::agents::admit(Default::default(), false);
     if let Ok(mut off) = read_off()
         && off.remove(name).is_some()
     {

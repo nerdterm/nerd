@@ -1449,7 +1449,15 @@ impl App {
             (Action::Settings, _) => return Overlay::Settings(crate::settings::Settings::new(&self.cfg)),
             (Action::Keybinds, _) => return Overlay::Keys(crate::keyshelp::KeysHelp::new(self.cfg.prefix)),
             (Action::ReloadConfig, _) => {
-                crate::agents::reload();
+                // From a window inside a pane, an agent could let its own folder in: only what was let in before loads.
+                if self.client_inside {
+                    crate::agents::reload_admitted();
+                    if !crate::agents::waiting().is_empty() {
+                        self.notice = Some("Not from a window inside a pane: open nerd from your terminal to load a plugin put in by hand.".into());
+                    }
+                } else {
+                    crate::agents::reload();
+                }
                 self.plugins.reload();
                 self.reload_cfg();
             }
@@ -1789,7 +1797,9 @@ impl App {
     pub(super) fn isolation_overlay(&self, target: IsolationTarget) -> Overlay {
         let agents = crate::agents::all();
         let providers: Vec<String> = agents.iter().filter(|m| matches!(m.agent.network.net, crate::agents::Network::Internet { .. })).map(|m| m.name.clone()).collect();
-        let notes = agents.iter().filter_map(|m| Some(format!("{}: {}", m.title, m.agent.own_sandbox.as_ref()?))).collect();
+        // A plugin's title is its own words: it could name itself after a built-in. Indented, so no line of its note,
+        // wrapped or not, starts where a built-in's does.
+        let notes = agents.iter().filter_map(|m| Some(format!("{}{}: {}", if m.builtin { String::new() } else { format!("  plugin {}: ", m.name) }, m.title, m.agent.own_sandbox.as_ref()?))).collect();
         let accounts = crate::policy::current().accounts.iter().map(|a| a.name.clone()).collect();
         let (about, mut pick, inherit, agent, folder) = match target {
             IsolationTarget::Pane(id) => {

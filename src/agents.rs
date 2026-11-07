@@ -1,6 +1,7 @@
 //! Agents as data: each one is a `plugin.json` manifest, built in or dropped into `<state root>/plugins/<name>/`.
 //! A manifest says how nerd finds the agent, hooks into its config and resumes its session.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
@@ -377,6 +378,21 @@ pub struct Strip {
 /// The words the hook script acts on; anything else it ignores.
 pub const WORDS: &[&str] = &["working", "idle", "blocked", "fail", "stop", "notify", "task", "sub-start", "sub-stop", "sub-reset", "tool-start", "tool-ok", "tool-fail", "mail"];
 
+/// Remote shells, database and language prompts, debuggers, other users' shells and multiplexers.
+/// Those of macOS's own are refused by `SYSTEM_BIN` too; a name with a dot, such as python3.12, never passes `token`.
+// ceiling: a list; the owner's yes to the names in the install question is the wall.
+const NOT_AGENTS:&[&str] = &[
+    "ssh", "mosh", "mosh-client", "et", "telnet", "sftp", "psql", "pgcli", "mysql", "mycli", "mariadb", "sqlite3", "litecli", "redis-cli", "valkey-cli", "mongosh", "mongo",
+    "irb", "ghci", "ipython", "lldb", "gdb", "sudo", "su", "screen", "tmux", "zellij", "byobu", "dtach", "abduco", "kitten", "nu", "pwsh", "xonsh", "elvish", "docker", "podman",
+    "kubectl", "perl", "ruby", "mksh", "yash", "lua", "luajit", "julia", "ocaml", "racket", "sbcl", "guile", "erl", "iex", "duckdb", "mysqlsh", "usql", "cqlsh", "nvim", "hx", "emacs", "kak",
+];
+const SYSTEM_BIN: &[&str] = &["/bin", "/sbin", "/usr/bin", "/usr/sbin"];
+
+fn system_program(p: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt as _;
+    std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+}
+
 const BUILTIN: &[&str] = &[
     include_str!("../plugins/claude/plugin.json"),
     include_str!("../plugins/codex/plugin.json"),
@@ -401,16 +417,82 @@ pub fn builtins() -> Vec<Manifest> {
 
 static LOADED: RwLock<Option<Arc<Vec<Manifest>>>> = RwLock::new(None);
 
-/// Built-ins first, then the user's; read once, then again on `reload`.
+/// Built-ins first, then the user's let in; read once, then again on `reload`.
 pub fn all() -> Arc<Vec<Manifest>> {
     if let Some(ms) = LOADED.read().unwrap_or_else(|e| e.into_inner()).as_ref() {
         return ms.clone();
     }
-    reload()
+    // The first start that keeps the file: every folder loaded before stays let in.
+    admit(if crate::paths::state_root().join(ADMITTED).exists() { BTreeSet::new() } else { admitted() }, false);
+    reload_admitted()
 }
 
+/// The owner's Reload, from a window outside a pane: every folder there is let in.
 pub fn reload() -> Arc<Vec<Manifest>> {
-    reload_admitting(&|_| true)
+    let ms = reload_admitting(&|_| true);
+    admit(ms.iter().filter(|m| !m.builtin).map(|m| m.name.clone()).collect(), true);
+    ms
+}
+
+/// Reads the manifests again, loading only plugins let in before: a folder new in `plugins/` waits.
+pub fn reload_admitted() -> Arc<Vec<Manifest>> {
+    let a = admitted();
+    reload_admitting(&|n| a.contains(n))
+}
+
+/// Plugins put in by hand and let in by a Reload outside a pane, by name; the lock's are let in without it.
+pub const ADMITTED: &str = "plugins-admitted.json";
+
+/// The lock's plugins and `plugins-admitted.json`'s; before that file exists, every folder in `plugins/`, as nerd loaded them.
+pub fn admitted() -> BTreeSet<String> {
+    let root = crate::paths::state_root();
+    let mut out: BTreeSet<String> = crate::install::read_lock().unwrap_or_default().into_iter().map(|p| p.name).collect();
+    match std::fs::read(root.join(ADMITTED)) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            static SAID: std::sync::Once = std::sync::Once::new();
+            SAID.call_once(|| crate::log::warn(&format!("{ADMITTED} is missing: every folder in plugins/ is let in, as at the first start")));
+            out.extend(folders(&root.join("plugins")))
+        }
+        r => match r.map_err(|e| e.to_string()).and_then(|b| serde_json::from_slice::<Vec<String>>(&b).map_err(|e| e.to_string())) {
+            Ok(names) => out.extend(names),
+            // Only the lock's, until the owner's Reload writes it again.
+            Err(e) => crate::log::warn_limited("admitted", &format!("{ADMITTED} does not parse ({e}): only the lock's plugins load until Reload plugins and agents")),
+        },
+    }
+    out
+}
+
+/// Adds `names` to the file; a name whose folder is gone leaves it, so a folder put there later under it waits.
+/// ceiling: a folder deleted by hand keeps its name let in until a start, a Reload or nerd's remove finds it gone; one put back
+/// under that name before then loads. Removing through nerd is the way past.
+pub fn admit(names: BTreeSet<String>, owner: bool) {
+    let path = crate::paths::state_root().join(ADMITTED);
+    if !crate::paths::state_root().is_dir() {
+        return;
+    }
+    let before: Vec<String> = match std::fs::read(&path).map_err(|e| e.kind() == std::io::ErrorKind::NotFound).and_then(|b| serde_json::from_slice(&b).map_err(|_| false)) {
+        Ok(names) => names,
+        Err(true) => Vec::new(),
+        // Broken or unreadable: left as it is until the owner's Reload writes it again.
+        Err(false) if owner => Vec::new(),
+        Err(false) => return,
+    };
+    let present = folders(&crate::paths::state_root().join("plugins"));
+    let now: BTreeSet<String> = before.into_iter().chain(names).filter(|n| present.contains(n)).collect();
+    let text = serde_json::to_string(&now).unwrap_or_default() + "\n";
+    if std::fs::read_to_string(&path).ok().as_deref() != Some(text.as_str()) && crate::paths::write_private(&path, "tmp", text.as_bytes()).is_err() {
+        crate::log::warn(&format!("plugins let in not written to {}", path.display()));
+    }
+}
+
+/// Plugins in `plugins/` not let in yet, the ones turned off aside.
+pub fn waiting() -> Vec<String> {
+    let (a, off) = (admitted(), crate::install::read_off().unwrap_or_default());
+    folders(&crate::paths::state_root().join("plugins")).into_iter().filter(|n| !a.contains(n) && !off.contains_key(n)).collect()
+}
+
+fn folders(dir: &Path) -> BTreeSet<String> {
+    std::fs::read_dir(dir).into_iter().flatten().flatten().filter(|e| e.path().join("plugin.json").is_file()).map(|e| e.file_name().to_string_lossy().into_owned()).collect()
 }
 
 /// Reads the manifests again, loading only the folders `admit` names.
@@ -647,6 +729,14 @@ pub fn validate(m: &Manifest, others: &[Manifest]) -> Result<(), String> {
     // a launcher or nerd itself would make every shell, script or pane "the agent"
     if let Some(n) = a.names.iter().find(|n| *n == "nerd" || crate::detect::LAUNCHERS.contains(&n.as_str())) {
         return Err(format!("{n} runs other programs, it is not an agent"));
+    }
+    // nerd types messages into an agent: into one of these they would reach another machine, database or prompt
+    if let Some(n) = a.names.iter().find(|n| NOT_AGENTS.contains(&n.as_str())) {
+        return Err(format!("{n} passes what is typed on to another machine or program, it is not an agent"));
+    }
+    // macOS's own shells, interpreters and tools; a built-in is checked once, here, not on each Mac
+    if !m.builtin && let Some((n, d)) = a.names.iter().find_map(|n| SYSTEM_BIN.iter().find(|d| system_program(&Path::new(d).join(n))).map(|d| (n, d))) {
+        return Err(format!("{n} is macOS's own {d}/{n}, it is not an agent"));
     }
     // a file of nerd's own replaces what is there: only built-ins may, a user's manifest merges into a JSON file
     if !m.builtin && a.config.as_ref().is_some_and(|c| matches!(c.shape, Shape::Own | Shape::Plugin)) {
@@ -1197,6 +1287,17 @@ mod tests {
     }
 
     #[test]
+    fn a_remote_shell_or_a_prompt_is_not_an_agent() {
+        for n in ["ssh", "psql", "irb", "tmux", "sudo", "mosh-client", "zellij", "perl", "lua", "nvim"] {
+            assert!(refused(serde_json::json!({ "names": ["fake", n] })).contains("passes what is typed on"), "{n}");
+        }
+        for n in ["ksh", "tcsh", "nc"] {
+            assert!(refused(serde_json::json!({ "names": ["fake", n] })).contains("is macOS's own"), "{n}");
+        }
+        assert!(refused(serde_json::json!({ "names": ["fake", "python3.12"] })).contains("lowercase letters, digits and dashes"));
+    }
+
+    #[test]
     fn a_user_manifest_cannot_take_a_builtin_name() {
         let e = refused(serde_json::json!({ "names": ["fake", "claude"] }));
         assert!(e.contains("built-in"), "{e}");
@@ -1218,6 +1319,45 @@ mod tests {
         let names: Vec<String> = load(&dir).into_iter().filter(|m| !m.builtin).map(|m| m.name).collect();
         assert_eq!(names, ["fake"]);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A server start is the first `all()` of a process: a folder put in by hand since waits, across starts too.
+    #[test]
+    fn a_folder_put_in_by_hand_is_let_in_only_by_reload_and_stays_so_across_starts() {
+        crate::session::tests::with_temp_state_dir("admitted", || {
+            let root = crate::paths::state_root();
+            let put = |n: &str| {
+                std::fs::create_dir_all(root.join("plugins").join(n)).unwrap();
+                std::fs::write(root.join("plugins").join(n).join("plugin.json"), serde_json::json!({ "name": n, "title": "T", "agent": { "names": [n] } }).to_string()).unwrap();
+            };
+            let start = || {
+                *LOADED.write().unwrap() = None;
+                all().iter().filter(|m| !m.builtin).map(|m| m.name.clone()).collect::<Vec<_>>()
+            };
+            for n in ["had", "pin", "rest"] {
+                put(n);
+            }
+            std::fs::write(root.join(crate::install::LOCK), format!(r#"[{{"name":"pin","source":"https://github.com/o/pin","commit":"{}"}}]"#, "a".repeat(40))).unwrap();
+            std::fs::write(root.join(crate::install::OFF), r#"{"rest": "turned off"}"#).unwrap();
+            assert_eq!(start(), ["had", "pin"], "the first start that keeps the file loads what the one before did");
+            put("planted");
+            assert_eq!(start(), ["had", "pin"], "a folder put in since waits, across a start");
+            assert_eq!(waiting(), ["planted"]);
+            std::fs::write(root.join(crate::install::OFF), "{}").unwrap();
+            assert_eq!(start(), ["had", "pin", "rest"], "one off at the first start is let in once turned on");
+            assert_eq!(reload_admitted().iter().filter(|m| !m.builtin).count(), 3, "a Reload from inside a pane lets nothing new in");
+            assert_eq!(reload().iter().filter(|m| !m.builtin).count(), 4);
+            assert_eq!(start(), ["had", "pin", "planted", "rest"], "let in by Reload, it stays let in");
+            crate::install::remove("planted", false).unwrap();
+            put("planted");
+            assert_eq!(start(), ["had", "pin", "rest"], "removed and put back, it waits again");
+            std::fs::write(root.join(ADMITTED), "[\"had\", broken").unwrap();
+            assert_eq!(start(), ["pin"], "a file that does not parse lets in the lock's only");
+            assert_eq!(std::fs::read_to_string(root.join(ADMITTED)).unwrap(), "[\"had\", broken", "and is left for the owner to see");
+            reload();
+            assert_eq!(start(), ["had", "pin", "planted", "rest"], "until the owner's Reload writes it again");
+            *LOADED.write().unwrap() = None;
+        });
     }
 
     #[test]
@@ -1598,6 +1738,11 @@ mod tests {
         let a = abilities(&agent).unwrap();
         assert_eq!(risk(&a), 3);
         assert_eq!(a.iter().map(|x| x.to_string()).collect::<Vec<_>>(), ["Speaks for the agent fake, fake-cli, adding nerd's hooks to ~/.fake/hooks.json, and restores its panes by typing `fake --resume {id}`"]);
+        let with = |data: serde_json::Value| abilities(&fake(serde_json::json!({ "data": data }))).unwrap();
+        let one = with(serde_json::json!(["~/.fake/sessions"]));
+        assert!(one.iter().any(|x| x.to_string().starts_with("Speaks for the agent fake, fake-cli, lets isolated panes write ~/.fake/sessions, adding")), "{one:?}");
+        assert_eq!(crate::plugins::new_abilities(&with(serde_json::json!(["~/.fake/sessions", "~/.fake/logs"])), &one).len(), 1, "an added data path asks again");
+        assert!(crate::plugins::new_abilities(&with(serde_json::json!([])), &one).is_empty(), "a data path dropped asks nothing");
     }
 
     #[test]

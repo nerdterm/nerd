@@ -16,6 +16,11 @@ struct Pane {
 impl Pane {
     /// `nerd --pane-exec` with `flags` running `script` as `/bin/sh script <nerd.sock> <msock> <args>`; HOME is outside every temp tree.
     fn start(name: &str, flags: &[&str], script: &str, args: &[&str]) -> Pane {
+        Pane::start_with(name, flags, script, args, |_| {})
+    }
+
+    /// As `start`, with `setup` given the test's folder (home, state, work) before the pane starts.
+    fn start_with(name: &str, flags: &[&str], script: &str, args: &[&str], setup: impl FnOnce(&Path)) -> Pane {
         let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("pane-exec-{name}-{}", std::process::id()));
         let socks = PathBuf::from(format!("/tmp/nt-s5-{}-{name}", std::process::id()));
         for d in [&dir, &socks] {
@@ -26,6 +31,7 @@ impl Pane {
         }
         let dir = dir.canonicalize().unwrap();
         std::fs::write(dir.join("pane.sh"), script).unwrap();
+        setup(&dir);
         let (own, msock) = (socks.join("s.sock"), socks.join("m.sock"));
         let _listeners = [&own, &msock].map(|p| std::os::unix::net::UnixListener::bind(p).unwrap());
         let nerd = env!("CARGO_BIN_EXE_nerd");
@@ -134,6 +140,30 @@ fn folder_and_no_network_keep_the_pane_in_its_folder_and_off_every_socket_but_th
     assert!(!out.contains("cache com.apple.python 0\n") && !out.contains("cache Homebrew 0\n"), "caches that run code later stay read-only: {out}");
     assert!(out.contains("cache other 0\n"), "other caches stay writable: {out}");
     assert!(!pane.dir.join("home/x").exists());
+}
+
+/// Each plugin's agent `data` is writable in a folder pane; a folder put in by hand and never let in adds nothing.
+#[test]
+fn a_plugin_folder_never_let_in_adds_nothing_to_a_folder_pane() {
+    let setup = |dir: &Path| {
+        for n in ["kept", "planted"] {
+            let p = dir.join("state/plugins").join(n);
+            std::fs::create_dir_all(&p).unwrap();
+            let m = serde_json::json!({ "name": n, "title": n, "agent": { "names": [n], "data": [format!("~/.{n}/sessions")] } });
+            std::fs::write(p.join("plugin.json"), m.to_string()).unwrap();
+            std::fs::create_dir_all(dir.join("home").join(format!(".{n}/sessions"))).unwrap();
+        }
+        std::fs::write(dir.join("state/plugins-admitted.json"), r#"["kept"]"#).unwrap();
+    };
+    let script = "touch \"$HOME/.kept/sessions/x\" 2>/dev/null; echo \"kept $?\" > out\n\
+         touch \"$HOME/.planted/sessions/x\" 2>/dev/null; echo \"planted $?\" >> out\n\
+         echo > done\n";
+    // Named by the server, and from an older server that names none: the file then.
+    for (name, flags) in [("named", &["--files", "folder", "--network", "none", "--plugins", "kept"][..]), ("unnamed", &["--files", "folder", "--network", "none"][..])] {
+        let pane = Pane::start_with(name, flags, script, &[], setup);
+        pane.wait_for("done");
+        assert_eq!(pane.wait_for("out"), "kept 0\nplanted 1\n", "{name}: {}", pane.read("stderr"));
+    }
 }
 
 #[test]

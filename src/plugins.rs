@@ -372,7 +372,7 @@ pub enum Ability {
     FilesSelected(Vec<String>),
     Writes(PathBuf),
     Network(Network),
-    Agent { names: Vec<String>, config: Option<String>, resume: Vec<String>, network: Network },
+    Agent { names: Vec<String>, data: Vec<String>, config: Option<String>, resume: Vec<String>, network: Network },
 }
 
 impl std::fmt::Display for Ability {
@@ -401,8 +401,11 @@ impl std::fmt::Display for Ability {
                 write!(f, "; could send anything it can read to those hosts, the environment of your other programs included")
             }
             Ability::Network(Network::None) => write!(f, "Reaches no network"),
-            Ability::Agent { names, config, resume, network } => {
+            Ability::Agent { names, data, config, resume, network } => {
                 write!(f, "Speaks for the agent {}", names.join(", "))?;
+                if !data.is_empty() {
+                    write!(f, ", lets isolated panes write {}", data.join(", "))?;
+                }
                 if let Network::Internet { hosts, ports } = network {
                     write!(f, ", lets a pane set to Only these providers reach {} on {} {}", hosts.join(", "), if ports.len() == 1 { "port" } else { "ports" }, crate::agents::join(ports))?;
                 }
@@ -435,11 +438,18 @@ impl Ability {
     }
 }
 
-/// What `now` can do that `before` could not; a network inside the one approved before is nothing new.
+/// What `now` can do that `before` could not; a network inside the one approved before, or an agent that only lost data paths, is nothing new.
 pub fn new_abilities(now: &std::collections::BTreeSet<Ability>, before: &std::collections::BTreeSet<Ability>) -> Vec<Ability> {
+    let fewer_paths = |a: &Ability, b: &Ability| match (a, b) {
+        (Ability::Agent { names, data, config, resume, network }, Ability::Agent { names: n, data: d, config: c, resume: r, network: w }) => {
+            (names, config, resume, network) == (n, c, r, w) && data.iter().all(|p| d.contains(p))
+        }
+        _ => false,
+    };
     now.iter()
         .filter(|a| !before.contains(a))
         .filter(|a| !matches!(a, Ability::Network(n) if before.iter().any(|b| matches!(b, Ability::Network(w) if n.within(w)))))
+        .filter(|a| !before.iter().any(|b| fewer_paths(a, b)))
         .cloned()
         .collect()
 }
@@ -471,7 +481,7 @@ pub fn abilities(m: &Manifest) -> Result<std::collections::BTreeSet<Ability>, St
         out.insert(Ability::Network(m.permissions.network.clone()));
     }
     if !m.agent.names.is_empty() {
-        out.insert(Ability::Agent { names: m.agent.names.clone(), config: m.agent.config.as_ref().map(|c| c.path.clone()), resume: m.agent.resume.clone(), network: m.agent.network.net.clone() });
+        out.insert(Ability::Agent { names: m.agent.names.clone(), data: m.agent.data.clone(), config: m.agent.config.as_ref().map(|c| c.path.clone()), resume: m.agent.resume.clone(), network: m.agent.network.net.clone() });
     }
     Ok(out)
 }
