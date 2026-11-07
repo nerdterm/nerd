@@ -990,7 +990,13 @@ fn write_settings(path: &Path, root: &Value) -> std::io::Result<()> {
     // dotfiles manager's) is written where it points, so the link stays the live file.
     let path = if path.is_symlink() { std::fs::canonicalize(path)? } else { path.to_path_buf() };
     let tmp = path.with_extension("json.nerd-tmp");
-    std::fs::write(&tmp, text)?;
+    // The file keeps its mode, a new one is the user's alone; set before any byte is in it.
+    use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
+    let mode = std::fs::metadata(&path).map_or(0o600, |m| m.permissions().mode() & 0o777);
+    let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp)?;
+    f.set_permissions(std::fs::Permissions::from_mode(mode))?;
+    std::io::Write::write_all(&mut f, text.as_bytes())?;
+    drop(f);
     std::fs::rename(&tmp, &path)
 }
 
@@ -1063,6 +1069,26 @@ fn remove_entries(root: &mut Value) {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    #[test]
+    fn a_rewritten_config_keeps_its_mode_and_a_new_one_is_0600() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = std::env::temp_dir().join(format!("nerd-hook-mode-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        for want in [0o600, 0o644] {
+            let p = dir.join(format!("{want:o}.json"));
+            std::fs::write(&p, "{}").unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(want)).unwrap();
+            write_settings(&p, &serde_json::json!({ "hooks": {} })).unwrap();
+            assert_eq!(mode(&p), want, "{want:o}");
+        }
+        let new = dir.join("new.json");
+        write_settings(&new, &serde_json::json!({})).unwrap();
+        assert_eq!(mode(&new), 0o600, "a new file");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn a_config_that_is_a_link_stays_a_link_and_its_target_is_written() {

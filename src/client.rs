@@ -683,7 +683,7 @@ fn session(
     let pump = std::thread::Builder::new().name("screen".into()).spawn(move || {
         let mut out = Screen;
         pump(first, reader, &mut out, switches, |r| {
-            if r.reload {
+            if reloads(r, connects) {
                 reload_ghostty();
             }
             for _ in 0..r.open {
@@ -749,6 +749,13 @@ fn session(
                 }
             }
         }
+        // A paste the server could not read whole is dropped here, as it was there: sent, it would end the session.
+        if let Event::Paste(p) = &ev
+            && !crate::proto::fits(&ClientMsg::Event(Event::Paste(p.clone())))
+        {
+            crate::log::warn(&format!("a paste of {} bytes is over the limit of one message; dropped", p.len()));
+            continue;
+        }
         if ClientMsg::Event(ev).write_to(&mut writer).is_err() {
             break;
         }
@@ -765,6 +772,11 @@ fn session(
 /// A remote client serves no connect requests: that server would reach this Mac's other machines.
 fn connect_asks(r: &Requests, connects: bool) -> (&[String], &[(String, Option<String>)]) {
     if connects { (&r.list, &r.connect) } else { (&[], &[]) }
+}
+
+/// A remote client signals no terminal to reread its config: a server on another Mac does not reach this one's Ghostty.
+fn reloads(r: &Requests, connects: bool) -> bool {
+    connects && r.reload
 }
 
 /// The id of server `query` of this Mac, by id or name; never the legacy one, which has no id to resume.
@@ -854,7 +866,9 @@ fn last_line(stderr: &str) -> String {
 fn list_remote(ssh: &Path, entry: &crate::config::RemoteEntry, limit: Option<Duration>) -> Result<Vec<crate::proto::RemoteInstance>, (bool, String)> {
     use std::process::Stdio;
     let mut cmd = crate::spawn::cmd(ssh);
+    // Neither this Mac's agent nor its display goes to the machine, whatever ~/.ssh/config says for it.
     cmd.args(["-o", "ConnectTimeout=10", "-o", "ControlMaster=no", "-o", "ControlPath=none"]);
+    cmd.args(["-o", "ClearAllForwardings=yes", "-o", "ForwardAgent=no", "-o", "ForwardX11=no"]);
     if limit.is_some() {
         cmd.args(["-n", "-o", "BatchMode=yes"]);
     }
@@ -872,7 +886,7 @@ fn list_remote(ssh: &Path, entry: &crate::config::RemoteEntry, limit: Option<Dur
     let (Some(out), Some(err)) = (child.stdout.take(), child.stderr.take()) else {
         return Err((false, "ssh started without its pipes".into()));
     };
-    let (out, err) = (collect(out), collect(err));
+    let (out, err) = (collect(out, false), collect(err, true));
     let deadline = limit.map(|l| Instant::now() + l);
     let status = loop {
         match child.try_wait() {
@@ -1024,15 +1038,27 @@ fn lost_message(name: &str, id: &str) -> String {
 }
 
 /// A pipe read to its end on its own thread, and what came so far.
-type Collected = (std::thread::JoinHandle<()>, std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+type Collected = (std::thread::JoinHandle<()>, std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<u8>>>);
 
-fn collect(mut pipe: impl Read + Send + 'static) -> Collected {
-    let got = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+/// What a machine's ssh may leave in memory per pipe; the pipe is still drained to its end.
+const KEPT: usize = 1 << 20;
+
+/// The first `KEPT` bytes, or with `tail` the last (stderr's last line says why ssh failed).
+fn collect(mut pipe: impl Read + Send + 'static, tail: bool) -> Collected {
+    let got = std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
     let keep = got.clone();
     let reader = std::thread::spawn(move || {
         let mut buf = [0u8; 4096];
         while let Ok(n @ 1..) = pipe.read(&mut buf) {
-            keep.lock().unwrap_or_else(|e| e.into_inner()).extend_from_slice(&buf[..n]);
+            let mut g = keep.lock().unwrap_or_else(|e| e.into_inner());
+            if tail {
+                g.extend(&buf[..n]);
+                let over = g.len().saturating_sub(KEPT);
+                g.drain(..over);
+            } else {
+                let room = KEPT.saturating_sub(g.len());
+                g.extend(&buf[..n.min(room)]);
+            }
         }
     });
     (reader, got)
@@ -1043,7 +1069,7 @@ fn collected((reader, got): Collected, until: Instant) -> Vec<u8> {
     while !reader.is_finished() && Instant::now() < until {
         std::thread::sleep(Duration::from_millis(10));
     }
-    got.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    got.lock().unwrap_or_else(|e| e.into_inner()).iter().copied().collect()
 }
 
 /// ssh running `nerd --relay <id>` there, its stdio the session's stream.
@@ -1065,6 +1091,7 @@ fn spawn_relay(ssh: &Path, host: &str, id: &str) -> std::io::Result<Relay> {
     let mut child = crate::spawn::cmd(ssh)
         .args(["-T", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3"])
         .args(["-o", "ControlMaster=no", "-o", "ControlPath=none", "-o", "ClearAllForwardings=yes"])
+        .args(["-o", "ForwardAgent=no", "-o", "ForwardX11=no"])
         .arg("--")
         .arg(host)
         .arg(format!("{REMOTE_PATH}; nerd --relay {id}"))
@@ -1077,7 +1104,7 @@ fn spawn_relay(ssh: &Path, host: &str, id: &str) -> std::io::Result<Relay> {
     let (Some(stdin), Some(stdout), Some(err)) = (child.stdin.take(), child.stdout.take(), child.stderr.take()) else {
         return Err(std::io::Error::other("ssh started without its pipes"));
     };
-    Ok(Relay { child, stdin, stdout, stderr: collect(err) })
+    Ok(Relay { child, stdin, stdout, stderr: collect(err, true) })
 }
 
 /// ssh's exit code and what it said; ssh gets a few seconds to go after its stdin closed.
@@ -2138,6 +2165,16 @@ mod remote_tests {
     }
 
     #[test]
+    fn a_machine_s_output_is_kept_to_a_mib_stdout_from_its_start_stderr_from_its_end() {
+        let three: Vec<u8> = (0..3 * KEPT).map(|i| (i % 251) as u8).collect();
+        let until = Instant::now() + Duration::from_secs(10);
+        let head = collected(collect(std::io::Cursor::new(three.clone()), false), until);
+        assert_eq!(head, three[..KEPT], "stdout: the first MiB");
+        let tail = collected(collect(std::io::Cursor::new(three.clone()), true), until);
+        assert_eq!(tail, three[2 * KEPT..], "stderr: the last MiB");
+    }
+
+    #[test]
     fn a_list_call_fails_in_words_and_passes_nothing_of_ours_to_the_host() {
         let fake = Fake::new("list", "json");
         std::fs::write(
@@ -2149,7 +2186,7 @@ mod remote_tests {
         assert_eq!(list.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(), ["1"]);
         list_remote(&fake.ssh(), &fake.entry(), Some(Duration::from_secs(5))).unwrap();
         let cmd = format!("{REMOTE_PATH}; nerd --list --json");
-        let base = ["-o", "ConnectTimeout=10", "-o", "ControlMaster=no", "-o", "ControlPath=none"];
+        let base = ["-o", "ConnectTimeout=10", "-o", "ControlMaster=no", "-o", "ControlPath=none", "-o", "ClearAllForwardings=yes", "-o", "ForwardAgent=no", "-o", "ForwardX11=no"];
         let calls = fake.calls();
         assert_eq!(calls[0], [&base[..], &["--", "fake-host", &cmd]].concat());
         assert_eq!(calls[1], [&base[..], &["-n", "-o", "BatchMode=yes", "--", "fake-host", &cmd]].concat(), "the menu's call cannot prompt");
@@ -2203,7 +2240,7 @@ mod remote_tests {
         let cmd = format!("{REMOTE_PATH}; nerd --relay 1");
         let relay = [
             "-T", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3", "-o", "ControlMaster=no",
-            "-o", "ControlPath=none", "-o", "ClearAllForwardings=yes", "--", "fake-host", &cmd,
+            "-o", "ControlPath=none", "-o", "ClearAllForwardings=yes", "-o", "ForwardAgent=no", "-o", "ForwardX11=no", "--", "fake-host", &cmd,
         ];
         assert_eq!(fake.calls()[0], relay);
         assert_eq!(fake.leftovers(), "", "nothing of the session is left running");
@@ -2261,6 +2298,9 @@ mod remote_tests {
         assert_eq!((list.len(), connect.len()), (1, 1));
         let (list, connect) = connect_asks(&r, false);
         assert!(list.is_empty() && connect.is_empty(), "a server on another Mac cannot make this one ssh or open windows");
+        let r = take_requests(crate::proto::RELOAD_KEYS, &mut Vec::new());
+        assert!(reloads(&r, true));
+        assert!(!reloads(&r, false), "nor signal its terminal");
     }
 
     #[test]

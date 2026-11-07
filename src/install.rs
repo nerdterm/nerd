@@ -192,11 +192,7 @@ fn git_exe() -> Result<PathBuf, String> {
     }
     let out = crate::spawn::cmd(&exe).arg("--version").env_remove("GIT_EXEC_PATH").output().map_err(|e| format!("git: {e}"))?;
     let text = String::from_utf8_lossy(&out.stdout);
-    let v = text.split_whitespace().nth(2).and_then(|v| {
-        let mut p = v.split('.').map(|x| x.parse::<u32>().ok());
-        Some((p.next()??, p.next()??, p.next().flatten().unwrap_or(0)))
-    });
-    match v {
+    match crate::git::version(&text) {
         // Apple's git is asked about each time: removing the Command Line Tools turns it back into the stub.
         Some(v) if v >= GIT_MIN && exe == Path::new("/usr/bin/git") => Ok(exe),
         Some(v) if v >= GIT_MIN => Ok(FOUND.get_or_init(|| exe).clone()),
@@ -420,6 +416,13 @@ pub fn fetch_tree(url: &str, local: bool, into: &Path) -> Result<(), String> {
     let commit = text(git(Net::No, Some(&repo), &["rev-parse", "--verify", "HEAD^{commit}"])?);
     inspect(&repo, &commit)?;
     git(Net::No, Some(&repo), &["checkout", "--quiet", "--detach", &commit])?;
+    // inspect reads each link's text; only the files on disk show a chain of links (s -> ., l -> s/..) leaving.
+    let root = repo.canonicalize().map_err(|e| e.to_string())?;
+    let mut problems = Vec::new();
+    crate::agents::folder_rules(&root, &root, &mut problems);
+    if let Some(p) = problems.into_iter().next() {
+        return Err(format!("the catalog: {p}"));
+    }
     std::fs::remove_dir_all(repo.join(".git")).map_err(|e| e.to_string())?;
     let _g = guard()?;
     let placed = if into.exists() { swap(&repo, into) } else { std::fs::rename(&repo, into) };

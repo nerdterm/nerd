@@ -813,6 +813,30 @@ mod tests {
     }
 
     #[test]
+    fn a_worktree_nerd_will_not_delete_keeps_its_space_open() {
+        let dir = crate::git::tests::init_repo("keep-space");
+        let (added, _) = crate::git::add_worktree(&dir, "keep").unwrap();
+        assert!(std::process::Command::new("git").arg("-C").arg(&dir).args(["config", "include.path", "x.cfg"]).status().unwrap().success());
+        let mut app = with_one_space();
+        app.spaces[0].cwd = added.clone();
+        app.perform(Pending::RemoveWorktree(0));
+        assert_eq!(app.spaces.len(), 1, "its panes stay");
+        assert!(app.notice.as_deref().is_some_and(|n| n.contains("includes other files")), "{:?}", app.notice);
+        assert!(added.is_dir());
+        let _ = std::fs::remove_dir_all(&added);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn what_nerd_types_into_a_pane_for_the_owner_holds_messages_like_the_owner_typing() {
+        let mut app = with_one_space();
+        let pane = agent_pane(&app, 1, Default::default());
+        app.spaces[0].tabs[0].panes.insert(1, pane);
+        app.pane_type("cd /tmp\n");
+        assert_eq!(app.mail.owner_typed.map(|(p, _)| p), Some(1));
+    }
+
+    #[test]
     fn the_hook_item_asks_before_hooking_an_agent_for_the_first_time() {
         crate::session::tests::with_temp_state_dir("first-install", || {
             let home = crate::paths::home().unwrap();

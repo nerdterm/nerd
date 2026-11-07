@@ -196,7 +196,7 @@ fn serve(started: &mut bool) -> std::io::Result<()> {
     accept_loop(listener, inbox.clone(), carried, waiting.clone());
     match plugin_listener {
         Ok(l) => crate::plugins::listen(l, inbox.clone()),
-        Err(e) => error(&format!("plugin socket failed: {e}, plugins cannot connect")),
+        Err(e) => error(&format!("plugin socket failed: {e}; plugins do not start")),
     }
     match msock_listener {
         Ok(l) => crate::msock::start(l, inbox.clone()),
@@ -319,8 +319,7 @@ fn serve(started: &mut bool) -> std::io::Result<()> {
         nix::fcntl::fcntl(fd, nix::fcntl::FcntlArg::F_SETFD(nix::fcntl::FdFlag::FD_CLOEXEC))?;
         let stream = unsafe { UnixStream::from_raw_fd(fd) };
         let peer = Peer::of(&stream);
-        app.client_inside = nix::sys::socket::getsockopt(&stream, nix::sys::socket::sockopt::LocalPeerPid)
-            .is_ok_and(|pid| crate::transport::inside(pid, crate::broker::pid(), crate::transport::parent_pid));
+        app.client_inside = peer.inside == Some(true);
         if let Ok(reader) = stream.try_clone() {
             let inbox = inbox.clone();
             std::thread::spawn(move || read_client(id, reader, inbox, true, Waiting::default(), crate::transport::allow_from_panes));
