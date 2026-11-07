@@ -407,6 +407,11 @@ impl Isolation {
         self.files == Files::Everything && self.network == Network::Open
     }
 
+    /// A pane nerd applies a Seatbelt profile to.
+    pub fn profiled(files: &Files, network: &Network) -> bool {
+        *files == Files::Folder || *network != Network::Open
+    }
+
     /// "" when open.
     pub fn words(&self) -> String {
         let files = match &self.files {
@@ -663,6 +668,17 @@ mod tests {
         assert_eq!(only(&["pi"]), "only pi");
         assert_eq!(only(&["claude", "pi/openai", "pi/deepseek"]), "only claude, pi (deepseek, openai)");
         assert_eq!(only(&["pi/deepseek", "pi"]), "only pi", "the agent beside its groups is the whole agent");
+    }
+
+    #[test]
+    fn profiled_is_where_a_profile_applies() {
+        let acct = || Files::Account("scout".into());
+        let p = || Network::Providers(vec!["claude".into()]);
+        for (f, n) in [(Files::Folder, Network::Open), (Files::Folder, Network::None), (Files::Folder, p()), (Files::Everything, Network::None), (Files::Everything, p()), (acct(), Network::None), (acct(), p())] {
+            assert!(Isolation::profiled(&f, &n), "{f:?} {n:?}");
+        }
+        assert!(!Isolation::profiled(&Files::Everything, &Network::Open));
+        assert!(!Isolation::profiled(&acct(), &Network::Open), "the account confines its files; its own sandbox and setuid programs keep working");
     }
 
     #[test]

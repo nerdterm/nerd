@@ -53,6 +53,8 @@ pub struct IsolationWin {
     pub pick: Option<Isolation>,
     /// A tab's or a space's word for nothing of its own; None for a pane, which always has one.
     pub inherit: Option<&'static str>,
+    /// What `pick: None` stands for: the space's for a tab, nerd's default for a space.
+    pub inherited: Isolation,
     pub accounts: Vec<String>,
     /// Agents whose manifest names their provider's hosts.
     pub providers: Vec<String>,
@@ -94,6 +96,9 @@ const FOLDER_COSTS: [&str; 4] = [
     "  uv, pnpm, Go, pip and others fail unless their cache is in this folder",
 ];
 const NO_AGENT: &str = "  git over ssh and docker do not work: no ssh agent, no Docker";
+const NO_MUX: &str = "  tmux and Zellij here run only this pane's sessions; the WezTerm, iTerm2 and kitty sockets nerd knows are closed";
+const NO_LAUNCH: &str = "open cannot open files or links, launchctl cannot add jobs, and osascript cannot control other apps here; scripts and the clipboard still work";
+const NO_PREFS: &str = "programs cannot save macOS settings here: defaults, Xcode and other Apple tools";
 const SETUID: &str = "ps, top, sudo and other setuid programs do not run in an isolated pane";
 
 /// Down on a frame: its close button or outside it closes; otherwise what was hit.
@@ -163,17 +168,20 @@ impl IsolationWin {
         }
         out.push(radio(network == Some(&Network::None), "None".into(), Some(Click::Network(Network::None))));
         let folder = files == Some(&Files::Folder);
-        out.push(Vec::new());
+        let mut costs: Vec<&str> = Vec::new();
         if folder {
-            out.extend(FOLDER_COSTS.iter().map(|t| vec![((*t).into(), g.fg(theme.faint), None)]));
+            costs.extend(FOLDER_COSTS);
         }
         if folder && network == Some(&Network::Open) {
-            out.push(vec![(NO_AGENT.into(), g.fg(theme.faint), None)]);
+            costs.extend([NO_AGENT, NO_MUX]);
         }
-        out.push(vec![(SETUID.into(), g.fg(theme.faint), None)]);
-        for n in &self.notes {
-            out.push(vec![(n.clone(), g.fg(theme.faint), None)]);
+        let shown = self.pick.as_ref().unwrap_or(&self.inherited);
+        if Isolation::profiled(&shown.files, &shown.network) {
+            costs.extend([NO_LAUNCH, NO_PREFS, SETUID]);
+            costs.extend(self.notes.iter().map(String::as_str));
         }
+        out.push(Vec::new());
+        out.extend(costs.into_iter().map(|t| vec![(t.to_string(), g.fg(theme.faint), None)]));
         if folder && self.home {
             out.push(vec![(HOME_FOLDER.into(), g.fg(theme.warn), None)]);
         }
@@ -484,6 +492,7 @@ pub(crate) mod tests {
             about: "reader".into(),
             pick: Some(Isolation::default()),
             inherit: None,
+            inherited: Isolation::default(),
             accounts: vec!["scout".into()],
             providers: vec!["claude".into(), "codex".into()],
             groups: Vec::new(),
@@ -702,11 +711,19 @@ pub(crate) mod tests {
             crate::app::snapshots::dump(&buf, Rect::new(0, 0, 100, 40))
         };
         assert!(FOLDER_COSTS.iter().all(|c| shown.contains(c.trim())) && shown.contains("Codex: run it with") && shown.contains(SETUID), "{shown}");
-        assert!(!shown.contains(NO_AGENT), "only these providers: {shown}");
+        let has = |w: &IsolationWin, t: &str| w.lines(&Theme::dark()).iter().flatten().any(|(s, _, _)| s.starts_with(t));
+        assert!(has(&w, NO_LAUNCH) && has(&w, NO_PREFS), "wrapped where the window is narrow: {shown}");
+        assert!(!has(&w, NO_AGENT) && !has(&w, NO_MUX), "only these providers: {shown}");
+        let profiled = [NO_LAUNCH, NO_PREFS, SETUID, "Codex: run it with"];
         click_on(&mut w, "Open");
-        assert!(w.lines(&Theme::dark()).iter().flatten().any(|(t, _, _)| t == NO_AGENT), "this folder only with open network");
+        assert!(has(&w, NO_AGENT) && has(&w, NO_MUX), "this folder only with open network");
+        assert!(profiled.iter().all(|t| has(&w, t)), "a profile with open network too");
+        click_on(&mut w, "Everything");
+        assert!(!profiled.iter().any(|t| has(&w, t)), "everything and open: no profile, nothing it costs");
         click_on(&mut w, "Another account: scout");
+        assert!(!profiled.iter().any(|t| has(&w, t)), "another account with open network: no profile");
         click_on(&mut w, "None");
+        assert!(profiled.iter().all(|t| has(&w, t)), "another account with no network");
         let want = Isolation { files: Files::Account("scout".into()), network: Network::None };
         assert_eq!(click_on(&mut w, "[r] save and restart"), Out::Save(Some(want.clone()), true));
         assert_eq!(w.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)), Out::Save(Some(want), false));
@@ -726,7 +743,11 @@ pub(crate) mod tests {
 
     #[test]
     fn a_tab_can_go_back_to_its_space() {
+        let launch = |w: &IsolationWin| [NO_LAUNCH, NO_PREFS].map(|t| w.lines(&Theme::dark()).iter().flatten().any(|(s, _, _)| s == t));
+        let w = IsolationWin { target: IsolationTarget::Tab(0, 1), inherit: Some("as the space"), pick: None, inherited: Isolation { files: Files::Folder, network: Network::None }, ..pane() };
+        assert_eq!(launch(&w), [true, true], "the space's profile is what the tab's new panes get");
         let mut w = IsolationWin { target: IsolationTarget::Tab(0, 1), inherit: Some("as the space"), pick: None, ..pane() };
+        assert_eq!(launch(&w), [false, false], "a space left open");
         click_on(&mut w, "None");
         assert_eq!(w.pick, Some(Isolation { files: Files::Everything, network: Network::None }));
         click_on(&mut w, "as the space");

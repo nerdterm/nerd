@@ -513,7 +513,7 @@ impl App {
     }
 
     /// A plugin added, updated, removed or turned off or on outside the server: only the ones whose manifest changed
-    /// restart. A folder that no lock names and that was not loaded waits for Reload plugins.
+    /// restart. A folder that no lock names and that was never let in waits for Reload plugins, turned off and on or not.
     pub(super) fn reload_plugins_if_changed(&mut self) {
         let seen = crate::install::seen();
         if seen == self.plugins_seen {
@@ -521,13 +521,8 @@ impl App {
         }
         self.plugins_seen = seen;
         let before = crate::agents::all();
-        let pinned: HashSet<String> = crate::install::read_lock().unwrap_or_default().into_iter().map(|p| p.name).collect();
-        // A plugin just turned on was known before it was turned off, pinned or not.
-        let now_off: HashSet<String> = crate::install::read_off().unwrap_or_default().into_keys().collect();
-        // Only a plugin that was loaded when it was turned off: a folder dropped in and toggled still waits.
-        let now_off: HashSet<String> = now_off.into_iter().filter(|n| self.plugins_off.contains(n) || before.iter().any(|m| m.name == *n)).collect();
-        let was_off = std::mem::replace(&mut self.plugins_off, now_off);
-        let after = crate::agents::reload_admitting(&|n| pinned.contains(n) || was_off.contains(n) || before.iter().any(|m| m.name == n));
+        let admitted = crate::agents::admitted();
+        let after = crate::agents::reload_admitting(&|n| admitted.contains(n) || before.iter().any(|m| m.name == n));
         let commits = std::mem::replace(&mut self.plugins_commits, crate::install::commits());
         for m in before.iter().filter(|m| !m.builtin) {
             // Removed and added again within one poll, or updated with only its code changed: the manifest reads the same.

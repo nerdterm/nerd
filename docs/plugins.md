@@ -58,9 +58,15 @@ your answer the window comes back with the same row chosen. When there is nothin
 the fetch fails, they say why in a line or two, and show log opens git's full output.
 
 **By hand.** Put the folder at `~/Library/Application Support/nerd/plugins/<name>/` (the state root's `plugins/`;
-the folder name is the manifest's `name`) and choose Reload plugins and agents; until then the Plugins window says
-**waits for Reload**, and Enter on its row does it. A folder that appears there is never loaded on its own, so nothing
-can slip a plugin in unseen. Such a plugin is never updated. A
+the folder name is the manifest's `name`) and choose Reload plugins and agents in a nerd window opened from your
+terminal; until then the Plugins window says **waits for Reload**, and Enter on its row does it. A folder that appears
+there is never loaded on its own, not when nerd starts again and not into an isolated pane, so nothing can slip a
+plugin in unseen. From a window inside a pane, Reload loads again only the plugins already let in. nerd keeps the
+names it let in, the lock's included, in `plugins-admitted.json` in the state root. The first start of a version that
+keeps the file lets in every folder already there, and a missing `plugins-admitted.json` lets every folder in, as the
+first start did; `daemon.log` says so. A file that does not parse lets in only the lock's plugins and is left as it
+is until your next Reload. The file holds names, not contents: a plugin let in whose manifest is edited by hand later
+loads as edited, with no question. Such a plugin is never updated. A
 manifest that breaks a rule is skipped, and `daemon.log` says why (`agent manifest skipped: <path>: <why>`).
 
 **The lock.** `plugins.lock` in the state root records each plugin installed from git: its name, address, tag and

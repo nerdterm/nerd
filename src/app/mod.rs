@@ -117,8 +117,6 @@ pub struct App {
     pub plugin_job: Option<crate::plugin_list::Job>,
     /// Plugins a pane staged that the Plugins window has asked about.
     plugins_asked: HashSet<String>,
-    /// The plugins off when plugins-off.json was last read.
-    plugins_off: HashSet<String>,
     /// config.json did not parse: the last good settings stay and nothing writes the file.
     pub cfg_broken: bool,
     /// Right-hand file tree panel; None means hidden.
@@ -348,7 +346,6 @@ impl App {
             servers_back: None,
             servers: crate::worker::Worker::spawn("servers", bell.clone(), crate::server_list::work, crate::server_list::failed),
             plugin_job: None,
-            plugins_off: crate::install::read_off().unwrap_or_default().into_keys().collect(),
             cfg_broken: false,
             tree: None,
             focus: Focus::default(),
@@ -3025,6 +3022,32 @@ mod tests {
     }
 
     #[test]
+    fn isolation_names_the_plugin_a_sandbox_note_comes_from() {
+        crate::session::tests::with_temp_state_dir("iso-notes", || {
+            let dir = crate::paths::state_root().join("plugins/mimic");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("plugin.json"), serde_json::json!({ "name": "mimic", "title": "Claude Code", "agent": { "names": ["mimic"], "own_sandbox": "turn its sandbox off" } }).to_string()).unwrap();
+            // Its title fills the first line to the wrap width, the "  plugin long: " prefix counted, so the wrapped rest would start a line as Claude Code's does.
+            let long = crate::paths::state_root().join("plugins/long");
+            std::fs::create_dir_all(&long).unwrap();
+            let own = "Claude Code: turn /sandbox off; nerd's limits already cover the whole agent";
+            std::fs::write(long.join("plugin.json"), serde_json::json!({ "name": "long", "title": "a".repeat(76 - 14), "agent": { "names": ["long"], "own_sandbox": own } }).to_string()).unwrap();
+            crate::agents::reload();
+            let Overlay::Isolation(mut w) = with_one_space().isolation_overlay(IsolationTarget::Space(0)) else { panic!("it opens") };
+            // Notes show only for a pick with a profile.
+            w.pick = Some(crate::policy::Isolation { files: crate::policy::Files::Folder, network: crate::policy::Network::None });
+            let rows = crate::messages::wrap(w.lines(&crate::render::Theme::dark()), 76);
+            let text: Vec<String> = rows.iter().map(|l| l.iter().map(|s| s.0.as_str()).collect()).collect();
+            assert_eq!(text.iter().filter(|l| l.starts_with("Claude Code:")).count(), 1, "only the built-in's note starts a line so: {text:#?}");
+            assert!(w.notes.iter().any(|n| n == "  plugin mimic: Claude Code: turn its sandbox off"), "{:?}", w.notes);
+            assert!(w.notes.iter().any(|n| n.starts_with("Claude Code: turn /sandbox off")), "a built-in's note is as before: {:?}", w.notes);
+            let _ = std::fs::remove_dir_all(&dir);
+            let _ = std::fs::remove_dir_all(&long);
+            crate::agents::reload();
+        });
+    }
+
+    #[test]
     fn isolation_knows_a_pane_whose_folder_is_the_home_folder() {
         crate::config::tests::with_temp_home(|| {
             let mut app = named();
@@ -4335,6 +4358,8 @@ mod tests {
     fn a_folder_put_in_by_hand_waits_for_reload_and_enter_on_its_row_loads_it() {
         crate::session::tests::with_temp_state_dir("plugins-waits", || {
             let mut app = with_one_space();
+            // Started before the folder appears: the first start would let in what it finds.
+            crate::agents::reload();
             let dir = crate::paths::state_root().join("plugins/hand");
             std::fs::create_dir_all(&dir).unwrap();
             std::fs::write(dir.join("plugin.json"), serde_json::json!({ "name": "hand", "title": "H", "agent": { "names": ["hand"] } }).to_string()).unwrap();
@@ -4353,6 +4378,25 @@ mod tests {
             assert!(crate::agents::get("hand").is_some(), "Enter loaded it");
             let after = text(&mut app);
             assert!(!after.contains("waits for Reload"), "{after}");
+            crate::agents::reload();
+        });
+    }
+
+    #[test]
+    fn reload_from_a_window_inside_a_pane_lets_no_folder_in() {
+        crate::session::tests::with_temp_state_dir("plugins-inside", || {
+            let mut app = with_one_space();
+            crate::agents::reload();
+            let dir = crate::paths::state_root().join("plugins/hand");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("plugin.json"), serde_json::json!({ "name": "hand", "title": "H", "agent": { "names": ["hand"] } }).to_string()).unwrap();
+            app.client_inside = true;
+            app.run_action(Action::ReloadConfig, &MenuCtx::Global);
+            assert!(crate::agents::get("hand").is_none(), "an agent's window cannot let its own folder in");
+            assert_eq!(app.notice.as_deref(), Some("Not from a window inside a pane: open nerd from your terminal to load a plugin put in by hand."));
+            app.client_inside = false;
+            app.run_action(Action::ReloadConfig, &MenuCtx::Global);
+            assert!(crate::agents::get("hand").is_some(), "the owner's Reload does");
             crate::agents::reload();
         });
     }

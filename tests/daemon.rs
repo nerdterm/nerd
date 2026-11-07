@@ -2680,6 +2680,28 @@ fn group_gone(pid: i32) -> bool {
     nix::sys::signal::killpg(nix::unistd::Pid::from_raw(pid), None).is_err()
 }
 
+/// The first start with the file keeps what was there; a folder put in by hand later waits across a restart.
+#[test]
+fn a_plugin_folder_put_in_by_hand_waits_across_a_restart() {
+    let env = setup_env("plugin-admitted");
+    install_plugin(&env, "kept", test_plugin("kept", &["command"], &["command"], "ping"));
+    let mut daemon = spawn_daemon(&env);
+    let mut client = connect(&env, 100, 30);
+    assert!(wait_for(&mut client, "spaces", Duration::from_secs(5)), "no frame: {}", daemon_log(&env));
+    assert_eq!(read(&env.dir.join("plugins-admitted.json")), "[\"kept\"]\n", "{}", daemon_log(&env));
+    assert_eq!(daemon_log(&env).matches("plugins-admitted.json is missing: every folder in plugins/ is let in").count(), 1, "{}", daemon_log(&env));
+    stop_and_wait(&env, &mut daemon);
+
+    install_plugin(&env, "planted", test_plugin("planted", &["command"], &["command"], "pong"));
+    let _daemon = spawn_daemon(&env);
+    let mut client = connect(&env, 100, 30);
+    assert!(wait_for(&mut client, "spaces", Duration::from_secs(5)), "no frame: {}", daemon_log(&env));
+    let log = daemon_log(&env);
+    assert_eq!(log.matches("agent manifest loaded: kept").count(), 2, "{log}");
+    assert!(log.contains("plugin planted waits for Reload plugins") && !log.contains("agent manifest loaded: planted"), "{log}");
+    let _ = std::fs::remove_dir_all(&env.dir);
+}
+
 #[test]
 fn plugins_start_after_an_update_from_a_broker_too_old_to_launch_them() {
     let env = setup_env("plugin-old-broker");

@@ -2907,13 +2907,13 @@ console.log("{}")
     #[test]
     fn a_user_manifest_aimed_at_a_file_that_is_not_json_writes_nothing() {
         let home = scratch_home("vim");
-        std::fs::create_dir_all(home.join(".vim")).unwrap();
-        std::fs::write(home.join(".vim/vimrc"), "set nu\n").unwrap();
-        let m: Manifest = serde_json::from_value(json!({ "name": "vim", "title": "V", "agent": { "names": ["vim"], "config": { "path": "~/.vim/vimrc", "shape": "nested" }, "arg": "vim", "events": [{ "on": "x", "do": "idle" }] } })).unwrap();
+        std::fs::create_dir_all(home.join(".vimlike")).unwrap();
+        std::fs::write(home.join(".vimlike/vimrc"), "set nu\n").unwrap();
+        let m: Manifest = serde_json::from_value(json!({ "name": "vimlike", "title": "V", "agent": { "names": ["vimlike"], "config": { "path": "~/.vimlike/vimrc", "shape": "nested" }, "arg": "vimlike", "events": [{ "on": "x", "do": "idle" }] } })).unwrap();
         assert!(crate::agents::validate(&m, &crate::agents::builtins()).is_ok(), "the path rule alone lets it through");
         assert!(install_one(&m, &home).is_err_and(|e| e.to_string().contains("does not parse")));
-        assert_eq!(std::fs::read_to_string(home.join(".vim/vimrc")).unwrap(), "set nu\n");
-        assert!(!script(&m, &home).exists() && !home.join(".vim/vimrc.json.bak-nerd").exists(), "nothing of ours beside it");
+        assert_eq!(std::fs::read_to_string(home.join(".vimlike/vimrc")).unwrap(), "set nu\n");
+        assert!(!script(&m, &home).exists() && !home.join(".vimlike/vimrc.json.bak-nerd").exists(), "nothing of ours beside it");
         let _ = std::fs::remove_dir_all(&home);
     }
 

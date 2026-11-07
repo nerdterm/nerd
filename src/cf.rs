@@ -1,4 +1,4 @@
-//! CoreFoundation, declared by hand for the few calls nerd makes: the battery and the clock.
+//! CoreFoundation, declared by hand for the few calls nerd makes: the battery, the clock and a file's default app.
 
 use std::ffi::{c_char, c_void};
 
@@ -37,6 +37,19 @@ unsafe extern "C" {
     pub fn CFDateFormatterCreateStringWithAbsoluteTime(alloc: CFRef, formatter: CFRef, at: f64) -> CFRef;
     pub fn CFAbsoluteTimeGetCurrent() -> f64;
     pub fn CFTimeZoneResetSystem();
+    pub fn CFURLCreateFromFileSystemRepresentation(alloc: CFRef, buf: *const u8, len: isize, is_dir: u8) -> CFRef;
+    pub fn CFURLGetFileSystemRepresentation(url: CFRef, resolve: u8, buf: *mut u8, max: isize) -> u8;
+    pub fn CFBundleCreate(alloc: CFRef, url: CFRef) -> CFRef;
+    /// A Get, not released; NULL for a bundle with no identifier.
+    pub fn CFBundleGetIdentifier(bundle: CFRef) -> CFRef;
+    pub fn CFBundleCopyExecutableURL(bundle: CFRef) -> CFRef;
+}
+
+// The default app of a file or of a type, as LaunchServices names it; launches nothing.
+#[link(name = "CoreServices", kind = "framework")]
+unsafe extern "C" {
+    pub fn LSCopyDefaultApplicationURLForURL(url: CFRef, roles: u32, err: *mut CFRef) -> CFRef;
+    pub fn LSCopyDefaultApplicationURLForContentType(uti: CFRef, roles: u32, err: *mut CFRef) -> CFRef;
 }
 
 pub const UTF8: u32 = 0x0800_0100;
