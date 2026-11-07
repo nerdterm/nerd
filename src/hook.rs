@@ -707,6 +707,7 @@ fn install_one(a: &Manifest, home: &Path) -> std::io::Result<()> {
     if let Some(dir) = config.parent() {
         std::fs::create_dir_all(dir)?;
     }
+    crate::isolation::make_agent_folders(a.data_paths(home), home);
     if a.shape() == Some(Shape::Plugin) {
         return std::fs::write(&config, plugin_for(a, &state_root(home)));
     }
@@ -1859,6 +1860,18 @@ pub(crate) mod tests {
         }
         out.sort();
         out
+    }
+
+    #[test]
+    fn install_makes_the_agent_folder_a_pane_could_move_in_whole() {
+        let home = std::env::temp_dir().join(format!("nerd-home-folders-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let gemini = crate::agents::builtins().into_iter().find(|m| m.name == "gemini").unwrap();
+        install_one(&gemini, &home).unwrap();
+        assert!(home.join(".gemini/tmp").is_dir(), "Gemini's tmp holds its tools folder");
+        assert!(!home.join(".gemini/projects.json").exists(), "only folders, only those");
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     fn ours(v: &Value) -> usize {

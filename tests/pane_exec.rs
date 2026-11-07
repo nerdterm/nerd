@@ -21,7 +21,7 @@ impl Pane {
         for d in [&dir, &socks] {
             let _ = std::fs::remove_dir_all(d);
         }
-        for d in [dir.join("home"), dir.join("state"), dir.join("work"), socks.clone()] {
+        for d in [dir.join("home/Library/Caches"), dir.join("home/.claude/projects/p/memory"), dir.join("home/.gemini"), dir.join("state"), dir.join("work"), socks.clone()] {
             std::fs::create_dir_all(d).unwrap();
         }
         let dir = dir.canonicalize().unwrap();
@@ -120,6 +120,7 @@ fn folder_and_no_network_keep_the_pane_in_its_folder_and_off_every_socket_but_th
          {CONNECT} \"$2\"; echo \"msock $?\" >> out\n\
          echo \"state ${{NERD_STATE-unset}} pane $NERD_PANE\" >> out\n\
          /usr/bin/nc -z -G 3 192.0.2.1 80 2>/dev/null; echo \"tcp $?\" >> out\n\
+         for c in com.apple.python Homebrew other; do mkdir -p \"$HOME/Library/Caches/$c\" 2>/dev/null; echo x 2>/dev/null > \"$HOME/Library/Caches/$c/x\"; echo \"cache $c $?\" >> out; done\n\
          echo > done\n"
     );
     let pane = Pane::start("none", &["--files", "folder", "--network", "none"], &script, &[]);
@@ -130,7 +131,44 @@ fn folder_and_no_network_keep_the_pane_in_its_folder_and_off_every_socket_but_th
     assert!(out.contains("msock 0\n"), "reaches the msock: {out}");
     assert!(out.contains("state unset pane 7\n"), "no NERD_STATE, its own NERD_PANE: {out}");
     assert!(!out.contains("tcp 0\n"), "no TCP: {out}");
+    assert!(!out.contains("cache com.apple.python 0\n") && !out.contains("cache Homebrew 0\n"), "caches that run code later stay read-only: {out}");
+    assert!(out.contains("cache other 0\n"), "other caches stay writable: {out}");
     assert!(!pane.dir.join("home/x").exists());
+}
+
+#[test]
+fn folder_only_cannot_move_a_folder_above_a_denied_one_nor_link_one_in() {
+    let script = "P=\"$HOME/.claude/projects\"\n\
+         mkdir -p swap/memory; /usr/bin/perl -e 'syscall(488, -2, $ARGV[0], -2, $ARGV[1], 2) == 0 or exit 1' \"$P/p\" swap; echo \"swap project $?\" > out\n\
+         mv \"$P/p\" moved 2>/dev/null; echo \"move project $?\" >> out\n\
+         mv \"$HOME/Library/Caches\" caches 2>/dev/null; echo \"move caches $?\" >> out\n\
+         mkdir -p planted/memory; ln -s \"$PWD/planted\" \"$P/q\" 2>/dev/null; echo \"link project $?\" >> out\n\
+         mkdir \"$P/n\" && echo s > \"$P/n/s.jsonl\"; echo \"new project $?\" >> out\n\
+         echo s > \"$P/p/s.jsonl\" && mv \"$P/p/s.jsonl\" \"$P/p/t.jsonl\" && rm \"$P/p/t.jsonl\"; echo \"session $?\" >> out\n\
+         mkdir -p \"$HOME/Library/Caches/other\" && echo x > \"$HOME/Library/Caches/other/x\"; echo \"cache $?\" >> out\n\
+         mkdir -p staged/bin; /usr/bin/perl -e 'rename($ARGV[0], $ARGV[1]) or exit 1' staged \"$HOME/.gemini/tmp\"; echo \"move agent folder in $?\" >> out\n\
+         echo > done\n";
+    let pane = Pane::start("rename", &["--files", "folder", "--network", "none"], script, &[]);
+    pane.wait_for("done");
+    let out = pane.wait_for("out");
+    for no in ["swap project", "move project", "move caches", "link project", "move agent folder in"] {
+        assert!(!out.contains(&format!("{no} 0\n")), "{no}: {out}");
+    }
+    for ok in ["new project", "session", "cache"] {
+        assert!(out.contains(&format!("{ok} 0\n")), "{ok}: {out}");
+    }
+    assert!(pane.dir.join("home/.claude/projects/p/memory").is_dir() && pane.dir.join("home/Library/Caches").is_dir());
+    assert!(std::fs::symlink_metadata(pane.dir.join("home/.claude/projects/q")).is_err());
+    assert!(pane.dir.join("home/.gemini/tmp").is_dir() && !pane.dir.join("home/.gemini/tmp/bin").exists(), "an agent's missing folder above a denied one is made before the pane starts");
+}
+
+#[test]
+fn folder_only_finds_the_session_folder_writable_and_leaves_nothing_in_it() {
+    let pane = Pane::start("writecheck", &["--files", "folder", "--network", "none"], "echo > done\n", &[]);
+    pane.wait_for("done");
+    assert!(!pane.read("stderr").contains("not writable"), "{}", pane.read("stderr"));
+    let left: Vec<_> = std::fs::read_dir(pane.dir.join("home/.claude/projects")).unwrap().filter_map(|e| e.ok()?.file_name().into_string().ok()).filter(|n| n != "p").collect();
+    assert!(left.is_empty(), "the write check leaves {left:?}");
 }
 
 #[test]
