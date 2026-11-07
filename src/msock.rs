@@ -28,6 +28,9 @@ const PER_PANE: usize = 8;
 const SHARED: usize = 8;
 /// Over this many `Hook`/`Append` calls of one pane within `BUDGET_WINDOW`, only state words pass.
 const BUDGET: usize = 30;
+/// State words count apart, far above any agent: a refused one is caught up by the pane's next.
+/// ceiling: still up to ~100 `/bin/sh` a second per pane; folding a pane's queued state words into its last is the way past.
+const STATE_BUDGET: usize = 300;
 const BUDGET_WINDOW: Duration = Duration::from_secs(3);
 const STATE_WORDS: &[&str] = &["working", "idle", "blocked", "fail", "stop", "notify"];
 
@@ -38,7 +41,9 @@ static INBOX: OnceLock<Inbox> = OnceLock::new();
 static LIVE: AtomicUsize = AtomicUsize::new(0);
 static LIVE_SHARED: AtomicUsize = AtomicUsize::new(0);
 static PANES: Mutex<Option<HashMap<PaneId, usize>>> = Mutex::new(None);
-static SPENT: Mutex<Option<HashMap<PaneId, VecDeque<Instant>>>> = Mutex::new(None);
+/// Each pane's recent calls, state words (true) apart from the rest.
+type Spent = HashMap<(PaneId, bool), VecDeque<Instant>>;
+static SPENT: Mutex<Option<Spent>> = Mutex::new(None);
 static NO_AGENT: Mutex<Option<HashSet<PaneId>>> = Mutex::new(None);
 
 /// One request line of the wire, after `Hello`.
@@ -378,8 +383,9 @@ fn here(pane: PaneId, req: Request, reader: &mut BufReader<UnixStream>, until: I
             if !(1..=64).contains(&from.len()) || !from.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-') {
                 return Done::Reply(error("from is 1-64 of a-z, 0-9 and -"));
             }
-            if !spend(pane, STATE_WORDS.contains(&word.as_str()), Instant::now()) {
-                return Done::Reply(over_budget(pane));
+            let state = STATE_WORDS.contains(&word.as_str());
+            if !spend(pane, state, Instant::now()) {
+                return Done::Reply(over_budget(pane, state));
             }
             Done::Reply(match crate::hook::run_for(pane, &word, &from, &payload) {
                 Ok(out) => json!({ "out": out }),
@@ -389,7 +395,7 @@ fn here(pane: PaneId, req: Request, reader: &mut BufReader<UnixStream>, until: I
         Request::Put { file, data } => Done::Reply(answer(put(pane, &file, &data))),
         Request::Append { file, line } => {
             if !spend(pane, false, Instant::now()) {
-                return Done::Reply(over_budget(pane));
+                return Done::Reply(over_budget(pane, false));
             }
             Done::Reply(answer(append(pane, &file, &line)))
         }
@@ -410,9 +416,10 @@ fn answer(r: Result<(), String>) -> Value {
     }
 }
 
-fn over_budget(pane: PaneId) -> Value {
-    crate::log::warn_limited("message socket hook budget", &format!("pane {pane}: over {BUDGET} hook calls within 3 s; only state words pass"));
-    error(format!("over {BUDGET} hook calls within 3 s; only state words pass"))
+fn over_budget(pane: PaneId, state: bool) -> Value {
+    let why = if state { format!("over {STATE_BUDGET} state words within 3 s") } else { format!("over {BUDGET} hook calls within 3 s; only state words pass") };
+    crate::log::warn_limited("message socket hook budget", &format!("pane {pane}: {why}"));
+    error(why)
 }
 
 /// Exactly `n` bytes by `until`, or None.
@@ -435,16 +442,17 @@ fn read_body(reader: &mut BufReader<UnixStream>, n: usize, until: Instant) -> Op
     Some(buf)
 }
 
-/// Counts a `Hook` or `Append` call; false when over the budget, unless `always`.
-fn spend(pane: PaneId, always: bool, now: Instant) -> bool {
+/// Counts a `Hook` or `Append` call, a state word against its own budget; false when over it.
+fn spend(pane: PaneId, state: bool, now: Instant) -> bool {
+    let budget = if state { STATE_BUDGET } else { BUDGET };
     let mut g = SPENT.lock().unwrap_or_else(|e| e.into_inner());
-    let q = g.get_or_insert_default().entry(pane).or_default();
-    let over = q.len() >= BUDGET && q.front().is_some_and(|t| now.duration_since(*t) <= BUDGET_WINDOW);
+    let q = g.get_or_insert_default().entry((pane, state)).or_default();
+    let over = q.len() >= budget && q.front().is_some_and(|t| now.duration_since(*t) <= BUDGET_WINDOW);
     q.push_back(now);
-    if q.len() > BUDGET {
+    if q.len() > budget {
         q.pop_front();
     }
-    always || !over
+    !over
 }
 
 /// The verified pane's own file under the hook's folder.
@@ -633,9 +641,16 @@ mod tests {
         }
         let t = t + Duration::from_millis(100);
         assert!(!spend(pane, false, t), "a tool word over the budget");
-        assert!(spend(pane, true, t), "a state word always passes");
+        assert!(spend(pane, true, t), "a state word still passes");
         assert!(!spend(pane, false, t), "Append too");
         assert!(spend(pane, false, t + Duration::from_secs(4)), "the window moved on");
+        let pane = 90_021;
+        for i in 0..STATE_BUDGET {
+            assert!(spend(pane, true, t + Duration::from_millis(i as u64)), "state word {i}");
+        }
+        assert!(!spend(pane, true, t + Duration::from_millis(400)), "the 301st state word within 3 s");
+        assert!(spend(pane, false, t + Duration::from_millis(400)), "tool words count apart");
+        assert!(spend(pane, true, t + Duration::from_secs(4)), "the window moved on");
     }
 
     #[test]

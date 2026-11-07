@@ -56,7 +56,7 @@ pub fn exited(exec: usize) {
 }
 
 fn descends(pid: i32, from: i32) -> bool {
-    pid == from || crate::transport::inside(pid, from, crate::transport::parent_pid)
+    pid == from || crate::transport::inside(pid, from, crate::transport::parent_pid) == Some(true)
 }
 
 fn proven(name: &str, pid: i32) -> bool {
@@ -283,7 +283,8 @@ pub(crate) const TERMINALS: &str = "(deny file-read* file-write* file-ioctl (reg
 
 /// `p` as a string in a sandbox profile.
 pub(crate) fn quote(p: &Path) -> Result<String, String> {
-    let s = p.to_string_lossy();
+    // Not lossy: a byte that is not UTF-8 would become U+FFFD, and the rule would name another path than the one meant.
+    let Some(s) = p.to_str() else { return Err(format!("path {:?} is not UTF-8 and cannot go into a sandbox profile", p.to_string_lossy())) };
     if s.contains(['"', '\\']) || s.chars().any(char::is_control) {
         return Err(format!("path {s:?} cannot go into a sandbox profile"));
     }
@@ -628,7 +629,11 @@ fn take_slot(pid: i32) -> Result<Slot, String> {
     Ok(Slot(owner))
 }
 
+/// Set once this server listens on its own plugin socket: a plugin is never handed a path no one here answers.
+static BOUND: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 pub fn listen(listener: std::os::unix::net::UnixListener, tx: Inbox) {
+    BOUND.store(true, std::sync::atomic::Ordering::SeqCst);
     std::thread::spawn(move || {
         // SAFETY: geteuid has no preconditions and cannot fail.
         let me = unsafe { nix::libc::geteuid() };
@@ -891,6 +896,11 @@ impl Plugins {
             return Err(format!("plugin {} is starting; choose it again in a moment", m.name));
         }
         let broker = crate::broker::exec_handle().ok_or(OLD_BROKER)?;
+        if !BOUND.load(std::sync::atomic::Ordering::SeqCst) {
+            let why = format!("plugin {} not started: this server's plugin socket did not bind", m.name);
+            crate::log::warn_limited("plugin socket unbound", &why);
+            return Err(why);
+        }
         let (Some(exec), Some(dir)) = (&m.exec, &m.dir) else { return Err(format!("plugin {} has nothing to run", m.name)) };
         let data = real_data_dir(&m.name).map_err(|e| format!("plugin {}: data folder: {e}", m.name))?;
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
@@ -1315,6 +1325,36 @@ mod tests {
         }
         t.join().unwrap();
         got
+    }
+
+    #[test]
+    fn a_path_goes_into_a_profile_only_as_itself() {
+        use std::os::unix::ffi::OsStrExt as _;
+        assert_eq!(quote(Path::new("/a/b c")).unwrap(), "\"/a/b c\"");
+        assert!(quote(Path::new(std::ffi::OsStr::from_bytes(b"/a/\xff"))).unwrap_err().contains("not UTF-8"));
+        for bad in ["/a\"b", "/a\\b", "/a\nb"] {
+            assert!(quote(Path::new(bad)).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn a_plugin_line_over_the_limit_ends_its_connection() {
+        let (ours, theirs) = UnixStream::pair().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let inbox = Inbox { tx, bell: crate::bell::new().0 };
+        let t = std::thread::spawn(move || read_loop("p", 7, BufReader::new(theirs), &inbox));
+        let mut w = ours.try_clone().unwrap();
+        std::thread::spawn(move || {
+            let _ = w.write_all(&vec![b'x'; 8 << 20]);
+            let _ = w.write_all(b"{\"ReportState\":{\"pane\":1,\"state\":\"idle\"}}\n");
+        });
+        let end = Instant::now() + std::time::Duration::from_secs(1);
+        while !t.is_finished() {
+            assert!(Instant::now() < end, "the loop still reads with its writer open");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(rx.try_iter().next().is_none(), "a message after the long line was read");
+        drop(ours);
     }
 
     #[test]

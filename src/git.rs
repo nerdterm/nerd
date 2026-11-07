@@ -21,22 +21,34 @@ pub struct Worktree {
     pub is_current: bool,
 }
 
-/// An error is always git's own trimmed stderr, shown to the user as-is. stdin is
-/// `null`, or an interactive git could hang waiting on a prompt.
-fn run_git<I, S>(dir: &Path, args: I) -> Result<String, String>
+/// A worktree added or removed from the menu, in a repository a pane may have written: read_git's limits, no hook,
+/// and `env` from worktree_env. An error is git's own trimmed stderr, shown to the user as-is.
+fn run_git<I, S>(dir: &Path, env: &[(String, String)], args: I) -> Result<String, String>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<std::ffi::OsStr>,
 {
-    let mut cmd = crate::spawn::cmd("git");
-    cmd.arg("-C").arg(dir).args(args);
+    let mut cmd = read_cmd(dir, ["-c", "core.hooksPath=/dev/null"], env);
+    cmd.args(args);
     run(cmd)
+}
+
+const INCLUDES: &str = "nerd does not run git worktree here: this repository's git config includes other files, and what they make git run in a checkout cannot be checked first; use git in a terminal";
+
+/// filters_off's env for git run on a worktree, the config read in `root`, or why nerd will not run it there.
+fn worktree_env(root: &Path) -> Result<Vec<(String, String)>, String> {
+    config_env_known()?;
+    // An include can pick its file in the other checkout's context (includeIf gitdir or onbranch, a relative path in a copied config.worktree), which this read cannot see.
+    if !own_keys(root, r"^include(if\..*)?\.path$")?.is_empty() {
+        return Err(INCLUDES.into());
+    }
+    filters_off(root)
 }
 
 /// A folder the user only opened: its own config may not run anything (fsmonitor, lazy fetch, and an
 /// index write, which runs post-index-change: diff ignores GIT_OPTIONAL_LOCKS, so autoRefreshIndex is off too).
 // Only helper `_` is allowed (no repo alias can be named remote-_, autocorrect is off; "" would allow helper "", answered by alias remote-), so no git lazy-fetches through the repo's transport.
-// ceiling: a denylist over git's mechanisms; gits before 2.31 ignore filters_off's GIT_CONFIG_COUNT, and stat-dirty files are re-hashed each call; a git version floor lifts it.
+// ceiling: a denylist over git's mechanisms, and stat-dirty files are re-hashed each call.
 fn read_git<I, S>(dir: &Path, args: I, env: &[(String, String)]) -> Result<String, String>
 where
     I: IntoIterator<Item = S>,
@@ -45,6 +57,7 @@ where
     run(read_cmd(dir, args, env))
 }
 
+/// stdin is `null` (run_within), or an interactive git could hang waiting on a prompt.
 fn read_cmd<I, S>(dir: &Path, args: I, env: &[(String, String)]) -> Command
 where
     I: IntoIterator<Item = S>,
@@ -56,24 +69,23 @@ where
     cmd
 }
 
-/// The repo's own filter drivers and git-lfs extensions (local and worktree scope), blanked through env pairs,
-/// since a name may hold `=`, which `-c` would split; the user's global ones, such as LFS, still run.
+/// The repo's own filter drivers, git-lfs extensions and config hooks (local and worktree scope), blanked through env
+/// pairs, since a name may hold `=`, which `-c` would split; the user's global ones, such as LFS, still run.
 /// An unreadable config is an error: the caller must not run git at all.
+// ceiling: a pane that swaps the repository's config files between this read and git's own can win a refresh; running nerd's git under a profile that lets only git exec closes it.
 fn filters_off(root: &Path) -> Result<Vec<(String, String)>, String> {
-    let pattern = r"^(filter\..*\.(clean|smudge|process)|lfs\.extension\..*\.(clean|smudge))$";
-    let raw = read_git(root, ["config", "--show-scope", "--name-only", "-z", "--get-regexp", pattern], &[]).or_else(|e| {
-        // No matching key: exit 1 with nothing said.
-        if !e.is_empty() {
-            return Err(e);
-        }
-        Ok(String::new())
-    })?;
-    let fields: Vec<&str> = raw.split('\0').collect();
+    config_env_known()?;
     let mut blank = Vec::new();
-    for f in fields.chunks(2).filter(|f| f.len() == 2 && matches!(f[0], "local" | "worktree")) {
-        let Some((section, _)) = f[1].rsplit_once('.') else { continue };
-        let keys: &[(&str, &str)] =
-            if section.starts_with("filter.") { &[("clean", ""), ("smudge", ""), ("process", ""), ("required", "false")] } else { &[("clean", ""), ("smudge", "")] };
+    for name in own_keys(root, r"^(filter\..*\.(clean|smudge|process)|lfs\.extension\..*\.(clean|smudge)|hook\..*\.command)$")? {
+        let Some((section, _)) = name.rsplit_once('.') else { continue };
+        // core.hooksPath does not reach a hook named in config; an empty event clears its list.
+        let keys: &[(&str, &str)] = if section.starts_with("filter.") {
+            &[("clean", ""), ("smudge", ""), ("process", ""), ("required", "false")]
+        } else if section.starts_with("hook.") {
+            &[("enabled", "false"), ("event", "")]
+        } else {
+            &[("clean", ""), ("smudge", "")]
+        };
         blank.extend(keys.iter().map(|(key, value)| (format!("{section}.{key}"), *value)));
     }
     blank.sort_unstable();
@@ -87,6 +99,47 @@ fn filters_off(root: &Path) -> Result<Vec<(String, String)>, String> {
         env.push(("GIT_CONFIG_COUNT".to_string(), blank.len().to_string()));
     }
     Ok(env)
+}
+
+/// Names of the keys matching `pattern` that the repository's own config (local and worktree scope) sets.
+fn own_keys(root: &Path, pattern: &str) -> Result<Vec<String>, String> {
+    let raw = read_git(root, ["config", "--show-scope", "--name-only", "-z", "--get-regexp", pattern], &[]).or_else(|e| {
+        // No matching key: exit 1 with nothing said.
+        if !e.is_empty() {
+            return Err(e);
+        }
+        Ok(String::new())
+    })?;
+    let fields: Vec<&str> = raw.split('\0').collect();
+    Ok(fields.chunks(2).filter(|f| f.len() == 2 && matches!(f[0], "local" | "worktree")).map(|f| f[1].to_string()).collect())
+}
+
+/// The env pairs filters_off hands git: a git before 2.31 ignores GIT_CONFIG_COUNT, and the filters would run.
+fn config_env_known() -> Result<(), String> {
+    static SAID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    let said = match SAID.get() {
+        Some(s) => s,
+        None => {
+            let s = read_git(Path::new("/"), ["--version"], &[])?;
+            SAID.get_or_init(|| s)
+        }
+    };
+    floor(said)
+}
+
+fn floor(said: &str) -> Result<(), String> {
+    let needs = "nerd needs git 2.31 or later to keep a repository's filters and hooks from running";
+    match version(said) {
+        Some(v) if v >= (2, 31, 0) => Ok(()),
+        Some(_) => Err(format!("{said}; {needs}")),
+        None => Err(format!("git's version could not be read from {said:?}; {needs}")),
+    }
+}
+
+/// `git version 2.39.5 (Apple Git-154)` as (2, 39, 5).
+pub fn version(said: &str) -> Option<(u32, u32, u32)> {
+    let mut p = said.split_whitespace().nth(2)?.split('.').map(|x| x.parse::<u32>().ok());
+    Some((p.next()??, p.next()??, p.next().flatten().unwrap_or(0)))
 }
 
 /// Logs the first failure only: callers retry on every refresh.
@@ -198,31 +251,46 @@ fn sibling_path(dir: &Path, branch: &str) -> Result<PathBuf, String> {
 }
 
 /// Branch existence isn't checked here; git refuses with its own message, which is
-/// exactly what the user should see.
-pub fn add_worktree(dir: &Path, branch: &str) -> Result<PathBuf, String> {
+/// exactly what the user should see. With the new checkout, a notice naming the repository's filters git did not run.
+pub fn add_worktree(dir: &Path, branch: &str) -> Result<(PathBuf, Option<String>), String> {
     validate_branch_name(branch)?;
     let dest = sibling_path(dir, branch)?;
     let dest_str = dest.to_string_lossy().into_owned();
+    let env = worktree_env(dir)?;
     // `--` keeps a name from an input field from ever being read as a flag.
-    run_git(dir, ["worktree", "add", "-b", branch, "--", dest_str.as_str()]).map(|_| dest)
+    run_git(dir, &env, ["worktree", "add", "-b", branch, "--", dest_str.as_str()])?;
+    let names: Vec<&str> = env.iter().filter_map(|(_, v)| v.strip_prefix("filter.")?.strip_suffix(".smudge")).collect();
+    let notice = match names.as_slice() {
+        [] => None,
+        [one] => Some(format!("{one}, the repository's own filter, was not run in the new checkout")),
+        many => Some(format!("{}, the repository's own filters, were not run in the new checkout", many.join(", "))),
+    };
+    Ok((dest, notice))
 }
 
 /// Parses `git worktree list --porcelain`: blank-line-separated entries with
 /// `worktree`/`HEAD`/`branch refs/heads/<name>` keys. Git guarantees the first entry is main.
 pub fn worktrees(dir: &Path) -> Vec<Worktree> {
-    let Ok(raw) = read_git(dir, ["worktree", "list", "--porcelain"], &[]) else {
-        return Vec::new();
+    // -z keeps a path with a newline in it one entry; a git before 2.36 refuses it, and its lines are read instead.
+    let (raw, sep) = match read_git(dir, ["worktree", "list", "--porcelain", "-z"], &[]) {
+        Ok(raw) => (raw, '\0'),
+        Err(_) => match read_git(dir, ["worktree", "list", "--porcelain"], &[]) {
+            Ok(raw) => (raw, '\n'),
+            Err(_) => return Vec::new(),
+        },
     };
-    let current = dir.canonicalize().ok();
+    parse_worktrees(&raw, sep, dir.canonicalize().ok())
+}
 
+fn parse_worktrees(raw: &str, sep: char, current: Option<PathBuf>) -> Vec<Worktree> {
     let mut result = Vec::new();
     let mut path: Option<PathBuf> = None;
     let mut branch: Option<String> = None;
     let mut is_first = true;
 
-    // Synthetic trailing empty line closes the last entry: run_git's trim() may have
+    // Synthetic trailing empty field closes the last entry: run_within's trim_end() may have
     // eaten the real separator after it.
-    for line in raw.lines().chain(std::iter::once("")) {
+    for line in raw.split(sep).chain(std::iter::once("")) {
         if line.is_empty() {
             if let Some(p) = path.take() {
                 let is_current = p.canonicalize().ok() == current;
@@ -243,7 +311,17 @@ pub fn worktrees(dir: &Path) -> Vec<Worktree> {
 /// Removes a checkout from disk. Doesn't touch the branch.
 pub fn remove_worktree(dir: &Path, path: &Path) -> Result<(), String> {
     let path_str = path.to_string_lossy().into_owned();
-    run_git(dir, ["worktree", "remove", "--", path_str.as_str()]).map(|_| ())
+    run_git(dir, &remove_env(dir, path)?, ["worktree", "remove", "--", path_str.as_str()]).map(|_| ())
+}
+
+/// Why nerd will not remove `path`, asked before its space closes.
+pub fn removable(dir: &Path, path: &Path) -> Result<(), String> {
+    remove_env(dir, path).map(|_| ())
+}
+
+fn remove_env(dir: &Path, path: &Path) -> Result<Vec<(String, String)>, String> {
+    // The checkout's own config: git reads its status before it removes it.
+    worktree_env(if path.is_dir() { path } else { dir })
 }
 
 /// `--porcelain=v1 -z`: unescaped paths, NUL-separated entries. On rename/copy an
@@ -288,7 +366,7 @@ pub fn status_marks(dir: &Path) -> HashMap<PathBuf, char> {
         return marks;
     };
 
-    // run_git's trim doesn't touch the trailing NUL, so split('\0') leaves an empty
+    // run_within's trim_end doesn't touch the trailing NUL, so split('\0') leaves an empty
     // trailing token; drop it.
     let mut fields = raw.split('\0').filter(|f| !f.is_empty());
     while let Some(entry) = fields.next() {
@@ -552,6 +630,24 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_checkout_whose_path_has_a_newline_is_one_entry() {
+        if !git_available() {
+            return;
+        }
+        let dir = init_repo("newline");
+        let odd = dir.with_file_name(format!("{}-a\nworktree b", dir.file_name().unwrap().to_string_lossy()));
+        run(&dir, &["worktree", "add", "-q", "-b", "nl", odd.to_str().unwrap()]);
+        let list = worktrees(&dir);
+        assert_eq!(list.len(), 2, "{list:?}");
+        assert_eq!(list[1].path, odd.canonicalize().unwrap());
+        assert_eq!(list[1].branch.as_deref(), Some("nl"));
+        let old = parse_worktrees("worktree /a\nHEAD 1\nbranch refs/heads/main\n\nworktree /b\nbranch refs/heads/x", '\n', None);
+        assert_eq!(old.iter().map(|w| (w.path.clone(), w.branch.clone())).collect::<Vec<_>>(), [(PathBuf::from("/a"), Some("main".into())), (PathBuf::from("/b"), Some("x".into()))], "an older git's lines");
+        let _ = std::fs::remove_dir_all(&odd);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn repo_facts_and_worktree_lifecycle() {
         if !git_available() {
             return;
@@ -570,7 +666,8 @@ pub(crate) mod tests {
         assert!(list[0].is_main);
         assert!(list[0].is_current);
 
-        let added = add_worktree(&dir, "feature-x").expect("creating a checkout");
+        let (added, skipped) = add_worktree(&dir, "feature-x").expect("creating a checkout");
+        assert_eq!(skipped, None, "no filter of the repository's own, no notice");
         assert!(added.is_dir());
         assert_eq!(repo_kind(&added), RepoKind::Linked);
 
@@ -606,7 +703,7 @@ pub(crate) mod tests {
         assert!(!is_main_checkout(&outside));
         std::fs::remove_dir_all(&outside).unwrap();
 
-        let added = add_worktree(&dir, "grouped").expect("creating a checkout");
+        let (added, _) = add_worktree(&dir, "grouped").expect("creating a checkout");
         let main_key = group_key(&dir).expect("main checkout's key");
         assert_eq!(group_key(&added), Some(main_key));
         assert!(is_main_checkout(&dir));
@@ -931,19 +1028,126 @@ pub(crate) mod tests {
         std::fs::remove_dir_all(&tmp).unwrap();
     }
 
+    /// Runs in a child process whose PATH starts with a git that says it is 2.30.0: set only by the test below.
     #[test]
-    fn adding_a_worktree_still_runs_the_repos_smudge() {
+    fn a_git_before_2_31_runs_no_status_or_diff_child() {
+        if std::env::var_os("NERD_GIT_OLD").is_none() {
+            return;
+        }
+        let (dir, root, hit) = hit_repo("old-git");
+        run(&dir, &["config", "filter.x.clean", &format!("sh -c 'touch \"{}\"; cat'", hit.display())]);
+        std::fs::write(dir.join(".git/info/attributes"), "* filter=x\n").unwrap();
+        let old = "git version 2.30.0; nerd needs git 2.31 or later to keep a repository's filters and hooks from running";
+        assert_eq!(filters_off(&root).unwrap_err(), old);
+        assert_eq!(worktree_env(&root).unwrap_err(), old, "the floor text, not git's usage error from the include query");
+        assert!(status_marks(&dir).is_empty(), "no status from a git that ignores GIT_CONFIG_COUNT");
+        assert_eq!(diff(&dir, &root.join("README.md")), "");
+        assert_eq!(add_worktree(&dir, "old").unwrap_err(), old, "no menu worktree either");
+        assert!(!ran(&hit));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_git_before_2_31_runs_no_status_or_diff() {
         if !git_available() {
             return;
         }
-        let (dir, _, hit) = hit_repo("smudge");
+        let real = Command::new("sh").args(["-c", "command -v git"]).output().unwrap();
+        let real = String::from_utf8_lossy(&real.stdout).trim().to_string();
+        let bin = std::env::temp_dir().join(format!("nerd-git-test-old-bin-{}", std::process::id()));
+        std::fs::create_dir_all(&bin).unwrap();
+        let fake = bin.join("git");
+        std::fs::write(&fake, format!("#!/bin/sh\ncase \" $* \" in *' --version '*) echo 'git version 2.30.0'; exit 0;; *' --show-scope '*) echo 'error: unknown option show-scope' >&2; exit 129;; esac\nexec '{real}' \"$@\"\n")).unwrap();
+        std::fs::set_permissions(&fake, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default());
+        let out = Command::new(std::env::current_exe().unwrap())
+            .args(["git::tests::a_git_before_2_31_runs_no_status_or_diff_child", "--exact", "--test-threads=1"])
+            .env("PATH", path)
+            .env("NERD_GIT_OLD", "1")
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(out.status.success() && text.contains("1 passed"), "{text}{}", String::from_utf8_lossy(&out.stderr));
+        std::fs::remove_dir_all(&bin).unwrap();
+    }
+
+    #[test]
+    fn a_worktree_from_the_menu_runs_no_hook_filter_or_fsmonitor_of_the_repository() {
+        if !git_available() {
+            return;
+        }
+        let (dir, _, hit) = hit_repo("menu-worktree");
         run(&dir, &["checkout", "-q", "--", "README.md"]);
-        run(&dir, &["config", "filter.s.smudge", &format!("sh -c 'touch \"{}\"; cat'", hit.display())]);
+        let touch = |what: &str| format!("touch '{}.{what}'", hit.display());
+        let hook = dir.join(".git/hooks/post-checkout");
+        std::fs::write(&hook, format!("#!/bin/sh\n{}\n", touch("hook"))).unwrap();
+        std::fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        for (key, value) in [
+            ("hook.x.command", touch("config-hook")),
+            ("hook.x.event", "post-checkout".into()),
+            ("filter.s.smudge", format!("sh -c \"{}; cat\"", touch("smudge"))),
+            ("filter.s.clean", format!("sh -c \"{}; cat\"", touch("clean"))),
+            ("core.fsmonitor", format!("{}; false", touch("fsmonitor"))),
+        ] {
+            run(&dir, &["config", key, &value]);
+        }
         std::fs::write(dir.join(".git/info/attributes"), "* filter=s\n").unwrap();
-        let added = add_worktree(&dir, "smudged").expect("creating a checkout");
-        assert!(ran(&hit), "a worktree the user asked for checks out as their git would");
-        remove_worktree(&dir, &added).unwrap();
+        let (added, skipped) = add_worktree(&dir, "menu").expect("creating a checkout");
+        assert_eq!(skipped.as_deref(), Some("s, the repository's own filter, was not run in the new checkout"));
+        age(&added.join("README.md"));
+        let removed = remove_worktree(&dir, &added);
+        let fired: Vec<&str> = ["hook", "config-hook", "smudge", "clean", "fsmonitor"].into_iter().filter(|w| ran(&hit.with_extension(w))).collect();
+        assert!(fired.is_empty(), "ran: {fired:?}");
+        removed.expect("removing a checkout");
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Each include names its file only in the new checkout's context, where filters_off's read never looked.
+    #[test]
+    fn a_menu_worktree_is_refused_when_the_repository_includes_config() {
+        if !git_available() {
+            return;
+        }
+        let mut wrong = Vec::new();
+        for case in ["gitdir", "onbranch", "worktree config"] {
+            let (dir, _, hit) = hit_repo(&format!("include-{}", case.replace(' ', "-")));
+            run(&dir, &["checkout", "-q", "--", "README.md"]);
+            let touch = |what: &str| format!("touch '{}.{what}'", hit.display());
+            let smudge = dir.join(".git/smudge.sh");
+            std::fs::write(&smudge, format!("#!/bin/sh\n{}\nexec cat\n", touch("smudge"))).unwrap();
+            std::fs::set_permissions(&smudge, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+            let planted = format!("[filter \"f\"]\n\tsmudge = \"{}\"\n[hook \"h\"]\n\tcommand = {}\n\tevent = post-checkout\n", smudge.display(), touch("hook"));
+            std::fs::write(dir.join(".git/x.cfg"), planted).unwrap();
+            std::fs::write(dir.join(".git/info/attributes"), "* filter=f\n").unwrap();
+            match case {
+                "gitdir" => run(&dir, &["config", "includeIf.gitdir:worktrees/.path", "x.cfg"]),
+                "onbranch" => run(&dir, &["config", "includeIf.onbranch:menu.path", "x.cfg"]),
+                _ => {
+                    // From the main checkout it names a file above the repository; copied into the new one's folder, .git/x.cfg.
+                    run(&dir, &["config", "extensions.worktreeConfig", "true"]);
+                    std::fs::write(dir.join(".git/config.worktree"), "[include]\n\tpath = ../../x.cfg\n").unwrap();
+                }
+            }
+            let added = add_worktree(&dir, "menu");
+            let fired: Vec<&str> = ["smudge", "hook"].into_iter().filter(|w| ran(&hit.with_extension(w))).collect();
+            if !added.as_ref().is_err_and(|e| e == INCLUDES) || !fired.is_empty() {
+                wrong.push(format!("{case}: {:?}, ran {fired:?}", added.as_ref().map(|a| &a.1)));
+            }
+            if let Ok((path, _)) = added {
+                let _ = std::fs::remove_dir_all(path);
+            }
+            std::fs::remove_dir_all(&dir).unwrap();
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    #[test]
+    fn the_version_floor_says_why() {
+        assert_eq!(floor("git version 2.39.5 (Apple Git-154)"), Ok(()));
+        assert_eq!(floor("git version 2.31.0"), Ok(()));
+        let needs = "nerd needs git 2.31 or later to keep a repository's filters and hooks from running";
+        assert_eq!(floor("git version 2.30.9"), Err(format!("git version 2.30.9; {needs}")));
+        assert_eq!(floor("hub version x"), Err(format!("git's version could not be read from \"hub version x\"; {needs}")));
     }
 
     #[test]

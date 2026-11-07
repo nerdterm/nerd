@@ -84,12 +84,15 @@ pub fn config_path() -> PathBuf {
 /// Via a 0600 temp file (`path` with extension `tmp_ext`) and a rename: no reader sees a partial or wrong-mode file.
 pub fn write_private(path: &Path, tmp_ext: &str, bytes: &[u8]) -> std::io::Result<()> {
     let tmp = path.with_extension(tmp_ext);
-    let mut f = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(&tmp)?;
+    // A link planted at the temp name is never followed: removed, and the open tried once more.
+    let open = || std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).custom_flags(nix::libc::O_NOFOLLOW).open(&tmp);
+    let mut f = match open() {
+        Err(e) if e.raw_os_error() == Some(nix::libc::ELOOP) => {
+            std::fs::remove_file(&tmp)?;
+            open()?
+        }
+        r => r?,
+    };
     // A temp file left by an older build keeps its mode through `open`.
     f.set_permissions(std::fs::Permissions::from_mode(0o600))?;
     f.write_all(bytes)?;
@@ -124,6 +127,21 @@ mod tests {
         assert_eq!(mode(&p), 0o600, "mode {:o}", mode(&p));
         assert_eq!(std::fs::read(&p).unwrap(), b"secret");
         assert!(!p.with_extension("tmp").exists(), "the temporary file is gone");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_link_at_the_temporary_name_is_not_followed() {
+        let dir = std::env::temp_dir().join(format!("nerd-private-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (p, target) = (dir.join("config.json"), dir.join("elsewhere"));
+        std::fs::write(&target, "theirs").unwrap();
+        std::os::unix::fs::symlink(&target, dir.join("config.json.tmp")).unwrap();
+        write_private(&p, "json.tmp", b"ours").unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"theirs", "the link's target is unchanged");
+        assert_eq!(std::fs::read(&p).unwrap(), b"ours");
+        assert!(!p.is_symlink() && mode(&p) == 0o600);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

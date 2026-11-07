@@ -584,7 +584,7 @@ fn check(dir: &Path, catalog: bool, walk: bool) -> Check {
 }
 
 /// No link out of the folder, no file over `FILE_MAX`; `.git` is git's, not the plugin's.
-fn folder_rules(root: &Path, dir: &Path, problems: &mut Vec<String>) {
+pub(crate) fn folder_rules(root: &Path, dir: &Path, problems: &mut Vec<String>) {
     let Ok(rd) = std::fs::read_dir(dir) else { return };
     let mut entries: Vec<_> = rd.flatten().collect();
     entries.sort_by_key(|e| e.file_name());

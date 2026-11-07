@@ -333,7 +333,7 @@ pub fn read_client(id: u64, stream: UnixStream, tx: Inbox, greeted: bool, waitin
             _ => None,
         };
         if let Some(what) = what
-            && refused(&out, what, allow)
+            && refused(&peer, what, allow)
         {
             let line = format!("refused: {what} from inside a pane");
             let text = if what == "attach" { farewell_text(&line) } else { format!("{line}\n") };
@@ -344,7 +344,7 @@ pub fn read_client(id: u64, stream: UnixStream, tx: Inbox, greeted: bool, waitin
             Ok(Some(hello @ ClientMsg::Hello { .. })) => {
                 let (Some(caps), ClientMsg::Hello { cwd, cols, rows, host, if_free, reopened, .. }) = (crate::proto::ClientCaps::from_v1_hello(&hello), hello) else { return };
                 let program = peer_program(&out);
-                let inside = nix::sys::socket::getsockopt(&out, nix::sys::socket::sockopt::LocalPeerPid).is_ok_and(|pid| inside(pid, crate::broker::pid(), parent_pid));
+                let inside = peer.inside == Some(true);
                 let attach = Inbound::Attach { id, stream: out, cwd, cols, rows, host, program, caps, inside, if_free, reopened };
                 if tx.send(attach).is_err() {
                     return;
@@ -388,11 +388,11 @@ pub fn read_client(id: u64, stream: UnixStream, tx: Inbox, greeted: bool, waitin
             }
             // A client newer than this daemon sending an unknown message: log it, don't disconnect.
             Err(e) if e.kind() == std::io::ErrorKind::Other => {
-                warn(&format!("client {id}: unrecognized message: {e}"));
+                crate::log::warn_limited("client message unrecognized", &format!("client {id}: unrecognized message: {}", crate::log::escape(&e.to_string())));
             }
             // The screen has one writer, so a refusal here is only logged.
-            Ok(Some(ClientMsg::Shutdown)) if refused(reader.get_ref(), "stop", allow) => {}
-            Ok(Some(ClientMsg::Update)) if refused(reader.get_ref(), "update", allow) => {}
+            Ok(Some(ClientMsg::Shutdown)) if refused(&peer, "stop", allow) => {}
+            Ok(Some(ClientMsg::Update)) if refused(&peer, "update", allow) => {}
             Ok(Some(ClientMsg::Shutdown)) => {
                 let _ = tx.send(Inbound::Shutdown);
                 return;
@@ -434,14 +434,21 @@ pub(crate) fn farewell_text(text: &str) -> String {
     format!("\x1b[?1049l\r\n{text}\r\n\x1b[?1049h")
 }
 
-/// Whether the peer runs inside one of this server's panes, with `allow_from_panes` off or the peer a plugin's; a refusal is logged.
-fn refused(stream: &UnixStream, what: &str, allow: fn() -> bool) -> bool {
-    let Ok(pid) = nix::sys::socket::getsockopt(stream, nix::sys::socket::sockopt::LocalPeerPid) else { return false };
-    if !inside(pid, crate::broker::pid(), parent_pid) || let_in(allow(), crate::plugins::within_a_plugin(pid)) {
-        return false;
+/// Whether the peer runs inside one of this server's panes, with `allow_from_panes` off or the peer a plugin's, or its
+/// ancestors could not be read at connect (a pane's program that wrote and exited at once); a refusal is logged.
+fn refused(peer: &Peer, what: &str, allow: fn() -> bool) -> bool {
+    match (peer.inside, peer.pid) {
+        (Some(false), _) => false,
+        (Some(true), Some(pid)) if let_in(allow(), crate::plugins::within_a_plugin(pid)) => false,
+        (Some(true), pid) => {
+            warn(&format!("refused {what} from pid {}, inside a pane", pid.unwrap_or(0)));
+            true
+        }
+        (None, pid) => {
+            warn(&format!("refused {what} from pid {}: its ancestors could not be read", pid.map_or("unknown".into(), |p| p.to_string())));
+            true
+        }
     }
-    warn(&format!("refused {what} from pid {pid}, inside a pane"));
-    true
 }
 
 /// A peer inside: `allow_from_panes` lets a pane's program in, never a plugin's.
@@ -449,17 +456,21 @@ fn let_in(allow_from_panes: bool, plugin: bool) -> bool {
     allow_from_panes && !plugin
 }
 
-/// Whether `anchor` is among `pid`'s ancestors, read by `parent`, within 32 steps and short of launchd.
-pub(crate) fn inside(pid: i32, anchor: i32, parent: impl Fn(i32) -> Option<i32>) -> bool {
+/// Whether `anchor` is among `pid`'s ancestors, read by `parent`, within 32 steps and short of launchd; None when a
+/// parent cannot be read or the 32 steps run out, which is not "outside".
+pub(crate) fn inside(pid: i32, anchor: i32, parent: impl Fn(i32) -> Option<i32>) -> Option<bool> {
     let mut pid = pid;
     for _ in 0..32 {
-        let Some(p) = parent(pid).filter(|p| *p > 1) else { return false };
+        let p = parent(pid)?;
+        if p <= 1 {
+            return Some(false);
+        }
         if p == anchor {
-            return true;
+            return Some(true);
         }
         pid = p;
     }
-    false
+    None
 }
 
 /// The peer's process name, or its `sshd*` ancestor's: a relay started over ssh is itself `nerd`.
@@ -484,6 +495,8 @@ pub(crate) fn proc_name(pid: i32) -> Option<String> {
 /// Each pid with its start time read at connect, so a pid reused by the detach reads `gone`.
 pub(crate) struct Peer {
     pid: Option<i32>,
+    /// Inside one of this server's panes, read once at connect; None when the pid or its ancestors cannot be read.
+    pub(crate) inside: Option<bool>,
     started: Option<u64>,
     top: Option<(i32, String, Option<u64>)>,
 }
@@ -492,7 +505,8 @@ impl Peer {
     pub(crate) fn of(stream: &UnixStream) -> Peer {
         let pid = nix::sys::socket::getsockopt(stream, nix::sys::socket::sockopt::LocalPeerPid).ok();
         let top = pid.map(|p| top_ancestor(p, parent_pid)).filter(|t| Some(*t) != pid).map(|t| (t, proc_name(t).unwrap_or_else(|| "unknown".into()), start_time(t)));
-        Peer { pid, started: pid.and_then(start_time), top }
+        let inside = pid.and_then(|p| inside(p, crate::broker::pid(), parent_pid));
+        Peer { pid, inside, started: pid.and_then(start_time), top }
     }
 
     /// `client pid 812 running, ghostty pid 700 gone`.
@@ -694,7 +708,7 @@ mod tests {
     fn a_pid_reused_since_the_connect_reads_gone() {
         let me = std::process::id() as i32;
         let started = super::start_time(me);
-        let peer = super::Peer { pid: Some(me), started, top: Some((me, "ghostty".into(), Some(1))) };
+        let peer = super::Peer { pid: Some(me), inside: Some(false), started, top: Some((me, "ghostty".into(), Some(1))) };
         assert_eq!(peer.states(), format!("client pid {me} running, ghostty pid {me} gone"));
         assert_eq!(super::state_since(me, None), "running", "a start time that could not be read is not compared");
     }
@@ -824,25 +838,26 @@ mod tests {
         };
         // S1: tool shell 73876 -> claude 11908 -> zsh 9663 -> broker 9619 -> daemon 9618 -> launchd
         let pane = chain(&[(73876, 11908), (11908, 9663), (9663, 9619), (9619, 9618), (9618, 1)]);
-        assert!(super::inside(73876, 9619, &pane), "an agent's tool shell");
-        assert!(super::inside(9663, 9619, &pane), "the pane's shell");
-        assert!(super::inside(73876, 9618, &pane), "a handover from a build that kept no broker pid falls back to the daemon's");
-        assert!(!super::inside(9619, 9619, &pane), "the broker itself is not a client");
+        assert_eq!(super::inside(73876, 9619, &pane), Some(true), "an agent's tool shell");
+        assert_eq!(super::inside(9663, 9619, &pane), Some(true), "the pane's shell");
+        assert_eq!(super::inside(73876, 9618, &pane), Some(true), "a handover from a build that kept no broker pid falls back to the daemon's");
+        assert_eq!(super::inside(9619, 9619, &pane), Some(false), "the broker itself is not a client");
         // After an in-place update the daemon keeps its pid and the broker is adopted, so the carried pid still matches.
         let after = chain(&[(73876, 11908), (11908, 9663), (9663, 9619), (9619, 9618)]);
-        assert!(super::inside(73876, 9619, after));
+        assert_eq!(super::inside(73876, 9619, after), Some(true));
         let terminal = chain(&[(502, 501), (501, 500), (500, 1)]);
-        assert!(!super::inside(502, 9619, &terminal), "a terminal's shell");
-        assert!(!super::inside(502, 1, &terminal), "launchd is never an anchor");
+        assert_eq!(super::inside(502, 9619, &terminal), Some(false), "a terminal's shell");
+        assert_eq!(super::inside(502, 1, &terminal), Some(false), "launchd is never an anchor");
         let detached = chain(&[(800, 1)]);
-        assert!(!super::inside(800, 9619, detached), "a double fork escapes: the stated limit");
-        let gone = chain(&[(900, 901)]);
-        assert!(!super::inside(900, 9619, gone), "an ancestor that cannot be read ends the walk");
+        assert_eq!(super::inside(800, 9619, detached), Some(false), "a double fork escapes: the stated limit");
+        let gone = chain(&[(73876, 11908), (11908, 9663)]);
+        assert_eq!(super::inside(73876, 9619, gone), None, "an ancestor that cannot be read mid-chain is not outside");
+        assert_eq!(super::inside(900, 9619, chain(&[])), None, "nor is a pid whose own parent cannot be read");
         let cycle = chain(&[(5, 6), (6, 5)]);
-        assert!(!super::inside(5, 9619, cycle), "a loop ends at the cap");
+        assert_eq!(super::inside(5, 9619, cycle), None, "a loop uses up the cap");
         let long: Vec<(i32, i32)> = (0..40).map(|i| (1000 + i, 1001 + i)).collect();
-        assert!(super::inside(1000, 1032, chain(&long)), "32 steps up");
-        assert!(!super::inside(1000, 1033, chain(&long)), "not 33");
+        assert_eq!(super::inside(1000, 1032, chain(&long)), Some(true), "32 steps up");
+        assert_eq!(super::inside(1000, 1033, chain(&long)), None, "33 steps are not read, so not outside");
         assert_eq!(crate::broker::pid(), std::process::id() as i32, "with no broker the daemon's own pid is the anchor");
     }
 
@@ -902,6 +917,41 @@ mod tests {
         let (out, got) = from_a_child("{\"Hello\":{\"cwd\":\"/\",\"cols\":80,\"rows\":24}}\n", false, || false);
         assert_eq!(out, "\x1b[?1049l\r\nrefused: attach from inside a pane\r\n\x1b[?1049h", "on the screen the human keeps");
         assert!(!acted(&got), "the screen was taken");
+    }
+
+    #[test]
+    fn a_program_gone_before_its_ancestors_were_read_is_refused_even_with_panes_allowed() {
+        let path = std::env::temp_dir().join(format!("nerd-gone-{}.sock", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        // Connected, wrote and exited before the server accepts: nothing about it can be read any more.
+        let send = r#"$s = IO::Socket::UNIX->new(Peer => $ARGV[0]) or die; print $s qq("Shutdown"\n); close $s"#;
+        assert!(std::process::Command::new("/usr/bin/perl").args(["-MIO::Socket::UNIX", "-e", send]).arg(&path).status().unwrap().success());
+        let (stream, _) = listener.accept().unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(super::Peer::of(&stream).inside, None, "neither outside nor inside");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let inbox = super::Inbox { tx, bell: crate::bell::new().0 };
+        std::thread::spawn(move || super::read_client(1, stream, inbox, false, super::Waiting::default(), || true));
+        let got: Vec<_> = std::iter::from_fn(|| rx.recv_timeout(Duration::from_millis(500)).ok()).collect();
+        assert!(!acted(&got), "a stop from a process that left no trace went through");
+    }
+
+    #[test]
+    fn a_line_over_the_limit_ends_the_connection_and_nothing_after_it_is_read() {
+        let (ours, theirs) = std::os::unix::net::UnixStream::pair().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let inbox = super::Inbox { tx, bell: crate::bell::new().0 };
+        std::thread::spawn(move || super::read_client(1, theirs, inbox, true, super::Waiting::default(), || false));
+        let mut w = ours.try_clone().unwrap();
+        std::thread::spawn(move || {
+            let _ = std::io::Write::write_all(&mut w, &vec![b'x'; 8 << 20]);
+            let _ = crate::proto::ClientMsg::Appearance(true).write_to(&mut w);
+        });
+        let got = rx.recv_timeout(Duration::from_secs(1)).expect("no Detach within 1 s");
+        assert!(matches!(&got, super::Inbound::Detach(1, why) if why.starts_with(super::READ_ERROR)), "the writer is still open");
+        assert!(rx.recv_timeout(Duration::from_millis(200)).is_err(), "a message after the long line was read");
+        drop(ours);
     }
 
     #[test]

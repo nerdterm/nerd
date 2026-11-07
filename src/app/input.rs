@@ -536,6 +536,8 @@ impl App {
     pub(super) fn pane_type(&mut self, text: &str) {
         if let Some(p) = self.tab_mut().and_then(Tab::focused_mut) {
             p.pty.write(text.as_bytes());
+            let id = p.id;
+            self.owner_typed(id);
         }
     }
 

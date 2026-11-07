@@ -80,7 +80,8 @@ it, and takes nerd's hooks out of its agent's config; `--plugin-on` brings both 
 window's to do there.
 
 **The catalog.** `nerd --plugin-catalog`, or **Refresh catalog**, fetches the catalog from
-`https://github.com/nerdterm/nerd-plugins` into the state root's `catalog/`; nothing else ever fetches it. Each plugin
+`https://github.com/nerdterm/nerd-plugins` into the state root's `catalog/`; nothing else ever fetches it. The catalog
+is not signed: it is as trustworthy as that repository and HTTPS to GitHub. Each plugin
 is marked **reviewed** (the maintainer approved that release), **checked** (risk level 0, approved by the catalog's
 checks alone), **not in catalog** (another address or another commit than the catalog's), or **by hand**. A catalog
 install takes exactly the commit the catalog reviewed, refuses when its tag no longer points there, and recomputes the
