@@ -1797,9 +1797,6 @@ impl App {
     pub(super) fn isolation_overlay(&self, target: IsolationTarget) -> Overlay {
         let agents = crate::agents::all();
         let providers: Vec<String> = agents.iter().filter(|m| matches!(m.agent.network.net, crate::agents::Network::Internet { .. })).map(|m| m.name.clone()).collect();
-        // A plugin's title is its own words: it could name itself after a built-in. Indented, so no line of its note,
-        // wrapped or not, starts where a built-in's does.
-        let notes = agents.iter().filter_map(|m| Some(format!("{}{}: {}", if m.builtin { String::new() } else { format!("  plugin {}: ", m.name) }, m.title, m.agent.own_sandbox.as_ref()?))).collect();
         let accounts = crate::policy::current().accounts.iter().map(|a| a.name.clone()).collect();
         let (about, mut pick, inherit, inherited, agent, folder) = match target {
             IsolationTarget::Pane(id) => {
@@ -1815,6 +1812,13 @@ impl App {
                 (format!("new panes in space {}", sp.label()), sp.isolation_new.clone(), Some("as nerd's default"), Default::default(), None, sp.cwd.clone())
             }
         };
+        // A pane hears its own agent's advice, a tab or a space every agent's. A plugin's title is its own words, so it
+        // says "plugin <name>": it cannot pose as a built-in.
+        let advice = agents
+            .iter()
+            .filter(|m| inherit.is_some() || agent.as_deref() == Some(m.name.as_str()))
+            .filter_map(|m| Some((if m.builtin { m.title.clone() } else { format!("plugin {}: {}", m.name, m.title) }, m.agent.own_sandbox.clone()?)))
+            .collect();
         let canon = |p: &std::path::Path| std::fs::canonicalize(p).ok();
         let home = crate::paths::home().is_some_and(|h| canon(&h).is_some() && canon(&h) == canon(&folder));
         let groups: Vec<_> = agents.iter().filter(|m| !m.agent.network.providers.is_empty()).map(|m| (m.name.clone(), m.agent.network.clone())).collect();
@@ -1826,7 +1830,7 @@ impl App {
         if let Some(crate::policy::Isolation { network: crate::policy::Network::Providers(p), .. }) = pick.as_mut() {
             *p = crate::policy::entries(&chosen);
         }
-        Overlay::Isolation(crate::isolation_ui::IsolationWin { target, about, pick, inherit, inherited, accounts, providers, groups, chosen, stale, view: None, notes, home, scroll: Default::default() })
+        Overlay::Isolation(crate::isolation_ui::IsolationWin { target, about, pick, inherit, inherited, accounts, providers, groups, chosen, stale, view: None, advice, home, scroll: Default::default() })
     }
 
     pub(super) fn isolation_outcome(&mut self, w: crate::isolation_ui::IsolationWin, out: crate::isolation_ui::Out) -> Overlay {

@@ -42,6 +42,14 @@ taste.
     the one shown in bold and each other one a click away with the hand. One word that changes on a click is not
     used: it cannot say whether it names what is shown or what a click gives. A menu item stays rule 6's verb
     ("Next view: source"); the names are lowercase, as rule 10's values are.
+16. **A note says what applies here, in groups:** the lines that explain a choice (what it costs, what is refused,
+    advice, a warning) sit under a heading that names the target and the reader's loss ("Here programs cannot",
+    "Agents' own sandboxes cannot run here; nerd's limits replace them"), one item per line, `what | how` in aligned
+    columns where an item has both. A line that wraps continues under its item's own text, not under the margin; a
+    clause that every item shares is said once, in the heading. A note appears only when it applies to this pane, tab
+    or space: not for another agent, another folder or a setting that is off. Faint is information; warn is a risk the
+    person should act on, and at most one warn line per group. The last column is wrapped before the first is cut; a
+    window too narrow for two columns stacks them (the how under the what, indented).
 
 ## Windows
 
@@ -58,7 +66,7 @@ Every window except a context menu is drawn through `chrome::dialog`, and `chrom
   - 80 columns: Servers, Plugins, Messages, Isolation, Choose providers and Accounts.
 
   What does not fit is wrapped or cut, never widened: a body, a hint and a key's description wrap (the description
-  under itself, a table's last column under its own start, a command under its indent, a line of chips under its
+  under itself, a note's item under its own start, a table's last column under its own start, a command under its indent, a line of chips under its
   first chip, each chip keeping its click); a picker's second column, a panel's row and the
   right-hand columns of a table are cut with "…"; a folder's path in New space loses its middle to "…". Not sized
   this way: the routes map, context menus and the notice card. A window is as tall as its rows, the strip, the
@@ -75,6 +83,7 @@ Every window except a context menu is drawn through `chrome::dialog`, and `chrom
 - The key strip is broken between keys into lines that fit the width (`chrome::hint`). A row of buttons wider than
   the window is broken the same way, close on the last line.
 - Section headers are sentence case; a rule between groups is drawn in the border colour.
+- Notes (rule 16): a heading in the muted colour, items faint and indented two spaces, warn only for a risk.
 
 ## Search
 

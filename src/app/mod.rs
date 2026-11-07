@@ -3029,23 +3029,53 @@ mod tests {
             let dir = crate::paths::state_root().join("plugins/mimic");
             std::fs::create_dir_all(&dir).unwrap();
             std::fs::write(dir.join("plugin.json"), serde_json::json!({ "name": "mimic", "title": "Claude Code", "agent": { "names": ["mimic"], "own_sandbox": "turn its sandbox off" } }).to_string()).unwrap();
-            // Its title fills the first line to the wrap width, the "  plugin long: " prefix counted, so the wrapped rest would start a line as Claude Code's does.
+            // A title wider than the window ending in a built-in's name: the item stacks, and if it wrapped its last row would start as the built-in's item does.
             let long = crate::paths::state_root().join("plugins/long");
             std::fs::create_dir_all(&long).unwrap();
-            let own = "Claude Code: turn /sandbox off; nerd's limits already cover the whole agent";
-            std::fs::write(long.join("plugin.json"), serde_json::json!({ "name": "long", "title": "a".repeat(76 - 14), "agent": { "names": ["long"], "own_sandbox": own } }).to_string()).unwrap();
+            std::fs::write(long.join("plugin.json"), serde_json::json!({ "name": "long", "title": format!("{} Claude Code", "a".repeat(60)), "agent": { "names": ["long"], "own_sandbox": "turn Claude Code off" } }).to_string()).unwrap();
             crate::agents::reload();
             let Overlay::Isolation(mut w) = with_one_space().isolation_overlay(IsolationTarget::Space(0)) else { panic!("it opens") };
-            // Notes show only for a pick with a profile.
+            // Advice shows only for a pick with a profile.
             w.pick = Some(crate::policy::Isolation { files: crate::policy::Files::Folder, network: crate::policy::Network::None });
-            let rows = crate::messages::wrap(w.lines(&crate::render::Theme::dark()), 76);
+            let rows = crate::messages::wrap(w.lines(&crate::render::Theme::dark(), 76), 76);
             let text: Vec<String> = rows.iter().map(|l| l.iter().map(|s| s.0.as_str()).collect()).collect();
-            assert_eq!(text.iter().filter(|l| l.starts_with("Claude Code:")).count(), 1, "only the built-in's note starts a line so: {text:#?}");
-            assert!(w.notes.iter().any(|n| n == "  plugin mimic: Claude Code: turn its sandbox off"), "{:?}", w.notes);
-            assert!(w.notes.iter().any(|n| n.starts_with("Claude Code: turn /sandbox off")), "a built-in's note is as before: {:?}", w.notes);
+            assert_eq!(text.iter().filter(|l| l.starts_with("  Claude Code")).count(), 1, "only the built-in's advice starts a line so: {text:#?}");
+            assert!(w.advice.iter().any(|(t, a)| t == "plugin mimic: Claude Code" && a == "turn its sandbox off"), "{:?}", w.advice);
+            assert!(w.advice.iter().any(|(t, a)| t == "Claude Code" && a == "turn /sandbox off"), "a built-in's advice is as before: {:?}", w.advice);
             let _ = std::fs::remove_dir_all(&dir);
             let _ = std::fs::remove_dir_all(&long);
             crate::agents::reload();
+        });
+    }
+
+    #[test]
+    fn isolation_advises_a_pane_only_about_its_own_agent_and_a_tab_about_all() {
+        crate::config::tests::with_temp_home(|| {
+            let mut app = named();
+            let folder = crate::policy::Isolation { files: crate::policy::Files::Folder, network: crate::policy::Network::None };
+            let open = |app: &App, t| match app.isolation_overlay(t) {
+                Overlay::Isolation(w) => w,
+                _ => panic!("no window"),
+            };
+            let titles = |w: &crate::isolation_ui::IsolationWin| {
+                let mut w = w.clone();
+                w.pick = Some(folder.clone());
+                let text: Vec<String> = w.lines(&crate::render::Theme::dark(), 76).iter().map(|l| l.iter().map(|s| s.0.as_str()).collect()).collect();
+                (w.advice.iter().map(|a| a.0.clone()).collect::<Vec<_>>(), text)
+            };
+            app.pane_mut(1).unwrap().agent = Some("claude".into());
+            app.pane_mut(2).unwrap().agent = None;
+            app.pane_mut(2).unwrap().agent_session = None;
+            let (claude, text) = titles(&open(&app, IsolationTarget::Pane(1)));
+            assert_eq!(claude, ["Claude Code"], "{text:#?}");
+            assert!(text.iter().any(|l| l == "Its own sandbox cannot run here; nerd's limits replace it"), "{text:#?}");
+            assert!(!text.iter().any(|l| l.contains("--sandbox") || l.contains("SEATBELT_PROFILE")), "{text:#?}");
+            let (shell, text) = titles(&open(&app, IsolationTarget::Pane(2)));
+            assert!(shell.is_empty() && !text.iter().any(|l| l.contains("sandbox")), "a shell pane hears no advice: {text:#?}");
+            assert!(text.iter().any(|l| l == "Here programs cannot"), "the refused list stays: {text:#?}");
+            let (all, text) = titles(&open(&app, IsolationTarget::Tab(0, 0)));
+            assert!(["Claude Code", "Codex", "Gemini CLI", "Qwen Code"].iter().all(|t| all.iter().any(|a| a == t)), "{all:?}");
+            assert!(text.iter().any(|l| l == "Agents' own sandboxes cannot run here; nerd's limits replace them"), "{text:#?}");
         });
     }
 
@@ -3082,7 +3112,7 @@ mod tests {
             assert_eq!(enter(&mut open(&app, IsolationTarget::Tab(0, 0))), Out::Save(Some(only(&["pi/deepseek", "pi/openai"])), false), "a tab's subset");
             app.pane_mut(1).unwrap().isolation = only(&["pi/xyz", "pi/deepseek"]);
             let mut w = open(&app, IsolationTarget::Pane(1));
-            let text: String = w.lines(&crate::render::Theme::dark()).iter().flatten().map(|(t, _, _)| t.as_str()).collect();
+            let text: String = w.lines(&crate::render::Theme::dark(), 76).iter().flatten().map(|(t, _, _)| t.as_str()).collect();
             assert!(text.contains("xyz: no longer in pi's manifest") && text.contains("pi: deepseek"), "{text}");
             assert_eq!(enter(&mut w), Out::Save(Some(only(&["pi/deepseek"])), false), "a gone provider is dropped on save");
             for gone in [&["pi/xyz"][..], &["foo"]] {

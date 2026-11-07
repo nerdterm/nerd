@@ -104,9 +104,35 @@ pub fn draw<H: Clone>(buf: &mut Buffer, r: Rect, title: &str, theme: &Theme, lin
     d
 }
 
+/// The text width of a wide window on `screen`.
+pub fn wide_width(screen: Rect) -> usize {
+    crate::chrome::fit(screen, crate::chrome::WIDE_W, 0).width.saturating_sub(2 * crate::chrome::DIALOG_FRAME.horizontal) as usize
+}
+
+/// `what | how` rows in `width` cells, items indented two: the what padded to the widest, the how wrapped under
+/// itself; when the how would get under 16 cells it goes under the what instead, indented four.
+pub fn pairs(items: &[(String, String)], width: usize) -> Vec<String> {
+    let w1 = items.iter().map(|(a, _)| cells(a)).max().unwrap_or(0);
+    let room = width.saturating_sub(w1 + 4);
+    let mut out = Vec::new();
+    for (what, how) in items {
+        if room >= 16 {
+            for (i, part) in crate::menu::wrap(how, room).into_iter().enumerate() {
+                let head = if i == 0 { what.as_str() } else { "" };
+                out.push(format!("  {head}{}  {part}", " ".repeat(w1 - cells(head))));
+            }
+        } else {
+            // One row, never wrapped: a wrapped plugin title could start a line exactly as a built-in's item does.
+            out.push(format!("  {}", crate::chrome::cut_cells(what, width.saturating_sub(2).max(1))));
+            out.extend(crate::menu::wrap(how, width.saturating_sub(4).max(1)).into_iter().map(|p| format!("    {p}")));
+        }
+    }
+    out
+}
+
 /// A wide window for `lines`, and the lines wrapped to its width.
 pub fn fit<H: Clone + PartialEq>(screen: Rect, lines: Vec<Line<H>>) -> (Rect, Vec<Line<H>>) {
-    let w = crate::chrome::fit(screen, crate::chrome::WIDE_W, 0).width.saturating_sub(2 * crate::chrome::DIALOG_FRAME.horizontal) as usize;
+    let w = wide_width(screen);
     let lines = wrap(lines, w);
     (crate::chrome::fit(screen, crate::chrome::WIDE_W, lines.len() as u16), lines)
 }
@@ -1381,6 +1407,19 @@ pub(crate) mod tests {
     use crate::app::{MailColumn, RouteView, Traffic};
     use crate::mail::{Step, Via};
     use crate::policy::{Files, Isolation, Network, Route};
+
+    #[test]
+    fn a_stacked_title_stays_on_one_row_and_never_starts_a_built_ins_item() {
+        // ☺ + U+FE0F is two cells, its characters alone one and none: every cut point is tried at every width.
+        for w in 30..=80 {
+            for pad in 0..w {
+                let title = format!("plugin x: {} Codex\u{263A}\u{FE0F}zz", "a".repeat(pad));
+                let rows = pairs(&[(title, "turn its sandbox off".into())], w);
+                assert!(rows.iter().all(|r| cells(r) <= w), "a row wider than {w}: {rows:?}");
+                assert!(!rows.iter().any(|r| r.starts_with("  Codex")), "{rows:?}");
+            }
+        }
+    }
 
     #[test]
     fn text_lines_keep_their_indent() {

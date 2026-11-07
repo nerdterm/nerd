@@ -23,6 +23,6 @@
     },
     "data": ["~/.gemini/tmp", "~/.gemini/state.json", "~/.gemini/projects.json"],
     "network": { "hosts": ["generativelanguage.googleapis.com", "oauth2.googleapis.com", "accounts.google.com", "cloudcode-pa.googleapis.com"], "ports": [443] },
-    "own_sandbox": "unset SEATBELT_PROFILE; nerd's limits already cover the whole agent"
+    "own_sandbox": "unset SEATBELT_PROFILE"
   }
 }

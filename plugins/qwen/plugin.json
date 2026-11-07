@@ -27,6 +27,6 @@
     },
     "data": ["~/.qwen/sessions", "~/.qwen/projects", "~/.qwen/tmp", "~/.qwen/usage", "~/.qwen/tip_history.json", "~/.qwen/usage_record.jsonl"],
     "network": { "hosts": ["chat.qwen.ai", "portal.qwen.ai", "dashscope.aliyuncs.com", "dashscope-intl.aliyuncs.com"], "ports": [443] },
-    "own_sandbox": "start it without --sandbox; nerd's limits already cover the whole agent"
+    "own_sandbox": "start it without --sandbox"
   }
 }
