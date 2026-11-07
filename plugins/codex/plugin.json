@@ -25,6 +25,6 @@
     },
     "data": ["~/.codex/sessions", "~/.codex/log", "~/.codex/history.jsonl", "~/.codex/session_index.jsonl", "~/.codex/installation_id", "~/.codex/thread-writer-locks"],
     "network": { "hosts": ["api.openai.com", "auth.openai.com", "chatgpt.com"], "ports": [443] },
-    "own_sandbox": "start it with --sandbox danger-full-access; nerd's limits already cover the whole agent"
+    "own_sandbox": "start it with --sandbox danger-full-access"
   }
 }

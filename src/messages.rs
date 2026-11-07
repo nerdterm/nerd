@@ -104,9 +104,34 @@ pub fn draw<H: Clone>(buf: &mut Buffer, r: Rect, title: &str, theme: &Theme, lin
     d
 }
 
+/// The text width of a wide window on `screen`.
+pub fn wide_width(screen: Rect) -> usize {
+    crate::chrome::fit(screen, crate::chrome::WIDE_W, 0).width.saturating_sub(2 * crate::chrome::DIALOG_FRAME.horizontal) as usize
+}
+
+/// `what | how` rows in `width` cells, items indented two: the what padded to the widest, the how wrapped under
+/// itself; when the how would get under 16 cells it goes under the what instead, indented four.
+pub fn pairs(items: &[(String, String)], width: usize) -> Vec<String> {
+    let w1 = items.iter().map(|(a, _)| cells(a)).max().unwrap_or(0);
+    let room = width.saturating_sub(w1 + 4);
+    let mut out = Vec::new();
+    for (what, how) in items {
+        if room >= 16 {
+            for (i, part) in crate::menu::wrap(how, room).into_iter().enumerate() {
+                let head = if i == 0 { what.as_str() } else { "" };
+                out.push(format!("  {head}{}  {part}", " ".repeat(w1 - cells(head))));
+            }
+        } else {
+            out.push(format!("  {what}"));
+            out.extend(crate::menu::wrap(how, width.saturating_sub(4).max(1)).into_iter().map(|p| format!("    {p}")));
+        }
+    }
+    out
+}
+
 /// A wide window for `lines`, and the lines wrapped to its width.
 pub fn fit<H: Clone + PartialEq>(screen: Rect, lines: Vec<Line<H>>) -> (Rect, Vec<Line<H>>) {
-    let w = crate::chrome::fit(screen, crate::chrome::WIDE_W, 0).width.saturating_sub(2 * crate::chrome::DIALOG_FRAME.horizontal) as usize;
+    let w = wide_width(screen);
     let lines = wrap(lines, w);
     (crate::chrome::fit(screen, crate::chrome::WIDE_W, lines.len() as u16), lines)
 }

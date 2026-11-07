@@ -6,7 +6,7 @@ use ratatui::style::{Modifier, Style};
 
 use crate::app::IsolationTarget;
 use crate::chrome::Scroll;
-use crate::messages::{Drawn, Line, chip};
+use crate::messages::{Drawn, Line, chip, pairs};
 use crate::agents::AgentNetwork;
 use crate::policy::{Account, Chosen, Files, Isolation, Network, entries};
 use crate::render::Theme;
@@ -66,8 +66,8 @@ pub struct IsolationWin {
     pub stale: Vec<String>,
     /// Choose providers, open over the window.
     pub view: Option<View>,
-    /// `<title>: <how to turn its own sandbox off>`, one per agent that says.
-    pub notes: Vec<String>,
+    /// (agent title, how to turn its own sandbox off): this pane's agent, or every agent that says for a tab or a space.
+    pub advice: Vec<(String, String)>,
     /// The pane's folder (a tab's or space's: the space's) is the home folder itself.
     pub home: bool,
     pub scroll: Scroll,
@@ -88,18 +88,26 @@ const DONE: &str = " [Enter] done ";
 const NOTHING_TICKED: &str = "choose at least one provider, or all";
 /// Seatbelt refuses a setuid program under a profile.
 const HOME_FOLDER: &str = "This pane's folder is your home folder, so it can change your files there, though not dot files, ~/Library or ~/bin; choose a project folder for a real limit.";
+const FOLDER_HEAD: &str = "To keep it from planting code or instructions for your other sessions, here";
 /// What a This-folder-only pane costs, each line in what stops working.
-const FOLDER_COSTS: [&str; 4] = [
-    "To keep it from planting code or instructions for your other sessions, here:",
-    "  agents cannot save their settings or memory; Claude Code has no task list",
-    "  Codex sessions and Qwen Code workflows cannot be resumed later",
-    "  uv, pnpm, Go, pip and others fail unless their cache is in this folder",
+const FOLDER_COSTS: [&str; 3] = [
+    "agents cannot save their settings or memory; Claude Code has no task list",
+    "Codex sessions and Qwen Code workflows cannot be resumed later",
+    "uv, pnpm, Go, pip and others fail unless their cache is in this folder",
 ];
-const NO_AGENT: &str = "  git over ssh and docker do not work: no ssh agent, no Docker";
-const NO_MUX: &str = "  tmux and Zellij here run only this pane's sessions; the WezTerm, iTerm2 and kitty sockets nerd knows are closed";
-const NO_LAUNCH: &str = "open cannot open files or links, launchctl cannot add jobs, and osascript cannot control other apps here; scripts and the clipboard still work";
-const NO_PREFS: &str = "programs cannot save macOS settings here: defaults, Xcode and other Apple tools";
-const SETUID: &str = "ps, top, sudo and other setuid programs do not run in an isolated pane";
+const NO_AGENT: &str = "git over ssh and docker do not work: no ssh agent, no Docker";
+const NO_MUX: &str = "tmux and Zellij here run only this pane's sessions; the WezTerm, iTerm2 and kitty sockets nerd knows are closed";
+const PROFILED_HEAD: &str = "Here programs cannot";
+/// What a profile refuses, as what | how.
+const PROFILED: [(&str, &str); 5] = [
+    ("open files or links", "open"),
+    ("add launchd jobs", "launchctl"),
+    ("control other apps", "osascript (scripts and the clipboard still work)"),
+    ("save macOS settings", "defaults, Xcode"),
+    ("run setuid tools", "ps, top, sudo"),
+];
+const ADVICE_ONE: &str = "Its own sandbox cannot run here; nerd's limits replace it";
+const ADVICE_MANY: &str = "Agents' own sandboxes cannot run here; nerd's limits replace them";
 
 /// Down on a frame: its close button or outside it closes; otherwise what was hit.
 fn pressed<H: Clone>(ev: crossterm::event::MouseEvent, d: &Drawn<H>) -> Result<Option<H>, Out> {
@@ -127,7 +135,8 @@ impl IsolationWin {
         b
     }
 
-    pub fn lines(&self, theme: &Theme) -> Vec<Line<Click>> {
+    /// The window's rows for text `width` cells wide.
+    pub fn lines(&self, theme: &Theme, width: usize) -> Vec<Line<Click>> {
         let g = Style::default().bg(theme.ground);
         let mut out: Vec<Line<Click>> = vec![vec![(self.about.clone(), g.fg(theme.accent).add_modifier(Modifier::BOLD), None)], Vec::new()];
         let radio = |on: bool, label: String, click: Option<Click>| -> Line<Click> {
@@ -168,21 +177,28 @@ impl IsolationWin {
         }
         out.push(radio(network == Some(&Network::None), "None".into(), Some(Click::Network(Network::None))));
         let folder = files == Some(&Files::Folder);
-        let mut costs: Vec<&str> = Vec::new();
+        let mut costs: Vec<String> = Vec::new();
         if folder {
-            costs.extend(FOLDER_COSTS);
-        }
-        if folder && network == Some(&Network::Open) {
-            costs.extend([NO_AGENT, NO_MUX]);
+            costs.extend(FOLDER_COSTS.map(|c| format!("  {c}")));
+            if network == Some(&Network::Open) {
+                costs.extend([NO_AGENT, NO_MUX].map(|c| format!("  {c}")));
+            }
         }
         let shown = self.pick.as_ref().unwrap_or(&self.inherited);
-        if Isolation::profiled(&shown.files, &shown.network) {
-            costs.extend([NO_LAUNCH, NO_PREFS, SETUID]);
-            costs.extend(self.notes.iter().map(String::as_str));
+        let profiled = Isolation::profiled(&shown.files, &shown.network);
+        let refused: Vec<(String, String)> = PROFILED.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect();
+        let groups = [
+            (FOLDER_HEAD, costs),
+            (PROFILED_HEAD, if profiled { pairs(&refused, width) } else { Vec::new() }),
+            (if self.inherit.is_some() { ADVICE_MANY } else { ADVICE_ONE }, if profiled { pairs(&self.advice, width) } else { Vec::new() }),
+        ];
+        for (head, rows) in groups.into_iter().filter(|(_, r)| !r.is_empty()) {
+            out.push(Vec::new());
+            out.push(vec![(head.to_string(), g.fg(theme.muted), None)]);
+            out.extend(rows.into_iter().map(|t| vec![(t, g.fg(theme.faint), None)]));
         }
-        out.push(Vec::new());
-        out.extend(costs.into_iter().map(|t| vec![(t.to_string(), g.fg(theme.faint), None)]));
         if folder && self.home {
+            out.push(Vec::new());
             out.push(vec![(HOME_FOLDER.into(), g.fg(theme.warn), None)]);
         }
         out
@@ -221,7 +237,7 @@ impl IsolationWin {
             let r = crate::chrome::fit(screen, r.width, lines.len() as u16);
             return crate::messages::draw(buf, r, "Choose providers", theme, &lines, &v.scroll, &[(DONE.to_string(), Click::Done)], BACK);
         }
-        let (r, lines) = crate::messages::fit(screen, self.lines(theme));
+        let (r, lines) = crate::messages::fit(screen, self.lines(theme, crate::messages::wide_width(screen)));
         crate::messages::draw(buf, r, self.title(), theme, &lines, &self.scroll, &self.buttons(), CANCEL)
     }
 
@@ -413,13 +429,13 @@ impl Accounts {
         for c in self.commands() {
             out.push(vec![(format!("  {c}"), g.fg(theme.text), None)]);
         }
-        out.push(vec![("A pane of the account then asks for your password (sudo) each time it starts.".into(), g.fg(theme.muted), None)]);
+        out.push(vec![("A pane of the account then asks for your password (sudo) each time it starts.".into(), g.fg(theme.faint), None)]);
         out.push(Vec::new());
         out.push(vec![("Once, and again after each nerd update: the copy of nerd its panes run, which only root can change".into(), g.fg(theme.muted), None)]);
         for c in self.install() {
             out.push(vec![(format!("  {c}"), g.fg(theme.text), None)]);
         }
-        out.push(vec![("Until that copy matches the running nerd, panes of the account refuse to start.".into(), g.fg(theme.muted), None)]);
+        out.push(vec![("Until that copy matches the running nerd, panes of the account refuse to start.".into(), g.fg(theme.faint), None)]);
         out.push(Vec::new());
         out.push(vec![("Optional, less safe: start its panes without a password".into(), g.fg(theme.muted), None)]);
         for c in self.sudoers() {
@@ -427,8 +443,8 @@ impl Accounts {
         }
         let a = &self.name;
         out.push(vec![(format!("with this line: any program running as you can act as {a} at any time, without a password"), g.fg(theme.warn), None)]);
-        out.push(vec![(format!("without it: sudo asks for your password each time a pane of {a} starts, so nothing acts as {a} unless you type it"), g.fg(theme.muted), None)]);
-        out.push(vec![("neither stops a program that already controls your own session".into(), g.fg(theme.muted), None)]);
+        out.push(vec![(format!("without it: sudo asks for your password each time a pane of {a} starts, so nothing acts as {a} unless you type it"), g.fg(theme.faint), None)]);
+        out.push(vec![("neither stops a program that already controls your own session".into(), g.fg(theme.faint), None)]);
         out.push(Vec::new());
         out.push(vec![("Optional, not checked by nerd: no network for the account".into(), g.fg(theme.muted), None)]);
         out.push(vec![(format!("  {}", self.pf()), g.fg(theme.text), None)]);
@@ -499,7 +515,7 @@ pub(crate) mod tests {
             chosen: vec![("codex".into(), None)],
             stale: Vec::new(),
             view: None,
-            notes: vec!["Codex: run it with --sandbox danger-full-access".into()],
+            advice: vec![("Codex".into(), "start it with --sandbox danger-full-access".into())],
             home: false,
             scroll: Scroll::default(),
         }
@@ -693,6 +709,39 @@ pub(crate) mod tests {
         w.mouse(MouseEvent { kind: MouseEventKind::Down(MouseButton::Left), column: x, row: y, modifiers: KeyModifiers::NONE }, &d)
     }
 
+    fn rows(w: &IsolationWin, width: usize) -> Vec<String> {
+        w.lines(&Theme::dark(), width).iter().map(|l| l.iter().map(|s| s.0.as_str()).collect()).collect()
+    }
+
+    #[test]
+    fn the_window_says_what_applies_here_in_groups_with_headings() {
+        let mut w = IsolationWin { pick: Some(Isolation { files: Files::Folder, network: Network::Open }), ..pane() };
+        let r = rows(&w, 76);
+        let at = |t: &str| r.iter().position(|l| l.contains(t)).unwrap_or_else(|| panic!("{t}: {r:#?}"));
+        assert!(at(FOLDER_HEAD) < at(NO_MUX) && at(NO_MUX) < at(PROFILED_HEAD) && at(PROFILED_HEAD) < at(ADVICE_ONE), "{r:#?}");
+        assert_eq!(r[at(PROFILED_HEAD) + 1], "  open files or links  open", "two aligned columns");
+        assert_eq!(r[at(PROFILED_HEAD) + 3], "  control other apps   osascript (scripts and the clipboard still work)", "{r:#?}");
+        assert!(r[at(PROFILED_HEAD) - 1].is_empty() && r[at(ADVICE_ONE) - 1].is_empty(), "a blank row between groups");
+        assert_eq!(r[at(ADVICE_ONE) + 1], "  Codex  start it with --sandbox danger-full-access");
+        let style = |t: &str| w.lines(&Theme::dark(), 76).into_iter().flatten().find(|s| s.0.contains(t)).map(|s| s.1.fg);
+        assert_eq!((style(PROFILED_HEAD), style("launchctl")), (Some(Some(Theme::dark().muted)), Some(Some(Theme::dark().faint))));
+        w.inherit = Some("as the space");
+        assert!(rows(&w, 76).iter().any(|l| l == ADVICE_MANY), "a tab or a space speaks of agents");
+    }
+
+    #[test]
+    fn a_narrow_window_puts_the_how_under_the_what_and_a_wrapped_item_under_its_own_start() {
+        let w = IsolationWin { pick: Some(Isolation { files: Files::Folder, network: Network::None }), ..pane() };
+        let r = rows(&w, 30);
+        let at = r.iter().position(|l| l == "  control other apps").unwrap_or_else(|| panic!("{r:#?}"));
+        assert_eq!(r[at + 1], "    osascript (scripts and the", "stacked under the what, indented");
+        let cost = r.iter().position(|l| l.starts_with("  agents cannot save")).unwrap();
+        let wrapped = crate::messages::wrap(w.lines(&Theme::dark(), 30), 30);
+        let t: Vec<String> = wrapped.iter().map(|l| l.iter().map(|s| s.0.as_str()).collect()).collect();
+        let first = t.iter().position(|l| l.starts_with("  agents cannot save")).unwrap();
+        assert!(t[first + 1].starts_with("  ") && !t[first + 1].starts_with("   "), "continues under its own text: {t:#?} {cost}");
+    }
+
     #[test]
     fn choices_by_mouse_then_save_and_restart() {
         let mut w = pane();
@@ -710,11 +759,11 @@ pub(crate) mod tests {
             w.draw(&mut buf, Rect::new(0, 0, 100, 40), &Theme::dark());
             crate::app::snapshots::dump(&buf, Rect::new(0, 0, 100, 40))
         };
-        assert!(FOLDER_COSTS.iter().all(|c| shown.contains(c.trim())) && shown.contains("Codex: run it with") && shown.contains(SETUID), "{shown}");
-        let has = |w: &IsolationWin, t: &str| w.lines(&Theme::dark()).iter().flatten().any(|(s, _, _)| s.starts_with(t));
-        assert!(has(&w, NO_LAUNCH) && has(&w, NO_PREFS), "wrapped where the window is narrow: {shown}");
+        assert!(FOLDER_COSTS.iter().all(|c| shown.contains(c.trim())) && shown.contains("danger-full-access") && shown.contains("ps, top, sudo"), "{shown}");
+        let has = |w: &IsolationWin, t: &str| rows(w, 76).iter().any(|s| s.contains(t));
+        assert!(has(&w, PROFILED_HEAD) && has(&w, "launchctl"), "{shown}");
         assert!(!has(&w, NO_AGENT) && !has(&w, NO_MUX), "only these providers: {shown}");
-        let profiled = [NO_LAUNCH, NO_PREFS, SETUID, "Codex: run it with"];
+        let profiled = [PROFILED_HEAD, "ps, top, sudo", "danger-full-access"];
         click_on(&mut w, "Open");
         assert!(has(&w, NO_AGENT) && has(&w, NO_MUX), "this folder only with open network");
         assert!(profiled.iter().all(|t| has(&w, t)), "a profile with open network too");
@@ -732,7 +781,7 @@ pub(crate) mod tests {
 
     #[test]
     fn this_folder_only_in_the_home_folder_warns_that_it_limits_little() {
-        let shown = |w: &IsolationWin| w.lines(&Theme::dark()).iter().flatten().any(|(t, s, _)| t == HOME_FOLDER && s.fg == Some(Theme::dark().warn));
+        let shown = |w: &IsolationWin| w.lines(&Theme::dark(), 76).iter().flatten().any(|(t, s, _)| t == HOME_FOLDER && s.fg == Some(Theme::dark().warn));
         let mut w = IsolationWin { home: true, ..pane() };
         assert!(!shown(&w), "files open: nothing to warn about");
         click_on(&mut w, "This folder only");
@@ -743,7 +792,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_tab_can_go_back_to_its_space() {
-        let launch = |w: &IsolationWin| [NO_LAUNCH, NO_PREFS].map(|t| w.lines(&Theme::dark()).iter().flatten().any(|(s, _, _)| s == t));
+        let launch = |w: &IsolationWin| [PROFILED_HEAD, "launchctl"].map(|t| rows(w, 76).iter().any(|s| s.contains(t)));
         let w = IsolationWin { target: IsolationTarget::Tab(0, 1), inherit: Some("as the space"), pick: None, inherited: Isolation { files: Files::Folder, network: Network::None }, ..pane() };
         assert_eq!(launch(&w), [true, true], "the space's profile is what the tab's new panes get");
         let mut w = IsolationWin { target: IsolationTarget::Tab(0, 1), inherit: Some("as the space"), pick: None, ..pane() };
@@ -833,8 +882,15 @@ pub(crate) mod tests {
         // on a short screen the link is below the fold until the window scrolls
         let short = Rect::new(0, 0, 160, 16);
         assert_eq!(click_seen(&mut w, short, "[Choose providers…]"), None, "hidden at first");
-        w.key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE));
-        assert_eq!(click_seen(&mut w, short, "[Choose providers…]"), Some(Out::None));
+        let mut seen = None;
+        for _ in 0..40 {
+            w.key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+            seen = click_seen(&mut w, short, "[Choose providers…]");
+            if seen.is_some() {
+                break;
+            }
+        }
+        assert_eq!(seen, Some(Out::None));
         assert!(w.view.as_ref().is_some_and(|v| v.agent == "pi"), "and after scrolling");
     }
 
@@ -857,7 +913,10 @@ pub(crate) mod tests {
     #[test]
     fn isolation_wraps_its_text_and_its_chips_and_every_chip_keeps_its_click() {
         let names = ["claude", "codex", "qwen", "gemini", "cursor", "copilot", "opencode", "pi", "another-agent", "and-one-more"];
-        let w = IsolationWin { providers: names.map(String::from).to_vec(), home: true, pick: Some(Isolation { files: Files::Folder, network: Network::Open }), ..pane() };
+        let mut w = IsolationWin { providers: names.map(String::from).to_vec(), home: true, pick: Some(Isolation { files: Files::Folder, network: Network::Open }), ..pane() };
+        // the window is one row taller than the test screen: draw once to learn its height, then scroll to the end
+        let _ = inside(|b, s| w.draw(b, s, &Theme::dark()));
+        w.key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE));
         let (d, rows) = inside(|b, s| w.draw(b, s, &Theme::dark()));
         assert_eq!(d.frame.width, crate::chrome::WIDE_W);
         for p in names {

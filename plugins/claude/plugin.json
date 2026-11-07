@@ -29,6 +29,6 @@
     "blocked_text": ["Do you want", "❯ 1."],
     "data": ["~/.claude/projects", "~/.claude/sessions", "~/.claude/file-history", "~/.claude/paste-cache", "~/.claude/todos", "~/.claude/statsig", "~/.claude/telemetry", "~/.claude/debug", "~/.claude/cache", "~/.claude/backups", "~/.claude/history.jsonl", "~/.claude/stats-cache.json"],
     "network": { "hosts": ["api.anthropic.com", "claude.ai", "console.anthropic.com", "platform.claude.com", "statsig.anthropic.com"], "ports": [443] },
-    "own_sandbox": "turn /sandbox off; nerd's limits already cover the whole agent"
+    "own_sandbox": "turn /sandbox off"
   }
 }
