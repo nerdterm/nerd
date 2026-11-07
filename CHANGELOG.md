@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.19.1](https://github.com/nerdterm/nerd/compare/v0.19.0...v0.19.1) (2026-11-07)
+
+
+### Fixed
+
+* a preview picture goes while the notice card is drawn over it ([#169](https://github.com/nerdterm/nerd/issues/169)) ([6ca3a7f](https://github.com/nerdterm/nerd/commit/6ca3a7f7d784b306fdd81b9daa13e831c6a0f6bb))
+* caches whose contents run later stay read-only in a pane isolated to its folder ([#176](https://github.com/nerdterm/nerd/issues/176)) ([dda6fdb](https://github.com/nerdterm/nerd/commit/dda6fdb2bb5e1a70ebf00916ab260373299fbe10))
+* Check for a new release leaves a release already installed to Update ([#175](https://github.com/nerdterm/nerd/issues/175)) ([7552294](https://github.com/nerdterm/nerd/commit/755229444c90055d1b6dcfeca90eb8e8a26bfedb))
+* isolated panes cannot ask macOS to start programs, and Ctrl+click opens files only in an app chosen at the click ([#181](https://github.com/nerdterm/nerd/issues/181)) ([02d8db3](https://github.com/nerdterm/nerd/commit/02d8db3d18251aeffceb26d6697372827ac76562))
+* only the release commit is signed, and an installer refuses a nerd of another version ([#178](https://github.com/nerdterm/nerd/issues/178)) ([a74be79](https://github.com/nerdterm/nerd/commit/a74be79773b1a8fc80ded332227a4b810617dbd4))
+* Servers says why a machine cannot be listed, and offers a terminal only when ssh wanted a prompt ([#171](https://github.com/nerdterm/nerd/issues/171)) ([5519b1e](https://github.com/nerdterm/nerd/commit/5519b1e3fe9eec84b72518f3c2b9e17e852f7bf4))
+* the server's sockets, files, ssh and typed messages hold their limits when a pane pushes on them ([#180](https://github.com/nerdterm/nerd/issues/180)) ([6bcc4cf](https://github.com/nerdterm/nerd/commit/6bcc4cf549042daab33bd63a6c70ea3ed7e44916))
+* what a pane prints is bounded in the server's memory and time ([#182](https://github.com/nerdterm/nerd/issues/182)) ([126df17](https://github.com/nerdterm/nerd/commit/126df1776f76b933859c1e87fed70c07d0619b9c))
+
 ## [0.19.0](https://github.com/nerdterm/nerd/compare/v0.18.1...v0.19.0) (2026-10-28)
 
 
