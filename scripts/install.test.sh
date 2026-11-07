@@ -26,11 +26,12 @@ awk -v m="$t/main.pub" -v b="$t/backup.pub" '
     /^# release keys end/ { skip = 0 }
     !skip' "$here/install.sh" >"$t/install.sh"
 
-# A release of `version` in `dir`: its archive, the shasum line, and that line signed with `key` (none for no .sig).
+# A release of `version` in `dir`: its archive, the shasum line, and that line signed with `key` (none for no .sig);
+# its nerd runs `body`, by default printing that version.
 release() {
     dir=$1 version=$2 key=$3
     mkdir -p "$dir/build"
-    printf '#!/bin/sh\necho "nerd %s (test)"\n' "$version" >"$dir/build/nerd"
+    printf '#!/bin/sh\n%s\n' "${4:-echo \"nerd $version (test)\"}" >"$dir/build/nerd"
     chmod 755 "$dir/build/nerd"
     name="nerd-v$version-macos-arm64.tar.gz"
     tar -czf "$dir/$name" -C "$dir/build" nerd
@@ -96,11 +97,18 @@ sign "$a.sha256" main
 expect "$(A=$a run named)" none "a signed checksum naming another archive"
 a=$(release "$g/down" 0.98.0 main)
 expect "$(HAVE=0.99.0 A=$a run down)" 0.98.0 "an older archive given by hand"
+a=$(release "$g/moved" 1.2.3 main 'echo "nerd 1.2.0 (test)"')
+expect "$(A=$a run moved)" none "an archive for 1.2.3 holding nerd 1.2.0"
+grep -qx 'nerd: the archive holds nerd 1.2.0, not 1.2.3, nothing installed' "$t/out" || bad "another version: $(cat "$t/out")"
+a=$(release "$g/broken" 0.99.0 main 'exit 3')
+expect "$(A=$a run broken)" none "an archive whose nerd does not run"
+grep -qx "nerd: the archive's nerd does not run, nothing installed" "$t/out" || bad "does not run: $(cat "$t/out")"
 
 # The download path, through a stand-in curl serving $SERVED by the last part of the url.
 mkdir -p "$t/stub"
 cat >"$t/stub/curl" <<'EOF'
 #!/bin/sh
+echo "$*" >>"$SERVED/args"
 out= url=
 while [ $# -gt 0 ]; do case $1 in -o) out=$2; shift ;; -*) ;; *) url=$1 ;; esac; shift; done
 echo "$url" >>"$SERVED/asked"
@@ -116,6 +124,7 @@ rm -f "$s/asked"
 expect "$(dl latest)" 1.2.3 "the latest release"
 [ "$(grep -c 'v1\.2\.0' "$s/asked")" = 0 ] || bad "the download path fetched another release's files"
 [ "$(grep -c '/releases/download/v1\.2\.3/' "$s/asked")" = 3 ] || bad "the download path did not fetch exactly the tag's three files"
+grep -v -e '--proto =https --proto-redir =https' "$s/args" && bad "a download may leave https"
 expect "$(HAVE=1.3.0 dl older)" 1.3.0 "a latest release older than the installed nerd"
 expect "$(HAVE=1.2.3 dl same)" 1.2.3 "the installed version again"
 mv "$s/nerd-v1.2.3-macos-arm64.tar.gz.sha256.sig" "$t/saved.sig"
@@ -125,6 +134,10 @@ mv "$t/saved.sig" "$s/nerd-v1.2.3-macos-arm64.tar.gz.sha256.sig"
 release "$s" 1.2 main >/dev/null
 printf '{"tag_name": "v1.2", "assets": []}\n' >"$s/latest"
 expect "$(dl tag)" none "a tag that is not a version"
+release "$s" 1.2.3 main 'echo "nerd 1.2.0 (test)"' >/dev/null
+printf '{"tag_name": "v1.2.3", "assets": []}\n' >"$s/latest"
+expect "$(dl moved)" none "the latest release's archive holding nerd 1.2.0"
+grep -qx 'nerd: the archive holds nerd 1.2.0, not 1.2.3, nothing installed' "$t/out" || bad "download, another version: $(cat "$t/out")"
 
 # A folder above the install folder writable by others is named once, with its fix; a normal home prints nothing about it.
 a=$(release "$g/perm" 0.99.0 main)

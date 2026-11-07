@@ -25,7 +25,7 @@ pub fn home() -> Option<PathBuf> {
     if let Some(h) = TEST_HOME.with(|h| h.borrow().clone()) {
         return Some(h);
     }
-    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let home = std::env::var_os("HOME").filter(|h| !h.is_empty()).map(PathBuf::from);
     #[cfg(test)]
     let home = Some(home.filter(|h| h.starts_with(std::env::temp_dir())).unwrap_or_else(|| std::env::temp_dir().join(format!("nerd-test-home-{}", std::process::id()))));
     home
@@ -72,7 +72,7 @@ pub fn state_root() -> PathBuf {
     if let Some(p) = std::env::var_os("NERD_STATE_DIR") {
         return PathBuf::from(p);
     }
-    // launchd can start us with no HOME; fall back to /tmp instead of panicking.
+    // launchd can start us with no HOME; fall back to the per-user temp folder (Darwin's, not /tmp) instead of panicking.
     nerd_dir(&home().unwrap_or_else(std::env::temp_dir))
 }
 
