@@ -302,11 +302,13 @@ pub(crate) fn cut_cells(s: &str, max: usize) -> String {
         return s.to_string();
     }
     let mut out = String::new();
+    // The whole string is measured: a sequence such as ☺ + U+FE0F is wider than its characters' widths added up.
     for c in s.chars() {
-        if cells(&out) as usize + cells(c.encode_utf8(&mut [0; 4])) as usize + 1 > max {
+        out.push(c);
+        if cells(&out) as usize + 1 > max {
+            out.pop();
             break;
         }
-        out.push(c);
     }
     out + "…"
 }

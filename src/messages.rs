@@ -1409,6 +1409,19 @@ pub(crate) mod tests {
     use crate::policy::{Files, Isolation, Network, Route};
 
     #[test]
+    fn a_stacked_title_stays_on_one_row_and_never_starts_a_built_ins_item() {
+        // ☺ + U+FE0F is two cells, its characters alone one and none: every cut point is tried at every width.
+        for w in 30..=80 {
+            for pad in 0..w {
+                let title = format!("plugin x: {} Codex\u{263A}\u{FE0F}zz", "a".repeat(pad));
+                let rows = pairs(&[(title, "turn its sandbox off".into())], w);
+                assert!(rows.iter().all(|r| cells(r) <= w), "a row wider than {w}: {rows:?}");
+                assert!(!rows.iter().any(|r| r.starts_with("  Codex")), "{rows:?}");
+            }
+        }
+    }
+
+    #[test]
     fn text_lines_keep_their_indent() {
         assert_eq!(text_lines("fn a() {\n    b(c, d)\n}", 10), ["fn a() {", "    b(c,", "    d)", "}"]);
         assert_eq!(text_lines(&format!("{}x", "\u{a0}".repeat(17)), 66), ["x"], "other whitespace is not an indent");
