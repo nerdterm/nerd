@@ -86,7 +86,6 @@ const CANCEL: &str = " [Esc] cancel ";
 const BACK: &str = " [Esc] back ";
 const DONE: &str = " [Enter] done ";
 const NOTHING_TICKED: &str = "choose at least one provider, or all";
-/// Seatbelt refuses a setuid program under a profile.
 const HOME_FOLDER: &str = "This pane's folder is your home folder, so it can change your files there, though not dot files, ~/Library or ~/bin; choose a project folder for a real limit.";
 const FOLDER_HEAD: &str = "To keep it from planting code or instructions for your other sessions, here";
 /// What a This-folder-only pane costs, each line in what stops working.
@@ -103,8 +102,8 @@ const PROFILED: [(&str, &str); 5] = [
     ("open files or links", "open"),
     ("add launchd jobs", "launchctl"),
     ("control other apps", "osascript (scripts and the clipboard still work)"),
-    ("save macOS settings", "defaults, Xcode"),
-    ("run setuid tools", "ps, top, sudo"),
+    ("save macOS settings", "defaults, Xcode, other Apple tools"),
+    ("run setuid tools", "ps, top, sudo, other setuid tools"),
 ];
 const ADVICE_ONE: &str = "Its own sandbox cannot run here; nerd's limits replace it";
 const ADVICE_MANY: &str = "Agents' own sandboxes cannot run here; nerd's limits replace them";

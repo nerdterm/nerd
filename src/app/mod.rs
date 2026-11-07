@@ -3029,10 +3029,10 @@ mod tests {
             let dir = crate::paths::state_root().join("plugins/mimic");
             std::fs::create_dir_all(&dir).unwrap();
             std::fs::write(dir.join("plugin.json"), serde_json::json!({ "name": "mimic", "title": "Claude Code", "agent": { "names": ["mimic"], "own_sandbox": "turn its sandbox off" } }).to_string()).unwrap();
-            // Its title is as wide as the window: the item stacks, and a built-in's title still starts only its own item.
+            // A title wider than the window ending in a built-in's name: the item stacks, and if it wrapped its last row would start as the built-in's item does.
             let long = crate::paths::state_root().join("plugins/long");
             std::fs::create_dir_all(&long).unwrap();
-            std::fs::write(long.join("plugin.json"), serde_json::json!({ "name": "long", "title": "a".repeat(76 - 14), "agent": { "names": ["long"], "own_sandbox": "turn Claude Code off" } }).to_string()).unwrap();
+            std::fs::write(long.join("plugin.json"), serde_json::json!({ "name": "long", "title": format!("{} Claude Code", "a".repeat(60)), "agent": { "names": ["long"], "own_sandbox": "turn Claude Code off" } }).to_string()).unwrap();
             crate::agents::reload();
             let Overlay::Isolation(mut w) = with_one_space().isolation_overlay(IsolationTarget::Space(0)) else { panic!("it opens") };
             // Advice shows only for a pick with a profile.

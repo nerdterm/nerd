@@ -122,7 +122,8 @@ pub fn pairs(items: &[(String, String)], width: usize) -> Vec<String> {
                 out.push(format!("  {head}{}  {part}", " ".repeat(w1 - cells(head))));
             }
         } else {
-            out.push(format!("  {what}"));
+            // One row, never wrapped: a wrapped plugin title could start a line exactly as a built-in's item does.
+            out.push(format!("  {}", crate::chrome::cut_cells(what, width.saturating_sub(2).max(1))));
             out.extend(crate::menu::wrap(how, width.saturating_sub(4).max(1)).into_iter().map(|p| format!("    {p}")));
         }
     }
