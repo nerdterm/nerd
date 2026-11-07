@@ -46,7 +46,8 @@ deny = [
     { name = "tonic" },
     { name = "want" },
     # mio is not banned: crossterm/signal-hook-mio use it only for stdin/tty readiness
-    # (SourceFd), never sockets; enforced via cackle.toml withholding its "net" api.
+    # (SourceFd), never sockets. cackle.toml records the withheld "net" api, but only scripts/audit.sh
+    # runs cackle (on Linux, by hand); what holds is the server's Seatbelt profile and tests/egress.rs.
 ]
 
 [sources]
@@ -55,5 +56,5 @@ unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 
 [advisories]
-# Unlike licenses/bans/sources, this check downloads the RustSec database over the
-# network on every run: run it deliberately, never from CI or a script by default.
+# Unlike licenses/bans/sources, this check downloads the RustSec database over the network:
+# .github/workflows/advisories.yml runs it weekly and by hand, never in `pr` or gates.sh.

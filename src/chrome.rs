@@ -368,27 +368,140 @@ pub fn draw_tabs_keeping(buf: &mut Buffer, area: Rect, tabs: &[TabItem], keys: b
 
 /// Reads .git/HEAD directly - running git every frame is too expensive. None outside a repository.
 pub fn git_branch(dir: &Path) -> Option<String> {
-    let git_dir = find_git_dir(dir)?;
-    let head = std::fs::read_to_string(git_dir.join("HEAD")).ok()?;
-    parse_head(&head)
+    let git_dir = find_git_dir(dir, automount_roots())?;
+    parse_head(&read_small(&git_dir.join("HEAD"))?)
 }
 
 /// Finds `.git` (or its target for a worktree/submodule), walking up since a pane may be in a subfolder.
-fn find_git_dir(start: &Path) -> Option<PathBuf> {
+/// A pane writes its folder: a `.git` link or `gitdir:` into an automounted folder would stall the frame on the mount.
+fn find_git_dir(start: &Path, roots: &[PathBuf]) -> Option<PathBuf> {
     let mut dir = start;
     loop {
         let candidate = dir.join(".git");
-        if candidate.is_dir() {
-            return Some(candidate);
-        }
-        if candidate.is_file() {
-            let content = std::fs::read_to_string(&candidate).ok()?;
-            let gitdir = content.trim().strip_prefix("gitdir:")?.trim();
-            let gitdir = PathBuf::from(gitdir);
-            return Some(if gitdir.is_absolute() { gitdir } else { dir.join(gitdir) });
+        if let Ok(m) = std::fs::symlink_metadata(&candidate) {
+            // Checked by name, then handed to the file system as written: a folder reached through a link resolves `..` its own way.
+            let mut target = candidate.clone();
+            if m.is_symlink() {
+                for _ in 0..8 {
+                    let Ok(next) = std::fs::read_link(&target) else { break };
+                    target = lexical(&target.parent().unwrap_or(dir).join(next));
+                    if under(&target, roots) {
+                        return None;
+                    }
+                }
+            }
+            if candidate.is_dir() {
+                return Some(candidate);
+            }
+            if candidate.is_file() {
+                let file = if m.is_symlink() { std::fs::canonicalize(&candidate).ok()? } else { candidate };
+                let gitdir = dir.join(read_small(&file)?.trim().strip_prefix("gitdir:")?.trim());
+                return resolve(&gitdir, roots);
+            }
         }
         dir = dir.parent()?;
     }
+}
+
+/// `p` with every link on the way followed by name (at most 8), each step checked against `roots` before the file system is asked about it.
+fn resolve(p: &Path, roots: &[PathBuf]) -> Option<PathBuf> {
+    use std::path::Component;
+    let mut rest = p.to_path_buf();
+    let mut hops = 0;
+    'walk: loop {
+        let mut out = PathBuf::new();
+        let mut comps = rest.components();
+        while let Some(c) = comps.next() {
+            match c {
+                Component::ParentDir => {
+                    out.pop();
+                }
+                Component::CurDir => {}
+                Component::Normal(_) => {
+                    out.push(c);
+                    if under(&out, roots) {
+                        return None;
+                    }
+                    if std::fs::symlink_metadata(&out).is_ok_and(|m| m.is_symlink()) {
+                        hops += 1;
+                        if hops > 8 {
+                            return None;
+                        }
+                        let next = std::fs::read_link(&out).ok()?;
+                        out.pop();
+                        // The target is walked in turn, from here (or from the root, if absolute), then what was left.
+                        rest = out.join(next).join(comps.as_path());
+                        continue 'walk;
+                    }
+                }
+                c => out.push(c),
+            }
+        }
+        return (!under(&out, roots)).then_some(out);
+    }
+}
+
+/// A small regular file's text: a FIFO, a device, a link or a huge file in a pane's folder must not block the frame or fill memory.
+fn read_small(path: &Path) -> Option<String> {
+    use std::io::Read as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let f = std::fs::OpenOptions::new().read(true).custom_flags(nix::libc::O_NONBLOCK | nix::libc::O_NOCTTY | nix::libc::O_NOFOLLOW).open(path).ok()?;
+    if !f.metadata().ok()?.is_file() {
+        return None;
+    }
+    let mut s = String::new();
+    f.take(4096).read_to_string(&mut s).ok()?;
+    Some(s)
+}
+
+/// Under one of `roots`, ignoring case as the file system does (`/HOME` is `/home`).
+fn under(p: &Path, roots: &[PathBuf]) -> bool {
+    let p = PathBuf::from(p.to_string_lossy().to_lowercase());
+    roots.iter().any(|r| p.starts_with(r.to_string_lossy().to_lowercase()))
+}
+
+/// `p` with `.` and `..` resolved by name, never by asking the file system.
+fn lexical(p: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for c in p.components() {
+        match c {
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::CurDir => {}
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// The automounters' folders: /net, /home, and every autofs mount, also by its firmlinked name outside /System/Volumes/Data.
+fn automount_roots() -> &'static [PathBuf] {
+    static ROOTS: std::sync::OnceLock<Vec<PathBuf>> = std::sync::OnceLock::new();
+    ROOTS.get_or_init(|| {
+        use nix::libc;
+        let mut roots = vec![PathBuf::from("/net"), PathBuf::from("/home")];
+        // SAFETY: a null buffer asks for the count; the second call fills at most the room it is given, zeroed beforehand.
+        let n = unsafe { libc::getfsstat(std::ptr::null_mut(), 0, libc::MNT_NOWAIT) };
+        if n > 0 {
+            let mut buf = vec![unsafe { std::mem::zeroed::<libc::statfs>() }; n as usize + 8];
+            let size = (buf.len() * std::mem::size_of::<libc::statfs>()) as libc::c_int;
+            let got = unsafe { libc::getfsstat(buf.as_mut_ptr(), size, libc::MNT_NOWAIT) };
+            for s in buf.iter().take(got.max(0) as usize) {
+                // SAFETY: both names are NUL-terminated by the kernel within their arrays.
+                let (kind, on) = unsafe { (std::ffi::CStr::from_ptr(s.f_fstypename.as_ptr()), std::ffi::CStr::from_ptr(s.f_mntonname.as_ptr())) };
+                if kind.to_bytes() == b"autofs" {
+                    let on = PathBuf::from(on.to_string_lossy().into_owned());
+                    if let Ok(short) = on.strip_prefix("/System/Volumes/Data") {
+                        roots.push(Path::new("/").join(short));
+                    }
+                    roots.push(on);
+                }
+            }
+        }
+        roots
+    })
 }
 
 fn parse_head(content: &str) -> Option<String> {
@@ -615,6 +728,100 @@ pub(crate) mod tests {
         std::fs::write(dir.join(".git"), format!("gitdir: {}\n", real_git.display())).unwrap();
         assert_eq!(git_branch(&dir), Some("wt-branch".to_string()));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn read_small_reads_a_little_of_a_regular_file_and_nothing_else() {
+        let dir = std::env::temp_dir().join(format!("nerd-chrome-test-small-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("big"), "x".repeat(8192)).unwrap();
+        assert_eq!(read_small(&dir.join("big")).map(|s| s.len()), Some(4096));
+        assert_eq!(read_small(Path::new("/dev/zero")), None, "a device");
+        std::os::unix::fs::symlink(dir.join("big"), dir.join("link")).unwrap();
+        assert_eq!(read_small(&dir.join("link")), None, "a link");
+        nix::unistd::mkfifo(&dir.join("fifo"), nix::sys::stat::Mode::S_IRWXU).unwrap();
+        let fifo = dir.join("fifo");
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || tx.send(read_small(&fifo)).unwrap());
+        assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(5)), Ok(None), "a FIFO returns at once, unread");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A real folder stands in for the mount, so each case would read its branch if the guard were gone.
+    #[test]
+    fn a_repo_pointing_into_an_automounted_folder_is_not_followed() {
+        let base = std::env::temp_dir().join(format!("nerd-chrome-test-mnt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        // Canonical, as the lexical paths compared with the mount are.
+        let base = base.canonicalize().unwrap();
+        let mnt = base.join("mnt");
+        std::fs::create_dir_all(mnt.join("repo")).unwrap();
+        std::fs::write(mnt.join("repo/HEAD"), "ref: refs/heads/mounted\n").unwrap();
+        let target = mnt.join("repo");
+        for case in ["gitdir", "upper-gitdir", "relative-gitdir", "link"] {
+            let dir = base.join(case);
+            std::fs::create_dir_all(&dir).unwrap();
+            match case {
+                "gitdir" => std::fs::write(dir.join(".git"), format!("gitdir: {}\n", target.display())).unwrap(),
+                // The volume ignores case, so the mount is reached by any spelling of its name.
+                "upper-gitdir" => std::fs::write(dir.join(".git"), format!("gitdir: {}\n", target.display().to_string().to_uppercase())).unwrap(),
+                "relative-gitdir" => std::fs::write(dir.join(".git"), "gitdir: ../mnt/./repo\n").unwrap(),
+                _ => std::os::unix::fs::symlink(&target, dir.join(".git")).unwrap(),
+            }
+            assert!(find_git_dir(&dir, &[]).is_some(), "{case}: reachable without the guard");
+            assert_eq!(find_git_dir(&dir, std::slice::from_ref(&mnt)), None, "{case}");
+        }
+        let head = base.join("head-link");
+        std::fs::create_dir_all(head.join(".git")).unwrap();
+        std::os::unix::fs::symlink(mnt.join("repo/HEAD"), head.join(".git/HEAD")).unwrap();
+        assert_eq!(git_branch(&head), None, "a linked HEAD is not read");
+        assert_eq!(lexical(Path::new("/a/b/../../../net//x/./y")), PathBuf::from("/net/x/y"));
+        assert!(under(Path::new("/HOME/u"), automount_roots()) && under(Path::new("/net/h"), automount_roots()) && !under(Path::new("/network"), automount_roots()));
+        // Every autofs mount the system lists is a root, by its own name.
+        let mounts = String::from_utf8(std::process::Command::new("/sbin/mount").output().unwrap().stdout).unwrap();
+        for on in mounts.lines().filter(|l| l.contains("(autofs")).filter_map(|l| l.split(" on ").nth(1)?.split(" (").next()) {
+            assert!(automount_roots().iter().any(|r| r == Path::new(on)), "{on} in {:?}", automount_roots());
+        }
+        std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    /// A link inside the `gitdir:` path leads into the mount just as a link at its end does; links to ordinary folders still work.
+    #[test]
+    fn a_link_inside_a_gitdir_path_into_an_automounted_folder_is_not_followed() {
+        use std::os::unix::fs::symlink;
+        let base = std::env::temp_dir().join(format!("nerd-chrome-test-inner-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let base = base.canonicalize().unwrap();
+        let mnt = base.join("mnt");
+        std::fs::create_dir_all(mnt.join("repo")).unwrap();
+        std::fs::write(mnt.join("repo/HEAD"), "ref: refs/heads/mounted\n").unwrap();
+        let fine = base.join("fine/real");
+        std::fs::create_dir_all(&fine).unwrap();
+        std::fs::write(fine.join("HEAD"), "ref: refs/heads/wt\n").unwrap();
+        let roots = std::slice::from_ref(&mnt);
+        let repo = |name: &str, gitdir: String| {
+            let d = base.join(name);
+            std::fs::create_dir_all(&d).unwrap();
+            symlink(&mnt, d.join("lnk")).unwrap();
+            symlink(d.join("lnk"), d.join("chain")).unwrap();
+            symlink(base.join("fine"), d.join("ok")).unwrap();
+            std::fs::write(d.join(".git"), format!("gitdir: {gitdir}\n")).unwrap();
+            d
+        };
+        for (name, gitdir) in [("inner", "lnk/repo"), ("chain", "chain/repo"), ("dotdot", "ok/../dotdot/lnk/repo")] {
+            let d = repo(name, gitdir.into());
+            assert!(find_git_dir(&d, &[]).is_some(), "{name}: reachable without the guard");
+            assert_eq!(find_git_dir(&d, roots), None, "{name}");
+        }
+        let d = repo("legit", "ok/real".into());
+        assert_eq!(find_git_dir(&d, roots).map(|g| g.join("HEAD")).and_then(|h| read_small(&h)).as_deref(), Some("ref: refs/heads/wt\n"));
+        let d = repo("plain", fine.display().to_string());
+        assert_eq!(git_branch(&d), Some("wt".to_string()));
+        symlink("loop", base.join("loop")).unwrap();
+        assert_eq!(resolve(&base.join("loop/x"), roots), None, "hop limit");
+        std::fs::remove_dir_all(&base).unwrap();
     }
 
     /// The window drawn in `buf`: from its top-left corner to its bottom-right one, and the text of its top row.

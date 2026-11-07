@@ -35,16 +35,25 @@ where
 
 /// A folder the user only opened: its own config may not run anything (fsmonitor, lazy fetch, and an
 /// index write, which runs post-index-change: diff ignores GIT_OPTIONAL_LOCKS, so autoRefreshIndex is off too).
-// Known ceiling: a denylist over git's mechanisms; gits without GIT_NO_LAZY_FETCH still lazy-fetch, and stat-dirty files are re-hashed each call.
+// Only helper `_` is allowed (no repo alias can be named remote-_, autocorrect is off; "" would allow helper "", answered by alias remote-), so no git lazy-fetches through the repo's transport.
+// ceiling: a denylist over git's mechanisms; gits before 2.31 ignore filters_off's GIT_CONFIG_COUNT, and stat-dirty files are re-hashed each call; a git version floor lifts it.
 fn read_git<I, S>(dir: &Path, args: I, env: &[(String, String)]) -> Result<String, String>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<std::ffi::OsStr>,
 {
+    run(read_cmd(dir, args, env))
+}
+
+fn read_cmd<I, S>(dir: &Path, args: I, env: &[(String, String)]) -> Command
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
     let mut cmd = crate::spawn::cmd("git");
-    cmd.envs(env.iter().map(|(k, v)| (k, v))).env("GIT_OPTIONAL_LOCKS", "0").env("GIT_NO_LAZY_FETCH", "1").env("GIT_LITERAL_PATHSPECS", "1");
-    cmd.arg("-C").arg(dir).args(["-c", "core.fsmonitor=false", "-c", "diff.autoRefreshIndex=false"]).args(args);
-    run(cmd)
+    cmd.envs(env.iter().map(|(k, v)| (k, v))).env("GIT_OPTIONAL_LOCKS", "0").env("GIT_NO_LAZY_FETCH", "1").env("GIT_LITERAL_PATHSPECS", "1").env("GIT_ALLOW_PROTOCOL", "_");
+    cmd.arg("-C").arg(dir).args(["-c", "core.fsmonitor=false", "-c", "diff.autoRefreshIndex=false", "-c", "help.autocorrect=0"]).args(args);
+    cmd
 }
 
 /// The repo's own filter drivers and git-lfs extensions (local and worktree scope), blanked through env pairs,
@@ -756,6 +765,44 @@ pub(crate) mod tests {
         }
         assert!(fired.is_empty(), "ran: {fired:?}");
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A git without GIT_NO_LAZY_FETCH (before 2.45 and without the CVE-2024-32465 backport), and a repo that picks the transport itself.
+    #[test]
+    fn a_lazy_fetch_reaches_no_transport_whatever_the_repo_allows() {
+        if !git_available() {
+            return;
+        }
+        let mut fired = Vec::new();
+        for case in ["ssh", "ext", "empty helper", "autocorrected helper"] {
+            let (dir, _, hit) = hit_repo(&format!("transport-{}", case.replace(' ', "-")));
+            let blob = Command::new("git").arg("-C").arg(&dir).args(["rev-parse", ":README.md"]).output().unwrap();
+            let blob = String::from_utf8_lossy(&blob.stdout).trim().to_string();
+            let touch = format!("!touch '{}'", hit.display());
+            let keys: Vec<(&str, String)> = match case {
+                "ssh" => vec![("remote.origin.url", "ssh://h/x".into()), ("protocol.ssh.allow", "always".into()), ("core.sshCommand", format!("touch '{}' #", hit.display()))],
+                "ext" => vec![("remote.origin.url", format!("ext::sh -c touch% {}", hit.display())), ("protocol.ext.allow", "always".into())],
+                // The helper "" runs as `git remote-`, which the repo's alias answers.
+                "empty helper" => vec![("remote.origin.url", "::x".into()), ("alias.remote-", touch)],
+                // The allowed helper "_" runs as `git remote-_`, which autocorrect would hand to the nearest alias.
+                _ => vec![("remote.origin.url", "x".into()), ("remote.origin.vcs", "_".into()), ("help.autocorrect", "-1".into()), ("alias.remote-a", touch)],
+            };
+            run(&dir, &["config", "core.repositoryformatversion", "1"]);
+            run(&dir, &["config", "extensions.partialClone", "origin"]);
+            run(&dir, &["config", "remote.origin.promisor", "true"]);
+            for (k, v) in &keys {
+                run(&dir, &["config", k, v]);
+            }
+            std::fs::remove_file(dir.join(".git/objects").join(&blob[..2]).join(&blob[2..])).unwrap();
+            let mut cmd = read_cmd(&dir, ["cat-file", "-p", &blob], &[]);
+            cmd.env_remove("GIT_NO_LAZY_FETCH");
+            let _ = super::run(cmd);
+            if ran(&hit) {
+                fired.push(case);
+            }
+            std::fs::remove_dir_all(&dir).unwrap();
+        }
+        assert!(fired.is_empty(), "the repo's transport ran: {fired:?}");
     }
 
     #[test]

@@ -35,14 +35,14 @@ pub fn kind(ext: &str) -> &'static str {
 pub fn answer(req: u64, path: &Path, cols: u16) -> Option<PluginMsg> {
     let ext = extension(path)?;
     let (text, cut) = read(path)?;
-    let lines = match ext.as_str() {
-        "csv" => table(&records(&text, cut)),
-        "json" if !cut => json(&text)?,
+    let (lines, short) = match ext.as_str() {
+        "csv" => (table(&records(&text, cut)), false),
+        "json" if !cut => (json(&text)?, false),
         "md" | "markdown" => markdown(&text, cols),
         _ => return None,
     };
     let (lines, capped) = finish(lines);
-    Some(PluginMsg::Preview { req, lines, cut: cut || capped, modes: vec![], mode: String::new() })
+    Some(PluginMsg::Preview { req, lines, cut: cut || short || capped, modes: vec![], mode: String::new() })
 }
 
 /// The file's text, and whether it was longer than read; `None` for what is not a readable text file.
@@ -131,8 +131,10 @@ fn records(text: &str, cut: bool) -> Vec<Vec<String>> {
 }
 
 /// Columns aligned to their widest cell, the first row as the header, a line break in a cell shown as `↵`.
+/// Only what can show is built: a column past these starts beyond LINE_CELLS, a row past PREVIEW_LINES is cut by `finish`.
 fn table(rows: &[Vec<String>]) -> Lines {
-    let shown: Vec<Vec<String>> = rows.iter().map(|r| r.iter().map(|f| fit(&clean(&f.replace("\r\n", "\n").replace('\n', "\u{21b5}")), CELL)).collect()).collect();
+    const COLUMNS: usize = LINE_CELLS / 3 + 2;
+    let shown: Vec<Vec<String>> = rows.iter().map(|r| r.iter().take(COLUMNS).map(|f| fit(&clean(&f.replace("\r\n", "\n").replace('\n', "\u{21b5}")), CELL)).collect()).collect();
     let n = shown.iter().map(Vec::len).max().unwrap_or(0);
     let widths: Vec<usize> = (0..n).map(|j| shown.iter().filter_map(|r| r.get(j)).map(|c| cells(c)).max().unwrap_or(0)).collect();
     let row = |r: &[String], role: &'static str| {
@@ -147,7 +149,7 @@ fn table(rows: &[Vec<String>]) -> Lines {
         }
         l
     };
-    shown.iter().enumerate().map(|(i, r)| row(r, if i == 0 { "accent" } else { "text" })).collect()
+    shown.iter().take(PREVIEW_LINES + 1).enumerate().map(|(i, r)| row(r, if i == 0 { "accent" } else { "text" })).collect()
 }
 
 /// Valid JSON laid out two spaces a level, its text kept as written, coloured as the plain preview colours JSON.
@@ -198,11 +200,15 @@ fn json(text: &str) -> Option<Lines> {
 }
 
 /// Headings without their `#`, bullets, quotes behind a bar, links and code spans picked out; code blocks as they are.
-fn markdown(text: &str, cols: u16) -> Lines {
+/// And whether a line was cut: picking out emphasis is quadratic in a line's length.
+fn markdown(text: &str, cols: u16) -> (Lines, bool) {
     let mut out = Vec::new();
     let mut fence = false;
+    let mut short = false;
     for raw in text.lines() {
-        let line = raw.replace('\t', "    ");
+        let end = raw.char_indices().nth(2 * LINE_CELLS).map_or(raw.len(), |(i, _)| i);
+        short |= end < raw.len();
+        let line = raw[..end].replace('\t', "    ");
         let t = line.trim_start();
         let indent = line[..line.len() - t.len()].to_string();
         if t.starts_with("```") || t.starts_with("~~~") {
@@ -243,7 +249,7 @@ fn markdown(text: &str, cols: u16) -> Lines {
         inline(&mut l, rest, "text");
         out.push(l);
     }
-    out
+    (out, short)
 }
 
 /// Code spans in teal without their backticks, a link's text in teal with its target after it, emphasis muted without its marks.
@@ -358,6 +364,53 @@ mod tests {
         assert!(crate::slots::over_cap(&PluginMsg::Preview { req: 1, lines, cut, modes: vec![], mode: String::new() }).is_none(), "under the caps a plugin keeps");
     }
 
+    /// The table as it was built before only what can show was built: the oracle for its output under the caps.
+    fn every_row_and_column(rows: &[Vec<String>]) -> Lines {
+        let shown: Vec<Vec<String>> = rows.iter().map(|r| r.iter().map(|f| fit(&clean(&f.replace("\r\n", "\n").replace('\n', "\u{21b5}")), CELL)).collect()).collect();
+        let n = shown.iter().map(Vec::len).max().unwrap_or(0);
+        let widths: Vec<usize> = (0..n).map(|j| shown.iter().filter_map(|r| r.get(j)).map(|c| cells(c)).max().unwrap_or(0)).collect();
+        shown
+            .iter()
+            .enumerate()
+            .map(|(i, r)| {
+                let mut l = Vec::new();
+                for (j, w) in widths.iter().enumerate() {
+                    if j > 0 {
+                        l.push((" \u{2502} ".to_string(), "faint"));
+                    }
+                    let c = r.get(j).map(String::as_str).unwrap_or("");
+                    let pad = if j + 1 == n { String::new() } else { " ".repeat(w - cells(c)) };
+                    l.push((format!("{c}{pad}"), if i == 0 { "accent" } else { "text" }));
+                }
+                l
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_table_builds_only_what_shows_and_shows_what_it_showed() {
+        let huge: String = (0..2100).map(|_| ",".repeat(200) + "\n").collect();
+        let t = table(&records(&huge, false));
+        assert!(t.len() <= PREVIEW_LINES + 1, "{}", t.len());
+        assert!(t.iter().all(|l| l.len() <= 2 * (LINE_CELLS / 3 + 2)), "spans per line");
+        let (_, cut) = finish(t);
+        assert!(cut);
+        let wide: String = (0..30).map(|r| (0..200).map(|c| format!("{r}{}", "x".repeat(c % 7))).collect::<Vec<_>>().join(",") + "\n").collect();
+        for text in [wide.as_str(), "name,n\na.rs,12,extra\nb\n\"x\ny\",1\n界界,1\n", &(0..2500).map(|i| format!("{i},{}\n", "y".repeat(i % 50))).collect::<String>()] {
+            let r = records(text, false);
+            assert_eq!(finish(table(&r)), finish(every_row_and_column(&r)), "the same under the caps");
+        }
+    }
+
+    #[test]
+    fn a_long_markdown_line_is_cut_before_it_is_read_and_said_to_be_cut() {
+        let (m, short) = markdown(&"a".repeat(64 * 1024), 80);
+        assert!(short);
+        assert!(text(&m)[0].chars().count() <= 2 * LINE_CELLS);
+        let (m, short) = markdown(&" *a".repeat(20_000), 80);
+        assert!(short && !m.is_empty());
+    }
+
     #[test]
     fn json_is_laid_out_as_written_and_coloured_as_the_plain_view_colours_it() {
         let j = json("{\"a\": 1.5e3, \"b\": [true, null, \"x,{y}\"], \"e\": {}, \"f\": [ ], \"s\": \"q\\\"uote\"}").unwrap();
@@ -376,7 +429,8 @@ mod tests {
 
     #[test]
     fn markdown_is_rendered_into_styled_lines() {
-        let m = markdown("# Title\n#tag\n- one\n  * two\n12. twelve\n> quote `c`\n---\n```\n# not a heading\n```\nSee [site](https://x.y) and `code` **now**, *this* and _that_ but not snake_case or a * b.\n", 20);
+        let (m, short) = markdown("# Title\n#tag\n- one\n  * two\n12. twelve\n> quote `c`\n---\n```\n# not a heading\n```\nSee [site](https://x.y) and `code` **now**, *this* and _that_ but not snake_case or a * b.\n", 20);
+        assert!(!short);
         assert_eq!(
             text(&m),
             ["Title", "#tag", "• one", "  • two", "12. twelve", "│ quote c", &"─".repeat(20), "```", "# not a heading", "```", "See site (https://x.y) and code now, this and that but not snake_case or a * b."]

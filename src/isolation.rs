@@ -1023,7 +1023,11 @@ mod tests {
         assert_eq!(ok, 0, "its own folder");
         assert_eq!(try_("home/.claude/projects/session"), Some(0), "an agent's session folder");
         assert_ne!(try_("home/.claude/session"), Some(0), "the rest of its own folder");
-        for no in ["state/config.json", "home/.claude/settings.json", "home/.claude/hooks/x", "home/.zshrc", "home/x"] {
+        // Where previews are converted: a pane that could write there would swap what sips wrote.
+        for dir in ["state/preview", "state/instances/2/preview"] {
+            std::fs::create_dir_all(d.join(dir)).unwrap();
+        }
+        for no in ["state/config.json", "state/preview/0.png", "state/instances/2/preview/0.png", "home/.claude/settings.json", "home/.claude/hooks/x", "home/.zshrc", "home/x"] {
             assert_ne!(try_(no), Some(0), "{no}");
             assert!(!d.join(no).exists(), "{no}");
         }

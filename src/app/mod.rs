@@ -1933,6 +1933,23 @@ mod tests {
     }
 
     #[test]
+    fn a_repo_whose_head_a_pane_made_a_fifo_is_not_asked_on_the_loop() {
+        let dir = crate::git::tests::init_repo("app-fifo-head");
+        let mut app = App::new(Config::default());
+        app.learn_repo(&dir);
+        assert!(app.repos[&dir].key.is_some(), "a plain repository is grouped");
+        let fifo = crate::git::tests::init_repo("app-fifo-head-2");
+        std::fs::remove_file(fifo.join(".git/HEAD")).unwrap();
+        nix::unistd::mkfifo(&fifo.join(".git/HEAD"), nix::sys::stat::Mode::S_IRWXU).unwrap();
+        let started = Instant::now();
+        app.learn_repo(&fifo);
+        assert!(started.elapsed() < Duration::from_secs(2), "git was not run: {:?}", started.elapsed());
+        assert!(app.repos[&fifo].key.is_none() && app.repos[&fifo].branch.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&fifo);
+    }
+
+    #[test]
     fn the_changes_view_shows_what_the_git_worker_found() {
         let dir = crate::git::tests::init_repo("app-changes");
         std::fs::write(dir.join("README.md"), "test\nchanged\n").unwrap();

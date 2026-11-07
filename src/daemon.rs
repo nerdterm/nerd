@@ -180,6 +180,8 @@ fn serve(started: &mut bool) -> std::io::Result<()> {
         }
     };
     let listener_fd = listener.as_raw_fd();
+    // What a crash left of this instance's preview conversions; only once the socket is ours, so never a running server's.
+    let _ = std::fs::remove_dir_all(state.join("preview"));
 
     let (tx, rx) = channel();
     let (bell, door) = crate::bell::new();

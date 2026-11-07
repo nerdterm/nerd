@@ -532,7 +532,8 @@ pub fn to_png(path: &Path) -> Option<Arc<Vec<u8>>> {
 
 /// A PDF's first page on white, as a JPEG of the best quality: a page is paper, and sips draws a PDF on
 /// nothing, which a dark preview would show as dark on dark. None for any other file; the caller removes it.
-fn paper(path: &Path) -> Option<PathBuf> {
+/// With the size the page was drawn at, read from the JPEG: a `/MediaBox` read before the real one can understate it.
+fn paper(path: &Path) -> Option<(PathBuf, Option<(u32, u32)>)> {
     let mut head = Vec::new();
     let mut f = std::fs::File::open(path).ok()?.take(IMAGE_LIMIT);
     f.by_ref().take(5).read_to_end(&mut head).ok()?;
@@ -542,30 +543,32 @@ fn paper(path: &Path) -> Option<PathBuf> {
     let _ = f.read_to_end(&mut head);
     // A page whose size could not be read, or a large one, is drawn no larger than this; -Z upscales too, so not a small one.
     let cap: &[&str] = if pdf_page(&head).is_none_or(|(w, h)| w.max(h) > 2048) { &["-Z", "2048"] } else { &[] };
-    let tmp = temp_path("jpg");
-    // A failed run leaves no file, and the conversion from it says so.
-    let _ = crate::spawn::cmd("/usr/bin/sips")
-        .args(cap)
-        .args(["-s", "format", "jpeg", "-s", "formatOptions", "best"])
-        .arg(path)
-        .arg("--out")
-        .arg(&tmp)
-        .stdin(std::process::Stdio::null())
-        .output();
-    Some(tmp)
+    let tmp = temp_path("jpg").ok()?;
+    let sips = |args: &[&str], from: &Path| {
+        // A failed run leaves no file, and the conversion from it says so.
+        let _ = crate::spawn::cmd("/usr/bin/sips").args(args).args(["-s", "format", "jpeg", "-s", "formatOptions", "best"]).arg(from).arg("--out").arg(&tmp).stdin(std::process::Stdio::null()).output();
+    };
+    sips(cap, path);
+    let drawn = || read_capped(&tmp, 1 << 20, false).ok().and_then(|b| image_size(&b, ImageFormat::Jpeg));
+    let mut dims = drawn();
+    if dims.is_none_or(|(w, h)| w.max(h) > 2048) {
+        sips(&["-Z", "2048"], &tmp);
+        dims = drawn();
+    }
+    Some((tmp, dims))
 }
 
 fn convert_to_png(path: &Path) -> Result<Vec<u8>, String> {
     let page = paper(path);
-    let made = convert_to_png_from(page.as_deref().unwrap_or(path));
-    if let Some(p) = page {
+    let made = convert_to_png_from(page.as_ref().map_or(path, |(p, _)| p.as_path()));
+    if let Some((p, _)) = page {
         let _ = std::fs::remove_file(p);
     }
     made
 }
 
 fn convert_to_png_from(path: &Path) -> Result<Vec<u8>, String> {
-    let tmp = temp_path("png");
+    let tmp = temp_path("png")?;
     let out = crate::spawn::cmd("/usr/bin/sips")
         .args(["-s", "format", "png"])
         .arg(path)
@@ -575,7 +578,7 @@ fn convert_to_png_from(path: &Path) -> Result<Vec<u8>, String> {
         .output()
         .map_err(|e| format!("sips did not run: {e}"))?;
     let result = if out.status.success() {
-        match std::fs::read(&tmp) {
+        match read_capped(&tmp, MAX_PIXELS as usize * 4 + (1 << 20), true) {
             Ok(b) if png_size(&b).is_some() => Ok(b),
             Ok(b) => Err(format!("sips wrote {} bytes that are not a PNG", b.len())),
             Err(e) => Err(format!("sips reported success but {}: {e}", tmp.display())),
@@ -592,25 +595,71 @@ fn convert_to_png_from(path: &Path) -> Result<Vec<u8>, String> {
     result
 }
 
-/// Unique per call, in the system temp dir: tests swap and delete the state dir while others convert.
-fn temp_path(ext: &str) -> PathBuf {
+/// Unique per call, in this instance's own folder under the state root: a pane isolated to its folder can write
+/// the system temp folders, and would swap what sips writes for a link, a FIFO or another picture.
+fn temp_path(ext: &str) -> Result<PathBuf, String> {
     static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    std::env::temp_dir().join(format!("nerd-preview-{}-{n}.{ext}", std::process::id()))
+    Ok(temp_dir()?.join(format!("{n}.{ext}")))
+}
+
+/// Made when missing, refused when it is a link, another user's or open to others; checked on every call.
+fn temp_dir() -> Result<PathBuf, String> {
+    // Tests swap and delete the state dir while others convert, so they get one folder per process.
+    #[cfg(test)]
+    let dir = std::env::temp_dir().join(format!("nerd-preview-test-{}", std::process::id()));
+    #[cfg(not(test))]
+    let dir = {
+        static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+        DIR.get_or_init(|| crate::session::state_dir().join("preview")).clone()
+    };
+    own_dir(dir)
+}
+
+fn own_dir(dir: PathBuf) -> Result<PathBuf, String> {
+    use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _};
+    if std::fs::symlink_metadata(&dir).is_err() {
+        let _ = std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&dir);
+    }
+    let m = std::fs::symlink_metadata(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    // SAFETY: geteuid has no preconditions.
+    let me = unsafe { nix::libc::geteuid() };
+    if !m.is_dir() || m.uid() != me || m.mode() & 0o777 != 0o700 {
+        return Err(format!("{} is not a folder of this user's that only it can open", dir.display()));
+    }
+    Ok(dir)
+}
+
+/// What sips wrote, refused rather than cut when it is not a plain file of at most `cap` bytes; or, `whole` false, its first `cap` bytes.
+fn read_capped(path: &Path, cap: usize, whole: bool) -> Result<Vec<u8>, String> {
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let f = std::fs::OpenOptions::new().read(true).custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK).open(path).map_err(|e| e.to_string())?;
+    let m = f.metadata().map_err(|e| e.to_string())?;
+    if !m.is_file() {
+        return Err("not a plain file".into());
+    }
+    if whole && m.len() > cap as u64 {
+        return Err(format!("{} bytes, more than a preview takes", m.len()));
+    }
+    let mut b = Vec::new();
+    f.take(cap as u64).read_to_end(&mut b).map_err(|e| e.to_string())?;
+    Ok(b)
 }
 
 /// Off the loop, like `to_png`; unknown dimensions are scaled down too.
 pub fn to_pixels(path: &Path, dims: Option<(u32, u32)>) -> Option<Arc<Pixels>> {
     let page = paper(path);
-    let px = pixels_from(page.as_deref().unwrap_or(path), dims);
-    if let Some(p) = page {
+    // A page is drawn at the size sips gave it, not the size its PDF claims.
+    let dims = page.as_ref().map_or(dims, |(_, d)| *d);
+    let px = pixels_from(page.as_ref().map_or(path, |(p, _)| p.as_path()), dims);
+    if let Some((p, _)) = page {
         let _ = std::fs::remove_file(p);
     }
     px
 }
 
 fn pixels_from(path: &Path, dims: Option<(u32, u32)>) -> Option<Arc<Pixels>> {
-    let tmp = temp_path("bmp");
+    let tmp = temp_path("bmp").ok()?;
     let mut cmd = crate::spawn::cmd("/usr/bin/sips");
     // Without a colour profile sips writes palette PNGs as headerless raw pixels, and gray+alpha as a format we don't read.
     cmd.args(["-s", "format", "bmp", "-m", "/System/Library/ColorSync/Profiles/sRGB Profile.icc"]);
@@ -625,7 +674,8 @@ fn pixels_from(path: &Path, dims: Option<(u32, u32)>) -> Option<Arc<Pixels>> {
         .stdin(std::process::Stdio::null())
         .output()
         .is_ok_and(|o| o.status.success());
-    let px = if ok { std::fs::read(&tmp).ok().and_then(|b| parse_bmp(&b)).map(Arc::new) } else { None };
+    let bmp = (BLOCK_PIXELS as usize).pow(2) * 4 + (1 << 16);
+    let px = if ok { read_capped(&tmp, bmp, true).ok().and_then(|b| parse_bmp(&b)).map(Arc::new) } else { None };
     let _ = std::fs::remove_file(&tmp);
     px
 }
@@ -1727,6 +1777,11 @@ mod tests {
 
     /// A PDF of `n` pages, `w`×`h` points, each with its number on it, uncompressed.
     fn pdf(n: usize, w: u32, h: u32) -> Vec<u8> {
+        pdf_after("", n, w, h)
+    }
+
+    /// `pdf`, with `head` (comment lines) right after the header.
+    fn pdf_after(head: &str, n: usize, w: u32, h: u32) -> Vec<u8> {
         let kids: Vec<String> = (0..n).map(|i| format!("{} 0 R", 3 + 2 * i)).collect();
         let mut objs = vec!["<< /Type /Catalog /Pages 2 0 R >>".to_string(), format!("<< /Type /Pages /Kids [{}] /Count {n} >>", kids.join(" "))];
         for i in 0..n {
@@ -1734,7 +1789,7 @@ mod tests {
             objs.push(format!("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {w} {h}] /Contents {} 0 R /Resources << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> >>", 4 + 2 * i));
             objs.push(format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len()));
         }
-        let mut b = b"%PDF-1.4\n".to_vec();
+        let mut b = format!("%PDF-1.4\n{head}").into_bytes();
         let mut at = Vec::new();
         for (i, o) in objs.iter().enumerate() {
             at.push(b.len());
@@ -1780,6 +1835,69 @@ mod tests {
         std::fs::write(&big, b).unwrap();
         assert!(matches!(Preview::load(&big).kind, Kind::Image { format: ImageFormat::Pdf, pages: None, .. }), "a PDF over 4 MiB is still drawn, sips reads it, but its count is not guessed from a part");
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_page_is_drawn_at_the_size_sips_gave_it_not_the_size_its_pdf_claims() {
+        let d = std::env::temp_dir().join(format!("nerd-pdf-decoy-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let doc = d.join("decoy.pdf");
+        std::fs::write(&doc, pdf_after("%/MediaBox [0 0 100 100]\n", 1, 3000, 3000)).unwrap();
+        assert!(matches!(Preview::load(&doc).kind, Kind::Image { dims: Some((100, 100)), .. }), "the decoy is what the header read sees");
+        let png = to_png(&doc).expect("drawn");
+        assert!(png_size(&png).is_some_and(|(w, h)| w.max(h) <= 2048), "{:?}", png_size(&png));
+        let px = to_pixels(&doc, Some((100, 100))).expect("blocks");
+        assert!(px.w.max(px.h) <= BLOCK_PIXELS as usize, "{}x{}", px.w, px.h);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_large_honest_picture_is_converted_whole() {
+        let d = std::env::temp_dir().join(format!("nerd-big-jpeg-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let big = d.join("big.jpg");
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/preview/photo.jpg");
+        let made = std::process::Command::new("/usr/bin/sips").args(["-z", "3000", "3000"]).arg(&fixture).arg("--out").arg(&big).output().unwrap();
+        assert!(made.status.success());
+        let png = to_png(&big).unwrap_or_else(|| panic!("{:?}", convert_to_png(&big).err()));
+        assert_eq!(png_size(&png), Some((3000, 3000)));
+        assert!(png.ends_with(&[0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82]), "the whole file, up to its IEND chunk");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn what_sips_wrote_is_read_only_from_a_plain_file_that_fits() {
+        let d = std::env::temp_dir().join(format!("nerd-read-capped-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("f"), vec![1u8; 100]).unwrap();
+        assert_eq!(read_capped(&d.join("f"), 100, true).map(|b| b.len()), Ok(100));
+        assert!(read_capped(&d.join("f"), 99, true).is_err(), "too big is refused, not cut");
+        assert_eq!(read_capped(&d.join("f"), 10, false).map(|b| b.len()), Ok(10), "a header is the first bytes");
+        std::os::unix::fs::symlink("/dev/zero", d.join("zero")).unwrap();
+        assert!(read_capped(&d.join("zero"), 10, false).is_err(), "a link");
+        nix::unistd::mkfifo(&d.join("fifo"), nix::sys::stat::Mode::S_IRWXU).unwrap();
+        let fifo = d.join("fifo");
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || tx.send(read_capped(&fifo, 10, false).is_err()).unwrap());
+        assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(5)), Ok(true), "a FIFO, at once");
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn the_conversion_folder_is_this_users_alone() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = temp_dir().unwrap();
+        assert_eq!(std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777, 0o700);
+        let d = std::env::temp_dir().join(format!("nerd-own-dir-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("real")).unwrap();
+        std::os::unix::fs::symlink(d.join("real"), d.join("link")).unwrap();
+        assert!(own_dir(d.join("link")).is_err(), "a link in its place");
+        std::fs::set_permissions(d.join("real"), std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(own_dir(d.join("real")).is_err(), "open to others");
+        assert!(own_dir(d.join("new")).is_ok(), "made when missing");
+        std::fs::remove_dir_all(&d).unwrap();
     }
 
     #[test]

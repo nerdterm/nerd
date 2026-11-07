@@ -186,6 +186,12 @@ fn a_release_is_installed_only_for_the_window_s_click_and_only_when_nerd_s_key_s
     assert_eq!(std::fs::read(&nerd).unwrap(), before, "nothing installed");
     assert!(!go.exists(), "a click is good for one run");
 
+    e.archive("#!/bin/sh\necho 'nerd 0.98.0 (test)'\n");
+    std::fs::write(&go, TAG).unwrap();
+    e.run(&nerd, &["--check-update", "--install", "--window"], &[]);
+    assert_eq!(e.said()["Failed"], "the archive holds nerd 0.98.0, not 0.99.0, nothing installed");
+    assert_eq!(std::fs::read(&nerd).unwrap(), before, "nothing installed");
+
     e.archive("#!/bin/sh\necho 'nerd 0.99.0 (test)'\n");
     std::fs::write(&go, "v0.98.0").unwrap();
     e.run(&nerd, &["--check-update", "--install", "--window"], &[]);

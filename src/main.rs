@@ -237,6 +237,7 @@ fn run() -> std::io::Result<()> {
 }
 
 /// Format: `nerd 0.2.0 (f4db629, 2026-09-16 15:03)`, `+` after the commit if the tree was dirty at build time.
+/// install.sh refuses an archive whose nerd's second word here is not the archive's version.
 pub fn version_line() -> String {
     format!("nerd {} ({})", env!("CARGO_PKG_VERSION"), env!("NERD_BUILD"))
 }
@@ -321,7 +322,12 @@ pub fn body_area(size: ratatui::layout::Size) -> ratatui::layout::Rect {
 
 #[cfg(test)]
 mod tests {
-    use super::{from_window, help, resume_name};
+    use super::{from_window, help, resume_name, version_line};
+
+    #[test]
+    fn the_second_word_of_the_version_line_is_the_version_install_sh_checks() {
+        assert_eq!(version_line().split(' ').nth(1), Some(env!("CARGO_PKG_VERSION")));
+    }
 
     #[test]
     fn the_help_says_send_messages_another_agent() {

@@ -48,6 +48,23 @@ pull request, `chore(master): release X.Y.Z`. Replace `N` and `X.Y.Z` below with
    scripts/publish-binary.sh vX.Y.Z
    ```
 
+   It stops before building if the draft's target is not a commit id ("not a commit id"), the tag's commit is not
+   on master ("is not on master"), or it is not the release commit itself, which changes only the version and adds
+   to the changelog ("is not a release commit", "changes more than nerd's version", "removes lines"); and after
+   building, before anything is signed, if the built nerd reports another version ("the built nerd says"). Any of
+   these means someone moved the tag or changed the release pull request: stop and look at who did, never work around
+   it. Other stops are ordinary: a failing test (it prints cargo test's `failures:`), "the tree must be clean", and
+   network errors from git or gh; fix the cause and run it again.
+
+   Building and testing run every dependency's build code as you. Before building, the script reads the release
+   commit's `scripts/sign-release.sh`, `scripts/publish-formula.sh` and `install.sh` from git and later runs that text,
+   not the files on disk; after the build it runs only the system's own commands and the nerd it built until the key
+   has been used. A build that rewrites a script or puts a command of its own on your PATH cannot run in place of these
+   steps. What it cannot stop: build code that keeps running can read the terminal while you type the passphrase, use
+   your gh login without a prompt (upload to the draft, write the tap), change the binary being built, or wait for a
+   later release. Only building releases as a separate macOS user closes that; if a run looks wrong, see "If a release
+   run looks wrong".
+
 6. Check it: `false`, then the archive, its `.sha256` and its `.sha256.sig`:
 
    ```sh
@@ -55,7 +72,7 @@ pull request, `chore(master): release X.Y.Z`. Replace `N` and `X.Y.Z` below with
    ```
 
 If the formula step failed, run it alone: it reads the published checksum and checks its signature against this
-checkout's install.sh, so running it again is safe.
+checkout's install.sh, so running it again is safe once `git status --porcelain` prints nothing.
 `scripts/publish-formula.sh --dry-run vX.Y.Z` prints the formula without writing it.
 
 ```sh
@@ -64,6 +81,32 @@ scripts/publish-formula.sh vX.Y.Z
 
 `release not found` in step 5 means step 3 or 4 is not done yet. No macOS runners in CI: the binary is built only on
 the maintainer's Mac, at the tag.
+
+## If a release run looks wrong
+
+Step 5 asks for the passphrase once. If it asks a second time, if the release gets an asset or nerdterm/homebrew-tap a
+commit that the run did not report, or if it stops anywhere step 5 does not name, take it that code from the build is
+still running as you:
+
+- Do not type the passphrase, and do not run step 5 again.
+- If the passphrase was typed, treat the key as leaked: move to the backup key as "If the main key leaks or is lost"
+  below says.
+- Clean up from github.com on another device, or on this Mac only after what was left behind is removed and the Mac
+  restarted: a new `gh auth login` before that hands the new token to whatever is still running.
+- Revoke GitHub CLI's token on github.com (Settings, Applications).
+- Look for what was left behind: `~/.zshrc`, `~/.zprofile`, `~/Library/LaunchAgents`, `~/.cargo/bin`, `~/.local/bin`,
+  `/opt/homebrew/bin`, the checkout's `.git/config` and `.git/hooks`, and `~/.gitconfig` (a `core.fsmonitor` there runs
+  on the next `git status`).
+- Put the release back to draft, then delete its assets: on github.com, or with `gh release edit vX.Y.Z --draft=true`
+  and `gh release delete-asset vX.Y.Z <name>` for each name step 6 lists.
+- In nerdterm/homebrew-tap, revert `Formula/nerd.rb` to the last commit the release script made.
+
+## Dependency advisories
+
+`.github/workflows/advisories.yml` runs `cargo deny check advisories` every Monday and on demand
+(`gh workflow run advisories.yml`); it is never part of `pr`. A red scheduled run emails the account that last changed
+its cron line. Update the dependency named; a notice with no fix (an unmaintained crate) gets an `ignore` entry with its
+reason in `deny.toml`.
 
 ## The release key
 

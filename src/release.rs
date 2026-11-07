@@ -389,7 +389,7 @@ fn due(last: Option<u64>, now: u64) -> bool {
 /// Allowed and due; marked as run at once, so the other servers on this Mac wait a day.
 pub fn daily_due(now: u64) -> bool {
     let last = std::fs::read_to_string(checked_path()).ok().and_then(|s| s.trim().parse().ok());
-    daily() == Some(true) && due(last, now) && std::fs::write(checked_path(), now.to_string()).is_ok()
+    daily() == Some(true) && due(last, now) && crate::paths::write_private(&checked_path(), "tmp", now.to_string().as_bytes()).is_ok()
 }
 
 pub fn leave(said: &Said) -> std::io::Result<()> {
@@ -411,7 +411,7 @@ pub fn skipped() -> Option<String> {
 }
 
 pub fn skip(tag: &str) -> std::io::Result<()> {
-    std::fs::write(skipped_path(), tag)
+    crate::paths::write_private(&skipped_path(), "tmp", tag.as_bytes())
 }
 
 fn take(p: &Path) -> Option<String> {
@@ -531,6 +531,27 @@ mod tests {
         }
         set_daily(true).unwrap();
         assert_eq!(daily(), Some(true));
+        crate::paths::TEST_HOME.with(|h| h.replace(old));
+    }
+
+    #[test]
+    fn the_last_check_and_a_skipped_release_are_the_user_s_alone() {
+        use std::os::unix::fs::PermissionsExt;
+        let home = crate::paths::test_dir("release-private");
+        let old = crate::paths::TEST_HOME.with(|h| h.replace(Some(home.clone())));
+        std::fs::create_dir_all(crate::paths::config_path().parent().unwrap()).unwrap();
+        std::fs::create_dir_all(crate::paths::state_root()).unwrap();
+        set_daily(true).unwrap();
+        for p in [checked_path(), skipped_path()] {
+            std::fs::write(&p, "0").unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        assert!(daily_due(DAY));
+        skip("v0.13.0").unwrap();
+        for p in [checked_path(), skipped_path()] {
+            assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o600, "{}", p.display());
+        }
+        assert_eq!(skipped().as_deref(), Some("v0.13.0"));
         crate::paths::TEST_HOME.with(|h| h.replace(old));
     }
 }

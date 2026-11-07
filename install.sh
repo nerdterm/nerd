@@ -44,7 +44,7 @@ else
     # NERD_RELEASE_API lets tests point at a local stand-in; users never set it.
     api="${NERD_RELEASE_API:-https://api.github.com/repos/$repo/releases/latest}"
     # Into a file first: piping straight to curl would lose its exit status.
-    curl -fsSL "$api" -o "$work/release.json" 2>/dev/null || die "cannot read the latest release of $repo"
+    curl -fsSL --proto =https --proto-redir =https "$api" -o "$work/release.json" 2>/dev/null || die "cannot read the latest release of $repo"
     tag=$(grep -o '"tag_name": *"[^"]*"' "$work/release.json" | head -n 1 | cut -d'"' -f4 || true)
     printf '%s' "$tag" | grep -Eqx 'v[0-9]+\.[0-9]+\.[0-9]+' || die "the latest release's tag is not a version: $tag"
     # ceiling: a first install has no version to compare with, and this script itself comes from nerdterm.dev; an update from nerd's menu has neither limit.
@@ -56,7 +56,7 @@ else
     # The three files of that tag, by name: nothing else in the release is looked at.
     name="nerd-$tag-macos-arm64.tar.gz"
     for n in "$name" "$name.sha256" "$name.sha256.sig"; do
-        curl -fsSL -o "$work/$n" "https://github.com/$repo/releases/download/$tag/$n" || die "download failed: $n"
+        curl -fsSL --proto =https --proto-redir =https -o "$work/$n" "https://github.com/$repo/releases/download/$tag/$n" || die "download failed: $n"
     done
     archive="$work/$name"
 fi
@@ -91,6 +91,15 @@ fi
 tar -xzf "$archive" -C "$work"
 [ -f "$work/nerd" ] || die "the archive holds no nerd binary"
 xattr -d com.apple.quarantine "$work/nerd" 2>/dev/null || true
+# A signed name holds the nerd of that version and no other: a release commit moved under another tag is refused.
+case $base in
+    nerd-v*-macos-arm64.tar.gz)
+        want=${base#nerd-v} want=${want%-macos-arm64.tar.gz}
+        got=$("$work/nerd" --version 2>/dev/null) || die "the archive's nerd does not run, nothing installed"
+        got=$(printf '%s\n' "$got" | awk 'NR == 1 { print $2 }')
+        [ "$got" = "$want" ] || die "the archive holds nerd $got, not $want, nothing installed"
+        ;;
+esac
 mkdir -p "$bindir"
 # Anyone who can write a folder on the way to nerd can rename it and put their own nerd in its place. Symlinks: ls on "$d/." reads the folder a link points to, the one the install writes through; the folders above that target are not checked.
 d=$bindir
