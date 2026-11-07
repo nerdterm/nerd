@@ -17,6 +17,9 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["preserve_order"] }
 terminput = "0.5.15"
 terminput-crossterm = "0.4.11"
+# The width table alacritty_terminal's input uses, so a pane's zero-width chars are counted as it counts them.
+# The crate is already in the tree via alacritty_terminal, so this adds no new dependency.
+unicode-width = "0.2.2"
 
 [dev-dependencies]
 # tests/egress.rs reads the source to find every door out of nerd; all three are already in Cargo.lock.

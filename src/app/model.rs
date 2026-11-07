@@ -23,6 +23,10 @@ pub struct Pane {
     pub(super) mouse_left_on: bool,
     /// What the pane's programs may reach: files and network.
     pub isolation: crate::policy::Isolation,
+    /// The chunk being parsed, answered once its last slice is.
+    pub(super) unanswered: Option<Vec<u8>>,
+    /// The last turn left output waiting: in the pty, or queued in the term.
+    pub(super) behind: bool,
 }
 
 impl Pane {
@@ -41,32 +45,62 @@ impl Pane {
             activity_key: [None, None],
             mouse_left_on: false,
             isolation: Default::default(),
+            unanswered: None,
+            behind: false,
         }
     }
 
-    /// Feeds up to `n` queued chunks one at a time, since `answers` reads the cursor after each; returns how many.
-    pub(super) fn pump(&mut self, n: usize, trace: bool, theme: &crate::render::Theme) -> usize {
+    /// Parses what is queued, then takes up to `n` chunks one at a time, since `answers` reads the cursor after each;
+    /// stops between slices once `deadline` passed. Returns (anything taken or parsed, output still waiting).
+    pub(super) fn pump(&mut self, n: usize, deadline: Option<Instant>, trace: bool, theme: &crate::render::Theme) -> (bool, bool) {
         let rgb = |c: ratatui::style::Color| match c {
             ratatui::style::Color::Rgb(r, g, b) => (r, g, b),
             _ => (0, 0, 0),
         };
         let (fg, bg) = (rgb(theme.text), rgb(theme.ground));
         let mut took = 0;
-        while took < n
-            && let Some(bytes) = self.pty.next()
-        {
+        let mut parsed = false;
+        let left = loop {
+            if self.term.queued() {
+                parsed = true;
+                if !self.term.parse(deadline) {
+                    break true;
+                }
+            }
+            if let Some(bytes) = self.unanswered.take() {
+                self.watch_mouse();
+                let ans = self.term.answers(&bytes, fg, bg);
+                if !ans.is_empty() {
+                    self.pty.reply(&ans);
+                }
+            }
+            // Past the deadline a turn that has parsed takes no next chunk: one slice per pane per round.
+            if took == n || (parsed && deadline.is_some_and(|d| Instant::now() >= d)) {
+                break true;
+            }
+            let Some(bytes) = self.pty.next() else { break false };
             if trace && bytes.windows(3).any(|w| w == b"\x1b]4" || w == b"\x1b]1") {
                 crate::log::debug(&format!("trace pane {} OSC: {} bytes", self.id, bytes.len()));
             }
-            self.term.feed(&bytes);
-            self.watch_mouse();
-            let ans = self.term.answers(&bytes, fg, bg);
-            if !ans.is_empty() {
-                self.pty.reply(&ans);
-            }
+            self.term.take(&bytes);
+            self.unanswered = Some(bytes);
             took += 1;
+        };
+        let hits = self.term.take_hits();
+        if hits != 0 {
+            let line = format!("pane {}: output over nerd's limits was cut ({})", self.id, crate::term::describe_hits(hits));
+            crate::log::warn_every("pane output cut", Duration::from_secs(10), &line);
         }
-        took
+        self.behind = left;
+        (parsed || took > 0, left)
+    }
+
+    /// What is queued now, an open update included, parsed before nerd reads the screen at an Update or exit.
+    pub(super) fn drain(&mut self, deadline: Option<Instant>, trace: bool, theme: &crate::render::Theme) {
+        self.term.release_hold();
+        self.pump(crate::pty::QUEUE, deadline, trace, theme);
+        self.term.release_hold();
+        self.term.parse(deadline);
     }
 
     /// A program killed with the mouse on never turns it off, and the shell after it would get every move as typed text.

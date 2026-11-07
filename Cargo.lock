@@ -786,6 +786,7 @@ dependencies = [
  "syn 2.0.119",
  "terminput",
  "terminput-crossterm",
+ "unicode-width",
  "vt100",
 ]
 

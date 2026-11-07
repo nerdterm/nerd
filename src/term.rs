@@ -7,6 +7,11 @@ use alacritty_terminal::term::{MIN_COLUMNS, TermMode};
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::vte::ansi::{self, NamedColor};
 
+mod bounds;
+pub use bounds::describe as describe_hits;
+#[cfg(test)]
+pub(crate) use bounds::tests::corpus;
+
 /// `Done` is `Idle` for a pane nobody has looked at since it finished; the mark
 /// clears itself once a human has looked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,10 +63,15 @@ pub enum WheelRouting {
 
 /// Keeps the title a program sets; nerd answers queries itself, so the emulator's replies are dropped.
 #[derive(Clone, Default)]
-struct Listener(std::sync::Arc<std::sync::Mutex<Option<String>>>);
+struct Listener(
+    std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    #[cfg(test)] std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+);
 
 impl alacritty_terminal::event::EventListener for Listener {
     fn send_event(&self, event: alacritty_terminal::event::Event) {
+        #[cfg(test)]
+        self.1.lock().unwrap().push(format!("{event:?}"));
         if let alacritty_terminal::event::Event::Title(t) = event
             && let Ok(mut slot) = self.0.lock()
         {
@@ -122,7 +132,28 @@ impl Dimensions for Size {
 
 pub struct Term {
     term: alacritty_terminal::Term<Listener>,
-    parser: ansi::Processor,
+    parser: ansi::Processor<bounds::NoSync>,
+    filter: bounds::Filter,
+    titles: bounds::Titles,
+    /// The caps that fired since the last `take_hits`.
+    hits: u8,
+    /// The filter's output and its update marks, kept between chunks for their capacity.
+    out: Vec<u8>,
+    marks: Vec<(usize, bool)>,
+    /// Filtered bytes ready to parse, from `at` on.
+    queue: Vec<u8>,
+    at: usize,
+    /// A synchronized update being held, and since when; never parsed while held.
+    held: Vec<u8>,
+    held_since: Option<std::time::Instant>,
+    /// Where in `queue` an update released at its end ends, and when its parse began.
+    frame_end: Option<usize>,
+    frame_started: Option<std::time::Instant>,
+    /// Continuation bytes the last slice's cut character still needs.
+    pending: u8,
+    /// vte as it was before the bounds, so a test can compare the two.
+    #[cfg(test)]
+    legacy: Option<ansi::Processor>,
     events: Listener,
     title: Option<String>,
     last_output: std::time::Instant,
@@ -173,6 +204,17 @@ const ANSWER_AFTER: std::time::Duration = std::time::Duration::from_millis(300);
 const SUSTAINED: std::time::Duration = std::time::Duration::from_secs(1);
 /// An agent without a hook: the silence after work that makes it done, longer than its pauses between steps.
 const AGENT_QUIET: std::time::Duration = std::time::Duration::from_secs(3);
+// ceiling: an update over 2 MiB (vte's own limit) is drawn in parts
+const HOLD_CAP: usize = 2 << 20;
+/// vte's own wait for an update that does not end.
+const HOLD_FOR: std::time::Duration = std::time::Duration::from_millis(150);
+// ceiling: one slice of screen-sized sequences runs whole (S6: ≤ 50 ms at 600×170); a per-pane parse thread (option E) past it
+pub const SLICE: usize = 512;
+// ceiling: an update released at its end parses on past the round's deadline for two budgets, so it is drawn whole
+const FRAME_ALLOWANCE: std::time::Duration = crate::app::PUMP_BUDGET.saturating_mul(2);
+/// What an emptied queue keeps of its capacity.
+const QUEUE_KEEP: usize = 64 << 10;
+const MOUSE_OFF: &[u8] = b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l";
 
 impl Term {
     pub fn new(cols: u16, rows: u16, scrollback: usize) -> Self {
@@ -181,6 +223,20 @@ impl Term {
         Self {
             term: alacritty_terminal::Term::new(config, &Size(cols.max(MIN_COLUMNS as u16), rows.max(1)), events.clone()),
             parser: ansi::Processor::new(),
+            filter: Default::default(),
+            titles: Default::default(),
+            hits: 0,
+            out: Vec::new(),
+            marks: Vec::new(),
+            queue: Vec::new(),
+            at: 0,
+            held: Vec::new(),
+            held_since: None,
+            frame_end: None,
+            frame_started: None,
+            pending: 0,
+            #[cfg(test)]
+            legacy: None,
             events,
             title: None,
             // Nothing printed yet: a fresh pane is not "working", or its first tick would pass for activity.
@@ -203,15 +259,76 @@ impl Term {
         }
     }
 
+    /// Today's path without the bounds: vte with its own synchronized-update buffer straight into alacritty.
+    #[cfg(test)]
+    pub fn unbounded(cols: u16, rows: u16, scrollback: usize) -> Self {
+        Self { legacy: Some(ansi::Processor::new()), ..Self::new(cols, rows, scrollback) }
+    }
+
+    /// Everything a program can change, links masked (nerd drops them), for comparing two Terms.
+    #[cfg(test)]
+    pub fn full_state(&self) -> String {
+        use std::fmt::Write;
+        let g = self.term.grid();
+        let mut s = String::new();
+        for l in -(g.history_size() as i32)..g.screen_lines() as i32 {
+            for c in 0..g.columns() {
+                let mut cell = g[Line(l)][Column(c)].clone();
+                cell.set_hyperlink(None);
+                write!(s, "{cell:?}|").unwrap();
+            }
+            s.push('\n');
+        }
+        let c = &g.cursor;
+        let style = self.term.cursor_style();
+        writeln!(s, "mode {:?} cursor {:?} wrap {} style {style:?} title {:?} view {:?}", self.term.mode().bits(), c.point, c.input_needs_wrap, self.title, (g.display_offset(), g.history_size())).unwrap();
+        for i in 0..alacritty_terminal::term::color::COUNT {
+            write!(s, "{:?},", self.term.colors()[i]).unwrap();
+        }
+        writeln!(s, "\nevents {:?}", self.events.1.lock().unwrap()).unwrap();
+        s
+    }
+
+    /// The end of a test's stream: an update still open is parsed, on either path.
+    #[cfg(test)]
+    pub fn finish(&mut self) {
+        if let Some(legacy) = self.legacy.as_mut() {
+            legacy.stop_sync(&mut self.term);
+            self.after_slice();
+        } else {
+            self.release_hold();
+            self.parse(None);
+        }
+    }
+
+    #[cfg(test)]
+    pub fn holding(&self) -> bool {
+        self.held_since.is_some()
+    }
+
+    #[cfg(test)]
+    pub fn queued_len(&self) -> usize {
+        self.queue.len() - self.at
+    }
+
+    /// `take` and `parse` at once, for a test that feeds and reads.
+    #[cfg(test)]
     pub fn feed(&mut self, bytes: &[u8]) {
+        self.take(bytes);
+        self.parse(None);
+    }
+
+    /// A chunk of output in: what its raw bytes ask of nerd itself, then filtered into the queue or the hold.
+    pub fn take(&mut self, bytes: &[u8]) {
+        debug_assert!(self.queue[self.at..].is_empty(), "a chunk is taken only once the last one is parsed");
         if let Some(p) = crate::pointer::requested(bytes) {
             self.pointer = p;
         }
         if let Some(on) = private_mode(bytes, b"2031") {
             self.theme_notify = on;
         }
-        self.advance(bytes);
         let now = std::time::Instant::now();
+        self.enqueue(bytes, now);
         if self.last_output.elapsed() >= IDLE_AFTER {
             self.burst_from = now;
         }
@@ -223,12 +340,152 @@ impl Term {
 
     /// Old text put back after a restart: drawn, but not output, so it is neither activity nor "done".
     pub fn replay(&mut self, bytes: &[u8]) {
-        self.advance(bytes);
+        self.enqueue(bytes, std::time::Instant::now());
+        self.parse(None);
     }
 
-    fn advance(&mut self, bytes: &[u8]) {
+    /// Filtered bytes go to the hold while an update is open and to the queue otherwise, in the order written.
+    fn enqueue(&mut self, bytes: &[u8], now: std::time::Instant) {
+        #[cfg(test)]
+        if self.legacy.is_some() {
+            self.queue.extend_from_slice(bytes);
+            return;
+        }
+        let (mut out, mut marks) = (std::mem::take(&mut self.out), std::mem::take(&mut self.marks));
+        out.clear();
+        marks.clear();
+        let cols = self.term.columns() as u16;
+        if self.held_since.is_none() {
+            // Straight into the queue; only what follows the first mark is sorted below.
+            self.filter.pass(bytes, cols, &mut self.hits, &mut self.queue, &mut marks);
+            let Some(&(first, _)) = marks.first() else {
+                (self.out, self.marks) = (out, marks);
+                return;
+            };
+            out.extend_from_slice(&self.queue[first..]);
+            self.queue.truncate(first);
+            marks.iter_mut().for_each(|m| m.0 -= first);
+        } else {
+            self.filter.pass(bytes, cols, &mut self.hits, &mut out, &mut marks);
+        }
+        let mut from = 0;
+        for (to, begin) in marks.iter().map(|&(o, b)| (o, Some(b))).chain([(out.len(), None)]) {
+            let piece = &out[from..to];
+            from = to;
+            if self.held_since.is_some() && self.held.len() + piece.len() > HOLD_CAP {
+                self.release(false);
+            }
+            if self.held_since.is_some() { &mut self.held } else { &mut self.queue }.extend_from_slice(piece);
+            match begin {
+                Some(true) if self.held_since.is_none() => self.held_since = Some(now),
+                Some(false) if self.held_since.is_some() => self.release(true),
+                _ => {}
+            }
+        }
+        (self.out, self.marks) = (out, marks);
+    }
+
+    /// The held update joins the queue behind what is already there; `frame`: it ended, so it may be drawn whole.
+    fn release(&mut self, frame: bool) {
+        if self.queue[self.at..].is_empty() {
+            self.queue.clear();
+            self.at = 0;
+            std::mem::swap(&mut self.queue, &mut self.held);
+        } else {
+            self.queue.extend_from_slice(&self.held);
+            self.held.clear();
+        }
+        self.held.shrink_to(QUEUE_KEEP);
+        self.held_since = None;
+        if frame {
+            if self.frame_end.is_none() {
+                self.frame_started = None;
+            }
+            self.frame_end = Some(self.queue.len());
+        }
+    }
+
+    /// An open update goes to the queue as it is: its program left, or nerd is about to read the screen.
+    pub fn release_hold(&mut self) {
+        if self.held_since.is_some() {
+            self.release(false);
+        }
+    }
+
+    /// An update open for HOLD_FOR is drawn as it is, as vte would; true when one was.
+    pub fn release_stale(&mut self, now: std::time::Instant) -> bool {
+        let stale = self.held_since.is_some_and(|t| now >= t + HOLD_FOR);
+        if stale {
+            self.release(false);
+        }
+        stale
+    }
+
+    /// Whether filtered bytes wait to be parsed.
+    pub fn queued(&self) -> bool {
+        self.at < self.queue.len()
+    }
+
+    /// The caps that fired since the last call, as `describe_hits` names them.
+    pub fn take_hits(&mut self) -> u8 {
+        std::mem::take(&mut self.hits)
+    }
+
+    /// Feeds the queue to vte in slices of SLICE, stopping between them once `deadline` passed; true when it is empty.
+    pub fn parse(&mut self, deadline: Option<std::time::Instant>) -> bool {
+        self.parse_in(deadline, SLICE)
+    }
+
+    fn parse_in(&mut self, deadline: Option<std::time::Instant>, slice: usize) -> bool {
+        #[cfg(test)]
+        if let Some(legacy) = self.legacy.as_mut() {
+            legacy.advance(&mut self.term, &self.queue[self.at..]);
+            self.queue.clear();
+            self.at = 0;
+            self.after_slice();
+            return true;
+        }
+        while self.at < self.queue.len() {
+            if self.frame_end.is_some_and(|e| self.at < e) && self.frame_started.is_none() {
+                self.frame_started = Some(std::time::Instant::now());
+            }
+            let start = self.at;
+            let cont = |b: &u8| (0x80..0xc0).contains(b);
+            // vte 0.15 lib.rs:687-701 drops what follows a character completed across two calls: a slice never ends
+            // inside one, and the rest of one cut at the queue's end goes to vte alone.
+            let end = if self.pending > 0 && cont(&self.queue[start]) {
+                start + self.queue[start..].iter().take(self.pending as usize).take_while(|b| cont(b)).count()
+            } else {
+                let mut end = (start + slice).min(self.queue.len());
+                while end < self.queue.len() && end < start + slice + 3 && cont(&self.queue[end]) {
+                    end += 1;
+                }
+                end
+            };
+            let mut guard = bounds::Guard { term: &mut self.term, titles: &mut self.titles, hits: &mut self.hits };
+            self.parser.advance(&mut guard, &self.queue[start..end]);
+            self.pending = bounds::pending(&self.queue[start..end], self.pending);
+            self.at = end;
+            self.after_slice();
+            if self.frame_end.is_some_and(|e| self.at >= e) {
+                (self.frame_end, self.frame_started) = (None, None);
+            }
+            let deadline = match (deadline, self.frame_started) {
+                (Some(d), Some(f)) => Some(d.max(f + FRAME_ALLOWANCE)),
+                (d, _) => d,
+            };
+            if self.at < self.queue.len() && deadline.is_some_and(|d| std::time::Instant::now() >= d) {
+                return false;
+            }
+        }
+        self.queue.clear();
+        self.queue.shrink_to(QUEUE_KEEP);
+        self.at = 0;
+        true
+    }
+
+    fn after_slice(&mut self) {
         self.edits += 1;
-        self.parser.advance(&mut self.term, bytes);
         if let Ok(mut slot) = self.events.0.lock()
             && let Some(t) = slot.take()
         {
@@ -236,6 +493,14 @@ impl Term {
         }
         // New output keeps a scrolled view where it was, which moves the offset.
         self.scroll = self.term.grid().display_offset();
+    }
+
+    /// What is queued or held goes unparsed: the program it came from is gone.
+    pub fn discard(&mut self) {
+        self.queue.clear();
+        self.at = 0;
+        self.held.clear();
+        (self.held_since, self.frame_end, self.frame_started) = (None, None, None);
     }
 
     /// Rewraps the text to the new width, the way a terminal window does.
@@ -568,15 +833,19 @@ impl Term {
     }
 
     /// Mouse reporting off, as `reset` would turn it: for a program that left it on.
+    /// While an update is held these bytes join it, keeping their place in the stream.
     pub fn mouse_off(&mut self) {
-        self.advance(b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l");
+        debug_assert!(self.queue[self.at..].is_empty(), "nerd's bytes go after the program's");
+        self.replay(MOUSE_OFF);
     }
 
-    /// Input and screen modes as a fresh terminal has them, text kept: for the next program in a pane.
+    /// Input and screen modes as a fresh terminal has them, text kept: for the next program in a pane, once the
+    /// last one is killed. Its unparsed output goes; the reset begins with ESC, where vte and the filter agree again.
     /// The scroll region is reset between a cursor save and restore: `CSI r` moves the cursor home.
     pub fn modes_off(&mut self) {
+        self.discard();
         self.mouse_off();
-        self.advance(b"\x1b[?1049l\x1b7\x1b[r\x1b8\x1b[?1l\x1b>\x1b[?2004l\x1b[?1004l\x1b[?6l\x1b[4l\x1b(B\x1b[?25h\x1b[?7h\x1b[m");
+        self.replay(b"\x1b[?1049l\x1b7\x1b[r\x1b8\x1b[?1l\x1b>\x1b[?2004l\x1b[?1004l\x1b[?6l\x1b[4l\x1b(B\x1b[?25h\x1b[?7h\x1b[m");
         self.theme_notify = false;
         self.pointer = None;
     }

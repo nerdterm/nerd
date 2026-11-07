@@ -7,6 +7,12 @@ const SCREEN_TEXT_LIMIT: usize = 1 << 20;
 /// How long an exit notice waits for the pane's last output.
 const EXIT_WAIT: Duration = Duration::from_millis(100);
 
+// ceiling: a pane whose program left closes 2 s after its exit even with output still unparsed (a flood of costly sequences)
+const DRAIN_CAP: Duration = Duration::from_secs(2);
+
+/// How long an Update or exit parses what every pane still has, all panes together; the rest is not drawn.
+const DRAIN_BUDGET: Duration = Duration::from_secs(1);
+
 /// Chunks a pane's output takes per round, so a flooding pane cannot hold back a quiet one.
 pub(super) const QUANTUM: usize = 16;
 
@@ -100,9 +106,10 @@ impl App {
         let mut out = Vec::new();
         let trace = self.trace;
         let theme = self.theme;
+        let deadline = Some(Instant::now() + DRAIN_BUDGET);
         for p in self.spaces.iter_mut().flat_map(|s| s.tabs.iter_mut()).flat_map(|t| t.panes.values_mut()) {
             // Only what is queued now: a pane that keeps printing must not hold the Update.
-            p.pump(crate::pty::QUEUE, trace, &theme);
+            p.drain(deadline, trace, &theme);
             let fd = p.pty.export_fd()?;
             let (since, unseen) = p.term.activity();
             crate::paths::write_private(&crate::session::handover_dump_path(p.id), "tmp", &p.term.dump())?;
@@ -195,8 +202,9 @@ impl App {
         }
         let trace = self.trace;
         let theme = self.theme;
+        let deadline = Some(Instant::now() + DRAIN_BUDGET);
         for p in self.spaces.iter_mut().flat_map(|s| s.tabs.iter_mut()).flat_map(|t| t.panes.values_mut()) {
-            p.pump(crate::pty::QUEUE, trace, &theme);
+            p.drain(deadline, trace, &theme);
             let text = p.term.text(SCREEN_TEXT_LIMIT);
             if let Err(e) = crate::paths::write_private(&crate::session::screen_path(p.id), "tmp", &text) {
                 crate::log::error(&format!("screens: write failed for pane {}: {e}", p.id));
@@ -219,12 +227,13 @@ impl App {
             }
         }
         let mut changed = false;
+        let deadline = Some(start + budget);
         loop {
             let mut more = false;
             for p in self.spaces.iter_mut().flat_map(|s| s.tabs.iter_mut()).flat_map(|t| t.panes.values_mut()) {
-                let took = p.pump(QUANTUM, trace, &theme);
-                changed |= took > 0;
-                more |= took == QUANTUM;
+                let (parsed, left) = p.pump(QUANTUM, deadline, trace, &theme);
+                changed |= parsed;
+                more |= left;
             }
             if !more || start.elapsed() >= budget {
                 return (changed, more);
@@ -325,18 +334,27 @@ impl App {
         }
     }
 
-    /// Closes a pane only once its reader ended or the wait ran out, so its last lines reach the screen.
+    /// Closes a pane once its reader ended or the wait ran out, and `pump_pty` has parsed its last output, so its
+    /// last lines reach the screen; under a flood of costly sequences, DRAIN_CAP after the exit, without the rest.
     pub fn settle_exits(&mut self) -> bool {
-        let trace = self.trace;
-        let theme = self.theme;
+        self.settle_exits_at(Instant::now())
+    }
+
+    pub(super) fn settle_exits_at(&mut self, now: Instant) -> bool {
         let mut closed = false;
         for (id, until) in std::mem::take(&mut self.exits) {
             let Some(p) = self.pane_mut(id) else {
                 self.exit_how.remove(&id);
                 continue;
             };
-            p.pump(crate::pty::QUEUE, trace, &theme);
-            if p.pty.ended || Instant::now() >= until {
+            // Its program is gone: an update it left open will not end.
+            p.term.release_hold();
+            let cut = now >= until.checked_sub(EXIT_WAIT).unwrap_or(until) + DRAIN_CAP;
+            if (p.pty.ended || now >= until) && ((!p.term.queued() && !p.behind) || cut) {
+                if p.term.queued() || p.behind {
+                    crate::log::warn_every("pane output dropped", Duration::from_secs(10), &format!("pane {id}: its program left and its last output took over 2 s to draw; the rest was dropped"));
+                    p.term.discard();
+                }
                 // The pane's process is its shell: when that leaves, there is no pane left.
                 let how = self.exit_how.remove(&id).unwrap_or_else(|| "it left during the update, how is not known".into());
                 self.drop_pane(id, Some(&how));
@@ -424,9 +442,12 @@ impl App {
         let mut timers = false;
         let mut stalled = false;
         let mut panes = HashMap::new();
+        let now = Instant::now();
         for (si, sp) in self.spaces.iter_mut().enumerate() {
             for (ti, tab) in sp.tabs.iter_mut().enumerate() {
                 for p in tab.panes.values_mut() {
+                    // An update that never ends is drawn as it is; the next pump_pty parses it.
+                    p.term.release_stale(now);
                     stalled |= std::mem::take(&mut p.pty.stalled);
                     let before = (p.term.shown(), p.agent.clone(), p.command.clone(), p.activity_key);
                     changed |= p.term.tick_state();
