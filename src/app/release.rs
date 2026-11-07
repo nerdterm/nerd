@@ -100,7 +100,7 @@ impl App {
             }
             Said::Found(f) => {
                 // Kept while it is news: the menu item and the menu button stay marked until it is installed or skipped.
-                let news = f.newer && crate::release::skipped().as_deref() != Some(f.tag.as_str());
+                let news = f.newer && !self.release_on_disk(&f.tag) && crate::release::skipped().as_deref() != Some(f.tag.as_str());
                 self.release_found = news.then(|| f.clone());
                 let version = f.tag.trim_start_matches('v');
                 match ask {
@@ -113,11 +113,41 @@ impl App {
         }
     }
 
+    /// A new build at the server's path said what it is: Update… offers it, and a release it holds is no longer news.
+    pub fn new_build(&mut self, info: String, changes: Vec<Vec<String>>) -> bool {
+        self.update_available = true;
+        self.update_info = info;
+        self.update_changes = changes;
+        if self.release_found.as_ref().is_some_and(|f| self.release_on_disk(&f.tag)) {
+            self.release_found = None;
+        }
+        let skipped = std::fs::read_to_string(crate::paths::state_root().join("update-skipped")).unwrap_or_default();
+        self.update_skipped = skipped.trim() == self.update_info;
+        if self.update_skipped {
+            return false;
+        }
+        // A standing notice would otherwise hide this card until a key.
+        self.notice = None;
+        self.toast_with_more("Update available".into(), More::Update);
+        true
+    }
+
+    /// The build Update… switches to is this release or newer.
+    fn release_on_disk(&self, tag: &str) -> bool {
+        let v = |s: &str| crate::agents::semver(s).map(|s| s.0);
+        let installed = self.update_info.split_whitespace().nth(1).and_then(v);
+        self.update_available && installed.is_some_and(|i| tag.strip_prefix('v').and_then(v).is_some_and(|t| i >= t))
+    }
+
     /// The running build, the newest release and its changelog; install only when this nerd may replace itself.
     pub(super) fn release_window(&mut self, f: Found) -> Overlay {
         use crate::menu::Confirm;
         self.dirty = true;
         let (running, newest) = (crate::version_line(), format!("nerd {}", f.tag.trim_start_matches('v')));
+        if self.release_on_disk(&f.tag) {
+            let body = format!("The newest release is {newest}, and {} is already installed here: Update… switches {running} to it.", self.update_info);
+            return Overlay::Confirm(Confirm::new(TITLE, body).info(), Pending::Dismiss);
+        }
         if !f.newer {
             let body = format!("Nothing newer: the newest release is {newest}, and {running} runs here.");
             return Overlay::Confirm(Confirm::new(TITLE, body).info(), Pending::Dismiss);
