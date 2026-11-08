@@ -630,6 +630,13 @@ mod tests {
         let (mut r, _peer) = reader_with(b"{}");
         let req = Request::Hook { word: "nope".into(), from: "codex".into(), bytes: 2 };
         assert!(matches!(here(90_010, req, &mut r, Instant::now() + FIRST), Done::Reply(v) if v["error"].as_str().is_some_and(|e| e.contains("not a hook word"))));
+        crate::session::tests::with_temp_state_dir("msock-note", || {
+            let (mut r, _peer) = reader_with(b"{}");
+            let req = Request::Hook { word: "note".into(), from: "codex".into(), bytes: 2 };
+            let Done::Reply(v) = here(90_010, req, &mut r, Instant::now() + FIRST) else { panic!("the note closed the connection") };
+            let out: serde_json::Value = serde_json::from_str(v["out"].as_str().unwrap_or_default()).unwrap();
+            assert_eq!(out["hookSpecificOutput"]["additionalContext"], crate::hook::NOTE, "{v}");
+        });
     }
 
     #[test]

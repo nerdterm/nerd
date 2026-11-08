@@ -9,6 +9,7 @@
     "events": [
       { "on": "SessionStart", "do": "idle" },
       { "on": "SessionStart", "do": "sub-reset" },
+      { "on": "SessionStart", "do": "note" },
       { "on": "UserPromptSubmit", "do": "working" },
       { "on": "Stop", "do": "idle" },
       { "on": "PermissionRequest", "do": "blocked" },

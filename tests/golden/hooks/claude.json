@@ -45,6 +45,14 @@
             "command": "'/HOME/.claude/hooks/nerd-agent-state.sh' sub-reset"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.claude/hooks/nerd-agent-state.sh' note"
+          }
+        ]
       }
     ],
     "UserPromptSubmit": [

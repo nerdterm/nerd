@@ -36,6 +36,14 @@
             "command": "'/HOME/.codex/hooks/nerd-agent-state.sh' sub-reset codex"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.codex/hooks/nerd-agent-state.sh' note codex"
+          }
+        ]
       }
     ],
     "UserPromptSubmit": [

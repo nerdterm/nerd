@@ -9,6 +9,7 @@
     "events": [
       { "on": "SessionStart", "do": "idle" },
       { "on": "SessionStart", "do": "sub-reset" },
+      { "on": "SessionStart", "do": "note" },
       { "on": "BeforeAgent", "do": "working" },
       { "on": "AfterAgent", "do": "idle" },
       { "on": "Notification", "do": "notify" },

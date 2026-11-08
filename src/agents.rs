@@ -376,7 +376,7 @@ pub struct Strip {
 }
 
 /// The words the hook script acts on; anything else it ignores.
-pub const WORDS: &[&str] = &["working", "idle", "blocked", "fail", "stop", "notify", "task", "sub-start", "sub-stop", "sub-reset", "tool-start", "tool-ok", "tool-fail", "mail"];
+pub const WORDS: &[&str] = &["working", "idle", "blocked", "fail", "stop", "notify", "task", "sub-start", "sub-stop", "sub-reset", "tool-start", "tool-ok", "tool-fail", "mail", "note"];
 
 /// Remote shells, database and language prompts, debuggers, other users' shells and multiplexers.
 /// Those of macOS's own are refused by `SYSTEM_BIN` too; a name with a dot, such as python3.12, never passes `token`.
@@ -760,8 +760,14 @@ pub fn validate(m: &Manifest, others: &[Manifest]) -> Result<(), String> {
         return Err(format!("arg {:?} must be lowercase letters, digits and dashes", a.arg));
     }
     for e in &a.events {
-        if !WORDS.contains(&e.word.as_str()) {
-            return Err(format!("{:?} is not a hook word; the words are {}", e.word, WORDS.join(", ")));
+        // the note's answer is the session-start protocol of the built-ins: public only by a change to docs/plugins.md
+        if e.word == "note" {
+            if !m.builtin || !matches!(e.on.as_str(), "SessionStart" | "sessionStart") {
+                return Err("\"note\" is for a built-in agent's session start only".into());
+            }
+        } else if !WORDS.contains(&e.word.as_str()) {
+            let open: Vec<&str> = WORDS.iter().copied().filter(|w| *w != "note").collect();
+            return Err(format!("{:?} is not a hook word; the words are {}", e.word, open.join(", ")));
         }
         if !text(&e.on) || e.matcher.as_deref().is_some_and(|x| !text(x)) {
             return Err(format!("event {:?} and its matcher must be one line", e.on));
@@ -1155,6 +1161,26 @@ mod tests {
         let b = builtins();
         assert_eq!(b.iter().map(|m| m.name.as_str()).collect::<Vec<_>>(), ["claude", "codex", "qwen", "gemini", "cursor", "copilot", "opencode", "pi"]);
         assert!(validate(&fake(serde_json::json!({})), &b).is_ok());
+    }
+
+    #[test]
+    fn the_note_is_a_built_in_agents_word_at_its_session_start_only() {
+        use serde_json::json;
+        let at_start = json!({ "events": [{ "on": "SessionStart", "do": "note" }] });
+        assert!(refused(at_start.clone()).contains("built-in agent's session start only"), "a user's manifest");
+        let mut builtin = fake(at_start);
+        builtin.builtin = true;
+        assert!(validate(&builtin, &builtins()).is_ok(), "a built-in at its session's start");
+        let mut late = fake(json!({ "events": [{ "on": "Stop", "do": "note" }] }));
+        late.builtin = true;
+        assert!(validate(&late, &builtins()).is_err_and(|e| e.contains("session start only")), "a built-in on another event");
+        let e = refused(json!({ "events": [{ "on": "Stop", "do": "nope" }] }));
+        assert!(e.contains("tool-fail, mail") && !e.contains("note"), "the words a user's manifest may use: {e}");
+        let with: Vec<String> = builtins().iter().filter(|m| m.agent.events.iter().any(|e| e.word == "note")).map(|m| m.name.clone()).collect();
+        assert_eq!(with, ["claude", "codex", "qwen", "gemini"]);
+        for m in builtins().iter().filter(|m| with.contains(&m.name)) {
+            assert_eq!(m.agent.events.iter().filter(|e| e.word == "note").count(), 1, "{}", m.name);
+        }
     }
 
     #[test]

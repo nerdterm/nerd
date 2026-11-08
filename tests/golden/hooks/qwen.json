@@ -36,6 +36,14 @@
             "command": "'/HOME/.qwen/hooks/nerd-agent-state.sh' sub-reset qwen"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.qwen/hooks/nerd-agent-state.sh' note qwen"
+          }
+        ]
       }
     ],
     "UserPromptSubmit": [
