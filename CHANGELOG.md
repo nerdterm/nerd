@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.0](https://github.com/nerdterm/nerd/compare/v0.20.0...v0.21.0) (2026-11-08)
+
+
+### Added
+
+* an agent learns at its session's start how to write to other agents through nerd ([#188](https://github.com/nerdterm/nerd/issues/188)) ([a163386](https://github.com/nerdterm/nerd/commit/a163386c72e7cd0e4de35a8f53c5bfce738956b9))
+
 ## [0.20.0](https://github.com/nerdterm/nerd/compare/v0.19.1...v0.20.0) (2026-11-08)
 
 
