@@ -1,6 +1,6 @@
-// nerd: OpenCode reports its pane's state, its subagents and its tool calls. Nothing leaves the
-// machine, just small files under nerd's state directory, and only within nerd. It writes the same
-// lines as nerd's shell hook for Claude Code; a subagent is a child session.
+// nerd: OpenCode reports its pane's state, its subagents and its tool calls, as small files under
+// nerd's state directory and only within nerd; what it hands OpenCode (a waiting message, nerd's note) goes
+// to OpenCode's provider. It writes the same lines as nerd's shell hook for Claude Code; a subagent is a child session.
 import { appendFileSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, watch, writeFileSync } from "node:fs"
 import net from "node:net"
 import { dirname } from "node:path"
@@ -10,6 +10,7 @@ export const NerdPlugin = async ({ client } = {}) => {
   const dir = process.env.NERD_STATE
   // writes go only under nerd's own state directory, the root this plugin was installed for
   const root = "/HOME/Library/Application Support/nerd/"
+  const NOTE = "You are running in a pane of nerd, a terminal multiplexer. Other agents can be reached through the messages of nerd: nerd agents shows the name of this pane and whom it may write to, nerd send NAME \"text\" writes, nerd inbox reads, nerd send --reply ID \"text\" answers. When nerd agents shows that this pane has a name, prefer these to any other way of reaching another session: the person sees and controls these messages. A pane without a name can neither send nor receive."
   const numbered = /^[0-9]+$/.test(pane ?? "")
   const sockMode = numbered && !dir && !!process.env.NERD_MSOCK
   const ok = numbered && typeof dir === "string" && dir.startsWith(root) && root.startsWith("/") && !dir.includes("..") && !/[\x00-\x1f\x7f]/.test(dir)
@@ -222,6 +223,10 @@ export const NerdPlugin = async ({ client } = {}) => {
       main = input.sessionID
       session(input.sessionID)
       state("working")
+    },
+    // the main session's system prompt only: a child, or a call before the main session is known, gets none
+    "experimental.chat.system.transform": async (input, output) => {
+      if (main && input?.sessionID === main && Array.isArray(output?.system)) output.system.push(NOTE)
     },
     "tool.execute.before": async (input, output) => {
       record("tool.execute.before", { input, output })

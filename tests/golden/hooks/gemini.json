@@ -36,6 +36,14 @@
             "command": "'/HOME/.gemini/hooks/nerd-agent-state.sh' sub-reset gemini"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/HOME/.gemini/hooks/nerd-agent-state.sh' note gemini"
+          }
+        ]
       }
     ],
     "BeforeAgent": [

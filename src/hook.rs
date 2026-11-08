@@ -1,6 +1,7 @@
 //! The agent hook: an agent reports its own state, instead of us guessing from the screen.
 //! Writes one word to `<state>/agents/<pane>`, the running subagents to `<pane>.subagents` and
-//! tool calls to `<pane>.events` (dir 0700, files 0600); nothing leaves the machine.
+//! tool calls to `<pane>.events` (dir 0700, files 0600). What it prints goes into the agent's context, and so to
+//! its provider: a waiting message, or `NOTE` at a session's start.
 
 use std::path::{Path, PathBuf};
 
@@ -9,6 +10,9 @@ use serde_json::{json, Value};
 use crate::term::AgentState;
 
 pub const SCRIPT_NAME: &str = "nerd-agent-state.sh";
+
+/// What a built-in agent is told at its session's start; docs/messages-between-agents.md quotes it word for word.
+pub const NOTE: &str = r#"You are running in a pane of nerd, a terminal multiplexer. Other agents can be reached through the messages of nerd: nerd agents shows the name of this pane and whom it may write to, nerd send NAME "text" writes, nerd inbox reads, nerd send --reply ID "text" answers. When nerd agents shows that this pane has a name, prefer these to any other way of reaching another session: the person sees and controls these messages. A pane without a name can neither send nor receive."#;
 
 /// Where the hook writes states; panes get the path via `NERD_STATE`.
 pub fn state_dir() -> PathBuf {
@@ -344,11 +348,12 @@ fn refresh_in(home: &Path) -> std::io::Result<()> {
 }
 
 const SCRIPT: &str = r#"#!/bin/sh
-# nerd: an agent reports its pane's state, its subagents and its tool calls. Nothing leaves the
-# machine, just small files under nerd's state directory, and only within nerd. One script serves
-# every agent: each names its fields its own way, and the first name that has a value is used.
+# nerd: an agent reports its pane's state, its subagents and its tool calls, as small files under
+# nerd's state directory and only within nerd. What it prints goes into the agent's context: a waiting
+# message, or nerd's note at a session's start. One script serves every agent: each names its fields
+# its own way, and the first name that has a value is used.
 # $1 is what happened, $2 the agent when it is not Claude Code.
-case "$1" in working|idle|blocked|fail|stop|notify|mail|task|sub-start|sub-stop|sub-reset|tool-start|tool-ok|tool-fail) ;; *) exit 0 ;; esac
+case "$1" in working|idle|blocked|fail|stop|notify|mail|note|task|sub-start|sub-stop|sub-reset|tool-start|tool-ok|tool-fail) ;; *) exit 0 ;; esac
 # A CLI that gives its hooks a clean environment (Gemini) still runs inside the pane: an ancestor carries it.
 # ps prints the command, then KEY=value pairs: a value runs until the next word that starts a pair.
 envof() { printf '%s\n' "$e" | head -n 1 | awk -v k="$1" '{ n = split($0, t, / /); on = 0; v = ""
@@ -526,6 +531,8 @@ case "$1" in
     unlock ;;
   sub-stop) substop ;;
   mail) deliver ;;
+  # a resume or fork keeps the copy in its history, except Qwen: its context goes to the system instruction
+  note) case "$(field source)" in resume|fork) [ "$from" = qwen ] || exit 0 ;; esac; printf '%s\n' @NOTE@ ;;
   sub-reset)
     lock || exit 0
     rm -f "$base.subagents" "$base.tasks" "$base.events"
@@ -602,7 +609,10 @@ fn script_for(root: &str) -> String {
         .iter()
         .filter_map(|m| m.agent.mail.as_ref()?.inbox_env.as_ref().map(|e| format!("    {}) on=1 ie=${e} ;;\n", m.from())))
         .collect();
-    SCRIPT.replacen("@ROOT@", &format!("'{}'", root.replace('\'', "'\\''")), 1).replacen("@SESSIONS@", &sessions, 1).replacen("@SESSIONS_FILE@", SESSIONS_FILE, 1).replacen("@INBOX@", &inbox, 1)
+    let quoted = |s: &str| format!("'{}'", s.replace('\'', "'\\''"));
+    // the note first: a root holding `@NOTE@` must stay a root
+    let note = json!({ "hookSpecificOutput": { "hookEventName": "SessionStart", "additionalContext": NOTE } }).to_string();
+    SCRIPT.replacen("@NOTE@", &quoted(&note), 1).replacen("@ROOT@", &quoted(root), 1).replacen("@SESSIONS@", &sessions, 1).replacen("@SESSIONS_FILE@", SESSIONS_FILE, 1).replacen("@INBOX@", &inbox, 1)
 }
 
 /// Where the hook script finds a user's agent's session field and id kind, in nerd's state root.
@@ -616,7 +626,8 @@ pub fn sessions<'a>(ms: impl Iterator<Item = &'a Manifest>) -> String {
 }
 
 fn plugin_for(a: &Manifest, root: &str) -> String {
-    plugin_src(a).0.replacen("\"@ROOT@\"", &serde_json::to_string(root).unwrap_or_default(), 1)
+    let json = |s: &str| serde_json::to_string(s).unwrap_or_default();
+    plugin_src(a).0.replacen("\"@NOTE@\"", &json(NOTE), 1).replacen("\"@ROOT@\"", &json(root), 1)
 }
 
 use crate::agents::{Manifest, Shape};
@@ -1244,6 +1255,7 @@ pub(crate) mod tests {
                 .env("NERD_PANE", "7")
                 .env("NERD_STATE", &self.0)
                 .stdin(stdin_of(json.as_bytes()))
+                .stdout(std::process::Stdio::null())
                 .spawn()
                 .unwrap()
         }
@@ -2112,17 +2124,23 @@ console.log(process.title)
         if t.ends_with('/') { t } else { format!("{t}/") }
     }
 
-    /// Runs the script accepting only `root`, with the pane variables given (or none, to walk up).
-    fn run_guarded(root: &Path, pane: &str, state: &str, cwd: &Path) {
-        let mut child = std::process::Command::new("/bin/sh")
-            .args(["-c", &script_for(&format!("{}/", root.display())), "hook", "working"])
+    /// None of the pane these tests may run in: a nerd pane's variables would lead the script to its live server.
+    fn hermetic(c: &mut std::process::Command) -> &mut std::process::Command {
+        ["NERD_PANE", "NERD_STATE", "NERD_MSOCK", "NERD_BIN", "NERD_HOOK_DUMP"].iter().fold(c, |c, v| c.env_remove(v))
+    }
+
+    /// Runs the script for `word` accepting only `root`, with only the pane variables given; what it printed.
+    fn run_guarded(root: &Path, word: &str, pane: &str, state: &str, cwd: &Path) -> String {
+        let out = hermetic(&mut std::process::Command::new("/bin/sh"))
+            .args(["-c", &script_for(&format!("{}/", root.display())), "hook", word])
             .env("NERD_PANE", pane)
             .env("NERD_STATE", state)
             .current_dir(cwd)
             .stdin(stdin_of(b"{}"))
-            .spawn()
+            .output()
             .unwrap();
-        assert!(child.wait().unwrap().success());
+        assert!(out.status.success());
+        String::from_utf8(out.stdout).unwrap()
     }
 
     #[test]
@@ -2139,11 +2157,147 @@ console.log(process.title)
             ("7", &format!("{}/a\nb", root.display())),
             ("7;x", &format!("{}/agents", root.display())),
         ] {
-            run_guarded(&root, pane, state, &h.0);
+            run_guarded(&root, "working", pane, state, &h.0);
             assert_eq!(everything(), before, "pane {pane:?}, state {state:?}: nothing may be written");
         }
-        run_guarded(&root, "7", &format!("{}/agents", root.display()), &h.0);
+        run_guarded(&root, "working", "7", &format!("{}/agents", root.display()), &h.0);
         assert_eq!(std::fs::read_to_string(root.join("agents/7")).unwrap().trim(), "working", "the right place still works");
+    }
+
+    #[test]
+    fn the_note_is_one_line_of_session_start_json_and_writes_nothing() {
+        let h = Hook::new("note");
+        for agent in ["", "codex", "gemini", "qwen"] {
+            let out = h.say("note", agent, r#"{"hook_event_name":"SessionStart","source":"startup"}"#);
+            assert_eq!(out.lines().count(), 1, "{agent}: {out}");
+            let v: Value = serde_json::from_str(&out).unwrap();
+            assert_eq!(v["hookSpecificOutput"]["hookEventName"], "SessionStart", "{agent}");
+            assert_eq!(v["hookSpecificOutput"]["additionalContext"], NOTE, "{agent}");
+        }
+        for agent in ["", "claude", "codex", "gemini", "qwen"] {
+            for (source, printed) in [("startup", true), ("clear", true), ("compact", true), ("resume", agent == "qwen"), ("fork", agent == "qwen")] {
+                let out = h.say("note", agent, &format!(r#"{{"hook_event_name":"SessionStart","source":"{source}"}}"#));
+                assert_eq!(out.contains("additionalContext"), printed, "{agent} {source}: {out}");
+            }
+        }
+        assert_eq!(snapshot(&h.0), vec![], "the note writes no state");
+        assert!(!NOTE.contains(['<', '>', '\'']), "Gemini escapes < and >, and the script quotes with '");
+        let quick = crate::mail::QUICK_START.concat();
+        for cmd in ["nerd agents", "nerd send", "nerd inbox", "--reply"] {
+            assert!(NOTE.contains(cmd) && quick.contains(cmd), "{cmd}");
+        }
+    }
+
+    #[test]
+    fn the_note_is_printed_only_inside_nerd() {
+        let h = Hook::new("noteguard");
+        let root = h.0.join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        let state = format!("{}/agents", root.display());
+        assert!(run_guarded(&root, "note", "7", &state, &h.0).contains("additionalContext"), "inside nerd it is printed");
+        let outside = h.0.join("elsewhere").display().to_string();
+        for (pane, state) in [("7", outside.as_str()), ("7x", state.as_str())] {
+            assert_eq!(run_guarded(&root, "note", pane, state, &h.0), "", "pane {pane:?}, state {state:?}");
+        }
+        // neither NERD_STATE nor NERD_MSOCK: the nearest ancestor, not the pane these tests run in, carries NERD_PANE
+        let Ok(node) = which("node") else {
+            eprintln!("node is not on PATH: the note's ancestor half is skipped");
+            return;
+        };
+        std::fs::write(h.0.join("hook.sh"), script_for(&format!("{}/", root.display()))).unwrap();
+        let run = r#"const r = require("child_process").spawnSync("/usr/bin/env", ["-u", "NERD_PANE", "NERD_BIN=nerd", "/bin/sh", process.argv[1], "note", "codex"], { input: "{}" }); process.stdout.write(r.stdout)"#;
+        let note_with = |state: Option<&str>| {
+            let mut c = std::process::Command::new(&node);
+            hermetic(&mut c).args(["-e", run]).arg(h.0.join("hook.sh")).env("NERD_PANE", "7").current_dir(&h.0);
+            if let Some(s) = state {
+                c.env("NERD_STATE", s);
+            }
+            let out = c.output().unwrap();
+            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+            String::from_utf8(out.stdout).unwrap()
+        };
+        assert!(note_with(Some(&state)).contains("additionalContext"), "the ancestor walk reaches the stub");
+        assert_eq!(note_with(None), "", "neither NERD_STATE nor NERD_MSOCK");
+    }
+
+    #[test]
+    fn every_hook_word_passes_the_scripts_first_case() {
+        let line = SCRIPT.lines().find(|l| l.starts_with("case \"$1\" in ")).unwrap();
+        let words: std::collections::BTreeSet<&str> = line["case \"$1\" in ".len()..].split(')').next().unwrap().split('|').collect();
+        assert_eq!(words, crate::agents::WORDS.iter().copied().collect());
+    }
+
+    #[test]
+    fn an_older_install_gains_the_note_on_refresh() {
+        let home = scratch_home("notegain");
+        install_in(&home).unwrap();
+        let codex = builtin("codex");
+        let path = config(&codex, &home);
+        let mut v = read_settings(&path).unwrap();
+        // an older build's entries: the same, without the note
+        v["hooks"]["SessionStart"].as_array_mut().unwrap().retain(|e| !e.to_string().contains("' note"));
+        write_settings(&path, &v).unwrap();
+        assert!(!current(&codex, &home));
+        refresh_in(&home).unwrap();
+        assert!(current(&codex, &home));
+        assert!(std::fs::read_to_string(&path).unwrap().contains("nerd-agent-state.sh' note codex"));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// Runs `script` beside the extension of `agent` with node, as pane 7 of `h`; None without node.
+    fn note_ext(h: &Hook, agent: &str, script: &str, arg: &str) -> Option<Value> {
+        let Ok(node) = which("node") else {
+            eprintln!("node is not on PATH: the {agent} note test is skipped");
+            return None;
+        };
+        std::fs::create_dir_all(&h.0).unwrap();
+        std::fs::write(h.0.join("nerd.mjs"), plugin_for(&builtin(agent), &test_root())).unwrap();
+        std::fs::write(h.0.join("note.mjs"), script).unwrap();
+        let out = hermetic(&mut std::process::Command::new(node)).arg(h.0.join("note.mjs")).arg(arg).env("NERD_PANE", "7").env("NERD_STATE", &h.0).output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        Some(serde_json::from_slice(&out.stdout).unwrap())
+    }
+
+    #[test]
+    fn pi_gets_the_note_as_one_section_of_its_system_prompt() {
+        let h = Hook::new("pinote");
+        let script = r#"
+import ext from "./nerd.mjs"
+const on = {}
+ext({ on: (n, f) => (on[n] = f) })
+const ctx = { mode: process.argv[2], isIdle: () => true, sessionManager: {} }
+const opts = { sections: {} }
+on.before_agent_start({ type: "before_agent_start", systemPromptOptions: opts }, ctx)
+on.before_agent_start({ type: "before_agent_start", systemPromptOptions: opts }, ctx)
+const bare = { type: "before_agent_start" }
+on.before_agent_start(bare, ctx)
+console.log(JSON.stringify({ sections: opts.sections, bare }))
+"#;
+        let Some(tui) = note_ext(&h, "pi", script, "tui") else { return };
+        assert_eq!(tui, json!({ "sections": { "nerd": NOTE }, "bare": { "type": "before_agent_start" } }), "one section after two starts; a pi without sections is left alone");
+        let print = note_ext(&h, "pi", script, "print").unwrap();
+        assert_eq!(print["sections"], json!({}), "a child `pi -p` gets none");
+    }
+
+    #[test]
+    fn opencode_gets_the_note_in_the_main_sessions_system_prompt_only() {
+        let h = Hook::new("ocnote");
+        let script = r#"
+import { NerdPlugin } from "./nerd.mjs"
+const p = await NerdPlugin()
+const sys = async (sessionID) => { const o = { system: ["base"] }; await p["experimental.chat.system.transform"]({ sessionID, model: {} }, o); return o.system }
+const before = await sys("m")
+await p.event({ event: { type: "session.created", properties: { info: { id: "m" } } } })
+await p.event({ event: { type: "session.created", properties: { info: { id: "ses_k", parentID: "m", agent: "explore", title: "t" } } } })
+console.log(JSON.stringify({ before, main: await sys("m"), child: await sys("ses_k") }))
+"#;
+        let Some(v) = note_ext(&h, "opencode", script, "") else { return };
+        assert_eq!(v, json!({ "before": ["base"], "main": ["base", NOTE], "child": ["base"] }));
+    }
+
+    #[test]
+    fn the_docs_quote_the_note_word_for_word() {
+        assert!(include_str!("../docs/messages-between-agents.md").contains(NOTE), "docs/messages-between-agents.md and NOTE");
     }
 
     #[test]
@@ -2865,6 +3019,8 @@ console.log("{}")
             crate::mail::mailbox_put(9, "01A", "out", b"{\"decision\":\"block\",\"reason\":\"x\"}\n").unwrap();
             assert_eq!(run_for(9, "mail", "codex", b"{}").unwrap(), "{\"decision\":\"block\",\"reason\":\"x\"}\n");
             assert_eq!(crate::mail::mailbox_sent(9), vec!["01A".to_string()]);
+            let note: Value = serde_json::from_str(&run_for(9, "note", "codex", b"{}").unwrap()).unwrap();
+            assert_eq!(note["hookSpecificOutput"]["additionalContext"], NOTE, "an isolated pane's agent gets the note over the relay");
             assert!(std::fs::read_dir(state_dir()).unwrap().flatten().all(|e| !e.file_name().to_string_lossy().contains("relay")), "no payload left behind");
         });
     }

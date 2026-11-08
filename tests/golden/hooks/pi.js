@@ -1,5 +1,5 @@
-// nerd: pi reports its pane's state, its tool calls and its session. Nothing leaves the machine, just small
-// files under nerd's state directory, and only within nerd. It writes the same lines as nerd's shell hook for Claude Code.
+// nerd: pi reports its pane's state, its tool calls and its session, as small files under nerd's state directory and
+// only within nerd; what it hands pi (a waiting message, nerd's note) goes to pi's provider. It writes the same lines as nerd's shell hook for Claude Code.
 import { appendFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, watch, writeFileSync } from "node:fs"
 import net from "node:net"
 import { dirname } from "node:path"
@@ -9,6 +9,7 @@ export default function NerdPiExtension(pi) {
   const dir = process.env.NERD_STATE
   // writes go only under nerd's own state directory, the root this extension was installed for
   const root = "/HOME/Library/Application Support/nerd/"
+  const NOTE = "You are running in a pane of nerd, a terminal multiplexer. Other agents can be reached through the messages of nerd: nerd agents shows the name of this pane and whom it may write to, nerd send NAME \"text\" writes, nerd inbox reads, nerd send --reply ID \"text\" answers. When nerd agents shows that this pane has a name, prefer these to any other way of reaching another session: the person sees and controls these messages. A pane without a name can neither send nor receive."
   const numbered = /^[0-9]+$/.test(pane ?? "")
   const sockMode = numbered && !dir && !!process.env.NERD_MSOCK
   const ok = numbered && typeof dir === "string" && dir.startsWith(root) && root.startsWith("/") && !dir.includes("..") && !/[\x00-\x1f\x7f]/.test(dir)
@@ -224,6 +225,11 @@ export default function NerdPiExtension(pi) {
     }
     if (!session(ctx)) drop(`${base}.session`)
     state("idle")
+  })
+  // a named section, never a returned systemPrompt: pi records it once and keeps the other system messages
+  on("before_agent_start", (e) => {
+    const s = e.systemPromptOptions?.sections
+    if (s) s.nerd = NOTE
   })
   on("agent_start", () => state("working"))
   on("agent_before_settle", (e) => {

@@ -16,6 +16,7 @@
       { "on": "SubagentStart", "do": "sub-start" },
       { "on": "SubagentStop", "do": "sub-stop" },
       { "on": "SessionStart", "do": "sub-reset" },
+      { "on": "SessionStart", "do": "note" },
       { "on": "PreToolUse", "do": "tool-start" },
       { "on": "PostToolUse", "do": "tool-ok" },
       { "on": "PostToolUseFailure", "do": "tool-fail" }

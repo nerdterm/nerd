@@ -57,6 +57,7 @@ const ALLOW: &[(&str, &str, &str, &str, &str, &str)] = &[
     ("src/app/input.rs", "mouse", "pty-write", "", "pane", "your mouse, to a program that asked for it"),
     ("src/app/input.rs", "paste_into", "pty-write", "", "pane", "what you paste, and a message nerd types into an idle agent's pane, its frame first"),
     ("src/app/deliver.rs", "submit_typed", "pty-write", "", "pane", "the carriage return 150 ms after a typed message"),
+    ("src/hook.rs", "run_for", "spawn", "\"/bin/sh\"", "pane", "the hook's answer for an isolated pane: a waiting message or nerd's note, handed to the agent"),
     // local: these never leave the Mac.
     ("src/app/remote.rs", "open_outside_tmux", "pty-spawn", "", "local", "opens a terminal window for a nerd on this Mac"),
     ("src/app/commands.rs", "perform", "spawn", "\"/usr/bin/open\" -R", "local", "Show in Finder"),
@@ -92,7 +93,6 @@ const ALLOW: &[(&str, &str, &str, &str, &str, &str)] = &[
     ("src/preview.rs", "pixels_from", "spawn", "\"/usr/bin/sips\"", "local", "converts an image for the preview"),
     ("src/preview.rs", "paper", "spawn", "\"/usr/bin/sips\"", "local", "draws a PDF's first page on white for the preview"),
     ("src/sandbox.rs", "selftest", "socket", "", "local", "probes that the sandbox refuses the network"),
-    ("src/hook.rs", "run_for", "spawn", "\"/bin/sh\"", "local", "nerd's own hook script, run for an isolated pane's relayed hook call"),
     ("src/session.rs", "exclude_from_time_machine", "spawn", "\"/usr/bin/tmutil\"", "local", "keeps saved pane text and messages out of Time Machine"),
     ("src/spawn.rs", "cmd", "command", "program", "local", "the one door every other spawn goes through"),
     ("src/trial.rs", "trial", "spawn", "exe --plugin-exec", "local", "a plugin's trial run, with no network"),
@@ -434,6 +434,13 @@ fn the_link_row_names_the_help_page_opened_from_search() {
     let doc = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/privacy-and-security.md")).unwrap();
     let row = doc.lines().find(|l| l.contains("<!-- egress:link -->")).expect("the egress:link row");
     assert!(row.contains("Search"), "a help page opened from Search is a link door: {row}");
+}
+
+#[test]
+fn the_pane_paragraph_names_the_note_at_a_sessions_start() {
+    let doc = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/privacy-and-security.md")).unwrap();
+    let row = doc.lines().find(|l| l.contains("<!-- egress:pane -->")).expect("the egress:pane paragraph");
+    assert!(row.contains("at a session's start"), "nerd's note to an agent goes to its provider: {row}");
 }
 
 /// The scan's own coverage: each shape a door was once hidden in must still be reported.
