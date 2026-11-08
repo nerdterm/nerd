@@ -1,6 +1,6 @@
 name: Feature request
 description: An idea for nerd
-labels: [enhancement]
+labels: [type/feature]
 body:
   - type: markdown
     attributes:
