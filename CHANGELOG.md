@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.0](https://github.com/nerdterm/nerd/compare/v0.19.1...v0.20.0) (2026-11-08)
+
+
+### Added
+
+* notes in windows follow one layout: groups with headings, only what applies here ([#183](https://github.com/nerdterm/nerd/issues/183)) ([a42c5ee](https://github.com/nerdterm/nerd/commit/a42c5ee3cc6dee8886f98abb6d56d70196b93842))
+
 ## [0.19.1](https://github.com/nerdterm/nerd/compare/v0.19.0...v0.19.1) (2026-11-07)
 
 
