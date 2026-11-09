@@ -71,6 +71,12 @@ pull request, `chore(master): release X.Y.Z`. Replace `N` and `X.Y.Z` below with
    gh release view vX.Y.Z --json isDraft,assets --jq '.isDraft, .assets[].name'
    ```
 
+7. Upgrade a Homebrew nerd on your Mac from the release window with **upgrade with Homebrew**, and check that it
+   ends with `nerd X.Y.Z installed with Homebrew`.
+
+A change to the formula template that an older nerd's rendering would install wrongly must come with a change to the
+archive that the member check in the older nerd refuses (an archive holding more than `nerd`).
+
 If the formula step failed, run it alone: it reads the published checksum and checks its signature against this
 checkout's install.sh, so running it again is safe once `git status --porcelain` prints nothing.
 `scripts/publish-formula.sh --dry-run vX.Y.Z` prints the formula without writing it.

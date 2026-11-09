@@ -7,6 +7,7 @@ pub const RELEASE_EVERY: Duration = Duration::from_secs(600);
 const TITLE: &str = "Check for a new release";
 const ASKING: &str = "asking GitHub for the newest release…";
 const DOWNLOADING: &str = "downloading the release…";
+const UPGRADING: &str = "upgrading with Homebrew…";
 
 /// Who asked for the release run: each is answered its own way.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -39,7 +40,7 @@ impl App {
                 self.release_job = Some((id, ask));
                 match ask {
                     ReleaseAsk::Menu => self.toast = Some(ASKING.into()),
-                    ReleaseAsk::Install => self.toast = Some(DOWNLOADING.into()),
+                    ReleaseAsk::Install => self.toast = Some(if self.release_found.as_ref().is_some_and(|f| f.brew) { UPGRADING } else { DOWNLOADING }.into()),
                     ReleaseAsk::Daily => {}
                 }
             }
@@ -87,7 +88,7 @@ impl App {
     fn release_said(&mut self, said: Said, ask: ReleaseAsk) {
         self.dirty = true;
         // The run's own card is answered now; anything said since stays.
-        if self.toast.as_deref().is_some_and(|t| t == ASKING || t == DOWNLOADING) {
+        if self.toast.as_deref().is_some_and(|t| t == ASKING || t == DOWNLOADING || t == UPGRADING) {
             self.toast = None;
         }
         match said {
@@ -95,8 +96,9 @@ impl App {
             Said::Failed(_) if ask == ReleaseAsk::Daily => {}
             Said::Failed(e) => self.notice = Some(e),
             Said::Installed(v) => {
+                let place = if self.release_found.as_ref().is_some_and(|f| f.brew) { "with Homebrew" } else { "in ~/.local/bin" };
                 self.release_found = None;
-                self.toast = Some(format!("{v} installed in ~/.local/bin"));
+                self.toast = Some(format!("{v} installed {place}"));
             }
             Said::Found(f) => {
                 // Kept while it is news: the menu item and the menu button stay marked until it is installed or skipped.
@@ -158,8 +160,12 @@ impl App {
             let c = Confirm::new(TITLE, format!("{said} {b}.")).rows(rows).info().other(" [s] skip this release ").click_yes().select(0);
             return Overlay::Confirm(c, Pending::ReleaseInstall(f.tag));
         }
-        let body = format!("{said} Install downloads it from GitHub, checks it against the checksum published with it and puts it in ~/.local/bin; Update available then swaps the running servers for it.");
-        let c = Confirm::new(TITLE, body).rows(rows).labels(" [Enter] install ", " [Esc] later ").other(" [s] skip this release ").click_yes();
+        let (body, yes) = if f.brew {
+            (format!("{said} Upgrade downloads it from GitHub, checks it against nerd's release key and has Homebrew install it; Update available then swaps the running servers for it."), " [Enter] upgrade with Homebrew ")
+        } else {
+            (format!("{said} Install downloads it from GitHub, checks it against the checksum published with it and puts it in ~/.local/bin; Update available then swaps the running servers for it."), " [Enter] install ")
+        };
+        let c = Confirm::new(TITLE, body).rows(rows).labels(yes, " [Esc] later ").other(" [s] skip this release ").click_yes();
         Overlay::Confirm(c, Pending::ReleaseInstall(f.tag))
     }
 

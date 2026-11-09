@@ -1600,7 +1600,7 @@ mod tests {
     }
 
     fn found(tag: &str) -> crate::release::Found {
-        crate::release::Found { tag: tag.into(), notes: vec!["Added".into(), "- a thing".into()], newer: true, blocked: None }
+        crate::release::Found { tag: tag.into(), notes: vec!["Added".into(), "- a thing".into()], newer: true, blocked: None, brew: false }
     }
 
     #[test]
@@ -1633,6 +1633,22 @@ mod tests {
             assert!(matches!(app.release_job, Some((_, ReleaseAsk::Install))));
             release_ends(&mut app, Said::Installed("nerd 9.0.0 (abc)".into()));
             assert_eq!(app.toast.as_deref(), Some("nerd 9.0.0 (abc) installed in ~/.local/bin"));
+
+            app.overlay = app.check_release();
+            release_ends(&mut app, Said::Found(crate::release::Found { brew: true, ..found("v9.2.0") }));
+            let Overlay::Confirm(c, Pending::ReleaseInstall(tag)) = &app.overlay else { panic!("the window shows the release") };
+            assert_eq!(tag, "v9.2.0");
+            let body = c.body_lines(200).join(" ");
+            assert!(body.contains("Upgrade downloads it from GitHub, checks it against nerd's release key and has Homebrew install it"), "{body}");
+            let screen = Rect::new(0, 0, 120, 40);
+            let mut buf = ratatui::buffer::Buffer::empty(screen);
+            c.draw(&mut buf, screen, &crate::render::Theme::dark());
+            let drawn: String = buf.content().iter().map(|c| c.symbol()).collect();
+            assert!(!body.contains("~/.local/bin") && drawn.contains(" upgrade with Homebrew "), "click_yes drops [Enter] from the shown label");
+            app.perform(Pending::ReleaseInstall("v9.2.0".into()));
+            assert_eq!(app.toast.as_deref(), Some("upgrading with Homebrew…"));
+            release_ends(&mut app, Said::Installed("nerd 9.2.0".into()));
+            assert_eq!(app.toast.as_deref(), Some("nerd 9.2.0 installed with Homebrew"));
 
             app.overlay = app.check_release();
             release_ends(&mut app, Said::Failed("could not reach GitHub: (6) no host".into()));

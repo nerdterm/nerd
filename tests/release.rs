@@ -53,11 +53,18 @@ impl Env {
 
     /// The release's archive holding `script` as its nerd, with its true checksum.
     fn archive(&self, script: &str) {
+        self.archive_with(script, &[]);
+    }
+
+    /// The same with `extra` files beside nerd.
+    fn archive_with(&self, script: &str, extra: &[&str]) {
         let dir = self.served.join("build");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("nerd"), script).unwrap();
         std::fs::set_permissions(dir.join("nerd"), std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
-        assert!(Command::new("tar").args(["-czf"]).arg(self.served.join(ARCHIVE)).arg("-C").arg(&dir).arg("nerd").status().unwrap().success());
+        extra.iter().for_each(|x| std::fs::write(dir.join(x), "x").unwrap());
+        // No AppleDouble files beside nerd: the Homebrew path refuses any member but nerd.
+        assert!(Command::new("tar").env("COPYFILE_DISABLE", "1").args(["-czf"]).arg(self.served.join(ARCHIVE)).arg("-C").arg(&dir).arg("nerd").args(extra).status().unwrap().success());
         let sum = Command::new("shasum").args(["-a", "256"]).arg(ARCHIVE).current_dir(&self.served).output().unwrap();
         std::fs::write(self.served.join(format!("{ARCHIVE}.sha256")), sum.stdout).unwrap();
         self.sign("main");
@@ -101,6 +108,34 @@ impl Env {
 
     fn asked(&self) -> Vec<String> {
         std::fs::read_to_string(self.served.join("asked")).unwrap_or_default().lines().map(str::to_string).collect()
+    }
+
+    /// A copy of the built nerd as Homebrew installs it from nerdterm/tap, its tap a git repository, and stand-ins for
+    /// sandbox-exec and brew that note what they were asked; the link Homebrew puts on PATH.
+    fn brewed(&self) -> PathBuf {
+        let root = self.home.parent().unwrap();
+        let prefix = root.join("prefix");
+        let keg = prefix.join("Cellar/nerd/0.21.0");
+        let tap = prefix.join("Library/Taps/nerdterm/homebrew-tap");
+        std::fs::create_dir_all(keg.join("bin")).unwrap();
+        std::fs::create_dir_all(prefix.join("bin")).unwrap();
+        std::fs::create_dir_all(tap.join("Formula")).unwrap();
+        std::fs::copy(env!("CARGO_BIN_EXE_nerd"), keg.join("bin/nerd")).unwrap();
+        std::fs::write(keg.join("INSTALL_RECEIPT.json"), r#"{"source":{"tap":"nerdterm/tap"}}"#).unwrap();
+        std::os::unix::fs::symlink(keg.join("bin/nerd"), prefix.join("bin/nerd")).unwrap();
+        let (r, t) = (root.display(), tap.display());
+        let script = |p: &Path, text: String| {
+            std::fs::write(p, text).unwrap();
+            std::fs::set_permissions(p, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        };
+        script(&prefix.join("bin/brew"), format!("#!/bin/sh\ncase $1 in\n--version) echo 'Homebrew 7.0.11' ;;\n--cache) echo '{r}/cache' ;;\nupgrade) cp '{t}/Formula/nerd.rb' '{r}/seen.rb'; ls '{r}/cache/downloads' > '{r}/cached' ;;\n*) exit 9 ;;\nesac\n"));
+        script(&root.join("sandbox-exec"), format!("#!/bin/sh\n[ \"$1\" = -p ] || exit 97\nprintf '%s' \"$2\" > '{r}/profile'\nshift 2\nexec \"$@\"\n"));
+        std::fs::write(tap.join("README.md"), "# nerdterm/tap\n").unwrap();
+        std::fs::write(tap.join("Formula/nerd.rb"), "class Nerd < Formula\nend\n").unwrap();
+        for args in [&["init", "-q"][..], &["add", "-A"], &["-c", "user.name=t", "-c", "user.email=t@localhost", "-c", "commit.gpgsign=false", "commit", "-qm", "tap"]] {
+            assert!(Command::new("git").arg("-C").arg(&tap).args(args).env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1").status().unwrap().success());
+        }
+        prefix.join("bin/nerd")
     }
 
     /// A copy of the built nerd where install.sh puts it, so it may replace itself.
@@ -265,4 +300,59 @@ fn from_a_terminal_with_no_one_to_answer_nothing_is_installed() {
     assert_eq!(std::fs::read(&nerd).unwrap(), before);
     assert!(!e.asked().iter().any(|u| u.ends_with(".tar.gz")), "nothing downloaded");
     assert!(e.run(&nerd, &["--check-update", "--install"], &[]).contains("usage: nerd --check-update"), "--install is the window's");
+}
+
+#[test]
+fn a_homebrew_nerd_from_nerd_s_tap_is_upgraded_by_its_own_brew_with_nerd_s_formula() {
+    let e = Env::new("brew");
+    let nerd = e.brewed();
+    let root = e.home.parent().unwrap().to_path_buf();
+    let stand_in = root.join("sandbox-exec");
+    let vars = [("NERD_TEST_BREW", stand_in.to_str().unwrap())];
+    let tap = root.join("prefix/Library/Taps/nerdterm/homebrew-tap");
+
+    e.run(&nerd, &["--check-update", "--window"], &vars);
+    let f = &e.said()["Found"];
+    assert!(f["brew"] == true && f["blocked"].is_null(), "{f}");
+
+    std::fs::write(e.state().join("release-install"), TAG).unwrap();
+    e.run(&nerd, &["--check-update", "--install", "--window"], &vars);
+    assert_eq!(e.said()["Installed"], "nerd 0.99.0");
+    let sum = std::fs::read_to_string(e.served.join(format!("{ARCHIVE}.sha256"))).unwrap();
+    let seen = std::fs::read_to_string(root.join("seen.rb")).unwrap();
+    assert!(seen.contains(&format!("  url \"https://github.com/nerdterm/nerd/releases/download/{TAG}/{ARCHIVE}\"\n")) && seen.contains(&format!("  sha256 \"{}\"\n", &sum[..64])), "{seen}");
+    assert!(std::fs::read_to_string(root.join("cached")).unwrap().trim_end().ends_with(&format!("--{ARCHIVE}")), "primed before brew ran");
+    assert!(std::fs::read_to_string(root.join("profile")).unwrap().starts_with("(version 1)(allow default)(deny network*)"));
+    assert_eq!(std::fs::read_to_string(tap.join("Formula/nerd.rb")).unwrap(), "class Nerd < Formula\nend\n", "the tap's own formula back");
+    let status = Command::new("git").arg("-C").arg(&tap).args(["status", "--porcelain", "--untracked-files=all", "--ignored"]).output().unwrap();
+    assert!(status.status.success() && status.stdout.is_empty(), "{}", String::from_utf8_lossy(&status.stdout));
+    assert!(!e.home.join(".local/bin").exists(), "nothing in ~/.local/bin");
+    let log = e.log();
+    for line in ["release v0.99.0: Homebrew 7.0.11", "release v0.99.0: tap checked", "release v0.99.0: formula written", "release v0.99.0: brew upgrade done", "release v0.99.0: tap restored", "release v0.99.0 installed with Homebrew: nerd 0.99.0"] {
+        assert!(log.contains(line), "{line}: {log}");
+    }
+}
+
+#[test]
+fn a_homebrew_upgrade_takes_only_a_signed_archive_of_nerd_alone() {
+    let e = Env::new("brew-refused");
+    let nerd = e.brewed();
+    let root = e.home.parent().unwrap().to_path_buf();
+    let stand_in = root.join("sandbox-exec");
+    let vars = [("NERD_TEST_BREW", stand_in.to_str().unwrap())];
+    let go = e.state().join("release-install");
+
+    e.archive_with("#!/bin/sh\necho 'nerd 0.99.0 (test)'\n", &["LICENSE"]);
+    std::fs::write(&go, TAG).unwrap();
+    e.run(&nerd, &["--check-update", "--install", "--window"], &vars);
+    assert_eq!(e.said()["Failed"], "this release needs Homebrew's own formula: run brew update && brew upgrade nerd");
+
+    e.archive("#!/bin/sh\necho 'nerd 0.99.0 (test)'\n");
+    e.sign("other");
+    std::fs::write(&go, TAG).unwrap();
+    e.run(&nerd, &["--check-update", "--install", "--window"], &vars);
+    assert_eq!(e.said()["Failed"], "the signature does not check against nerd's release keys, nothing installed");
+
+    assert!(!root.join("profile").exists() && !root.join("seen.rb").exists(), "brew never ran");
+    assert!(!e.home.join(".local/bin").exists());
 }

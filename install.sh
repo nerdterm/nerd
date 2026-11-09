@@ -100,6 +100,13 @@ case $base in
         [ "$got" = "$want" ] || die "the archive holds nerd $got, not $want, nothing installed"
         ;;
 esac
+# Set by nerd's Homebrew upgrade: Homebrew installs what passed, with nerd's formula, whose only action is bin.install "nerd".
+if [ "${NERD_INSTALL_VERIFY_ONLY:-}" = 1 ]; then
+    [ -n "${want:-}" ] || die "not a release archive, nothing installed"
+    [ "$(tar -tzf "$archive")" = nerd ] || die "this release needs Homebrew's own formula: run brew update && brew upgrade nerd"
+    say "verified nerd $got"
+    exit 0
+fi
 mkdir -p "$bindir"
 # Anyone who can write a folder on the way to nerd can rename it and put their own nerd in its place. Symlinks: ls on "$d/." reads the folder a link points to, the one the install writes through; the folders above that target are not checked.
 d=$bindir
