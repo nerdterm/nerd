@@ -622,15 +622,19 @@ mod tests {
     #[test]
     fn a_failed_or_stopped_brew_leaves_the_tap_as_it_was_and_says_what_to_do() {
         let f = fake("brew-fail");
-        f.does(&format!("echo 'Error: nerd: no bottle' >&2; rm -f '{}'; exit 1", f.brew.prefix.join("bin/nerd").display()));
-        let e = upgrade(&f, BREW_LIMIT).unwrap_err();
-        assert!(e.starts_with("failed at brew upgrade: Homebrew said \"Error: nerd: no bottle\"; nerd is no longer linked into") && e.ends_with("run brew link nerd, then brew update && brew upgrade nerd"), "{e}");
+        f.does("exit 1");
+        assert_eq!(upgrade(&f, BREW_LIMIT), Err("failed at brew upgrade: Homebrew gave no reason; run brew update && brew upgrade nerd".into()));
         assert_eq!(f.formula_now(), TAPS_OWN);
-        assert!(!f.saved().exists());
 
         f.does("sleep 30");
         let e = upgrade(&f, Duration::from_secs(1)).unwrap_err();
-        assert!(e.starts_with("failed at brew upgrade: did not finish in 1 s") && e.ends_with("brew update && brew upgrade nerd"), "{e}");
+        assert!(e.starts_with("failed at brew upgrade: did not finish in 1 s") && e.ends_with("; run brew update && brew upgrade nerd") && !e.contains("brew link"), "{e}");
+        assert_eq!(f.formula_now(), TAPS_OWN);
+        assert!(!f.saved().exists());
+
+        f.does(&format!("echo 'Error: nerd: no bottle' >&2; rm -f '{}'; exit 1", f.brew.prefix.join("bin/nerd").display()));
+        let e = upgrade(&f, BREW_LIMIT).unwrap_err();
+        assert!(e.starts_with("failed at brew upgrade: Homebrew said \"Error: nerd: no bottle\"; nerd is no longer linked into") && e.ends_with("run brew link nerd, then brew update && brew upgrade nerd"), "{e}");
         assert_eq!(f.formula_now(), TAPS_OWN);
         assert!(!f.saved().exists());
     }
