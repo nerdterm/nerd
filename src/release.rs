@@ -6,6 +6,8 @@ use std::process::Stdio;
 
 use serde::{Deserialize, Serialize};
 
+mod brew;
+
 const API: &str = "https://api.github.com/repos/nerdterm/nerd/releases/latest";
 const DOWNLOADS: &str = "https://github.com/nerdterm/nerd/releases/download";
 const INSTALL_SH: &str = include_str!("../install.sh");
@@ -20,6 +22,9 @@ pub struct Found {
     pub newer: bool,
     /// Why nerd cannot install it here, said as what to do instead.
     pub blocked: Option<String>,
+    /// This nerd came from nerdterm/tap: the Homebrew that installed it installs the release.
+    #[serde(default)]
+    pub brew: bool,
 }
 
 /// What `nerd --check-update --window` leaves for the server that ran it.
@@ -64,7 +69,8 @@ fn terminal() -> std::io::Result<()> {
         println!("No terminal to answer in: nothing installed. Run nerd --check-update in a terminal, or use Check for a new release… in nerd's menu.");
         return Ok(());
     }
-    if !crate::install::ask_terminal(&format!("Install nerd {}?", f.tag.trim_start_matches('v'))) {
+    let with = if f.brew { " with Homebrew" } else { "" };
+    if !crate::install::ask_terminal(&format!("Install nerd {}{with}?", f.tag.trim_start_matches('v'))) {
         println!("Nothing installed.");
         return Ok(());
     }
@@ -99,7 +105,8 @@ fn check() -> Result<Found, String> {
     });
     match got {
         Ok((tag, body)) => {
-            let f = Found { newer: newer(&tag, running), blocked: blocked_here(), notes: plain(&body), tag };
+            let how = installer();
+            let f = Found { newer: newer(&tag, running), brew: matches!(how, Ok(Some(_))), blocked: how.err(), notes: plain(&body), tag };
             crate::log::info(&format!("release check: newest {}, running {running}, {}", f.tag, if f.newer { "newer" } else { "nothing newer" }));
             Ok(f)
         }
@@ -110,21 +117,24 @@ fn check() -> Result<Found, String> {
     }
 }
 
-/// The release `tag` into ~/.local/bin, through the embedded install.sh, which refuses an archive unless one of nerd's release keys signed its checksum.
+/// The release `tag` into ~/.local/bin, or through the Homebrew that installed nerd, once the embedded install.sh
+/// checked it: it refuses an archive unless one of nerd's release keys signed its checksum.
 fn install(tag: &str) -> Result<String, String> {
-    if let Some(b) = blocked_here() {
-        return Err(b);
-    }
+    let brew = installer()?;
     let home = crate::paths::home().ok_or("no home folder")?;
     let name = format!("nerd-{tag}-macos-arm64.tar.gz");
     let done = in_fresh_dir(|dir| {
         for n in release_files(&name) {
             curl(&asset_url(tag, &n), &dir.join(&n), 300)?;
         }
-        install_sh(&dir.join(&name), &home)
+        match &brew {
+            None => install_sh(&dir.join(&name), &home, false),
+            Some(b) => install_sh(&dir.join(&name), &home, true).and_then(|_| b.upgrade(tag, &name, dir, brew::BREW_LIMIT)),
+        }
     });
+    let place = if brew.is_some() { "with Homebrew" } else { "in ~/.local/bin" };
     match &done {
-        Ok(v) => crate::log::info(&format!("release {tag} installed in ~/.local/bin: {v}")),
+        Ok(v) => crate::log::info(&format!("release {tag} installed {place}: {v}")),
         Err(e) => crate::log::warn(&format!("release {tag} not installed: {e}")),
     }
     done
@@ -136,9 +146,9 @@ fn release_files(archive: &str) -> [String; 3] {
 }
 
 /// With the archive given, install.sh reaches no network: it checks, unpacks, signs and renames into place.
-fn install_sh(archive: &Path, home: &Path) -> Result<String, String> {
+fn install_sh(archive: &Path, home: &Path, verify_only: bool) -> Result<String, String> {
     use std::io::Write as _;
-    let mut cmd = install_cmd(archive, home);
+    let mut cmd = install_cmd(archive, home, verify_only);
     let mut child = cmd.spawn().map_err(|e| format!("sh: {e}"))?;
     if let Some(mut i) = child.stdin.take() {
         let _ = i.write_all(install_script().as_bytes());
@@ -159,12 +169,17 @@ fn install_sh(archive: &Path, home: &Path) -> Result<String, String> {
     Ok(crate::render::unspoofed(&said.unwrap_or_default()))
 }
 
-fn install_cmd(archive: &Path, home: &Path) -> std::process::Command {
+/// `verify_only`: install.sh stops after its checks, before it writes anything.
+fn install_cmd(archive: &Path, home: &Path, verify_only: bool) -> std::process::Command {
     let bindir = home.join(".local/bin");
     let mut cmd = crate::spawn::cmd("/bin/sh");
     cmd.arg("-s").arg("--").arg(archive);
     // The bindir on PATH, so install.sh leaves ~/.zshrc alone; last, so no tool of the user's stands in for the system's.
     cmd.env_remove("NERD_INSTALL_UNVERIFIED").env_remove("NERD_RELEASE_API").env("HOME", home).env("NERD_BINDIR", &bindir);
+    match verify_only {
+        true => cmd.env("NERD_INSTALL_VERIFY_ONLY", "1"),
+        false => cmd.env_remove("NERD_INSTALL_VERIFY_ONLY"),
+    };
     cmd.env("PATH", format!("/usr/bin:/bin:/usr/sbin:/sbin:{}", bindir.display()));
     cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     cmd
@@ -245,11 +260,15 @@ fn newer(tag: &str, running: &str) -> bool {
     t.1.is_none() && t.0 > r.0
 }
 
-fn blocked_here() -> Option<String> {
+/// How this nerd installs a release: `None` into ~/.local/bin, `Some` through the Homebrew that installed it; Err says why it cannot.
+fn installer() -> Result<Option<brew::Brew>, String> {
     let exe = std::env::current_exe().unwrap_or_default();
+    if let Some(b) = brew::Brew::of(&exe) {
+        return Ok(Some(b));
+    }
     match crate::paths::home() {
-        Some(home) => blocked(&exe, &home),
-        None => Some("no home folder, so no ~/.local/bin to install in".into()),
+        Some(home) => blocked(&exe, &home).map_or(Ok(None), Err),
+        None => Err("no home folder, so no ~/.local/bin to install in".into()),
     }
 }
 
@@ -426,11 +445,14 @@ mod tests {
 
     #[test]
     fn the_install_takes_no_way_around_the_signature_from_the_environment() {
-        let cmd = install_cmd(Path::new("/tmp/a.tar.gz"), Path::new("/tmp/home"));
+        let cmd = install_cmd(Path::new("/tmp/a.tar.gz"), Path::new("/tmp/home"), false);
         let env: std::collections::HashMap<_, _> = cmd.get_envs().collect();
-        for k in ["NERD_INSTALL_UNVERIFIED", "NERD_RELEASE_API"] {
+        for k in ["NERD_INSTALL_UNVERIFIED", "NERD_RELEASE_API", "NERD_INSTALL_VERIFY_ONLY"] {
             assert_eq!(env.get(std::ffi::OsStr::new(k)), Some(&None), "{k} is removed");
         }
+        let cmd = install_cmd(Path::new("/tmp/a.tar.gz"), Path::new("/tmp/home"), true);
+        let env: std::collections::HashMap<_, _> = cmd.get_envs().collect();
+        assert_eq!(env.get(std::ffi::OsStr::new("NERD_INSTALL_VERIFY_ONLY")), Some(&Some(std::ffi::OsStr::new("1"))), "set by nerd alone");
         assert!(INSTALL_SH.contains("# release keys begin\n") && INSTALL_SH.contains("# release keys end\n"), "the key block the tests replace");
     }
 
@@ -539,19 +561,21 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let home = crate::paths::test_dir("release-private");
         let old = crate::paths::TEST_HOME.with(|h| h.replace(Some(home.clone())));
-        std::fs::create_dir_all(crate::paths::config_path().parent().unwrap()).unwrap();
-        std::fs::create_dir_all(crate::paths::state_root()).unwrap();
-        set_daily(true).unwrap();
-        for p in [checked_path(), skipped_path()] {
-            std::fs::write(&p, "0").unwrap();
-            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644)).unwrap();
-        }
-        assert!(daily_due(DAY));
-        skip("v0.13.0").unwrap();
-        for p in [checked_path(), skipped_path()] {
-            assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o600, "{}", p.display());
-        }
-        assert_eq!(skipped().as_deref(), Some("v0.13.0"));
+        // The skipped release lives in the state root, which other tests move through the process environment.
+        crate::session::tests::with_temp_state_dir("release-private", || {
+            std::fs::create_dir_all(crate::paths::config_path().parent().unwrap()).unwrap();
+            set_daily(true).unwrap();
+            for p in [checked_path(), skipped_path()] {
+                std::fs::write(&p, "0").unwrap();
+                std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o644)).unwrap();
+            }
+            assert!(daily_due(DAY));
+            skip("v0.13.0").unwrap();
+            for p in [checked_path(), skipped_path()] {
+                assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o600, "{}", p.display());
+            }
+            assert_eq!(skipped().as_deref(), Some("v0.13.0"));
+        });
         crate::paths::TEST_HOME.with(|h| h.replace(old));
     }
 }

@@ -96,7 +96,9 @@ const ALLOW: &[(&str, &str, &str, &str, &str, &str)] = &[
     ("src/session.rs", "exclude_from_time_machine", "spawn", "\"/usr/bin/tmutil\"", "local", "keeps saved pane text and messages out of Time Machine"),
     ("src/spawn.rs", "cmd", "command", "program", "local", "the one door every other spawn goes through"),
     ("src/trial.rs", "trial", "spawn", "exe --plugin-exec", "local", "a plugin's trial run, with no network"),
-    ("src/release.rs", "install_cmd", "spawn", "\"/bin/sh\"", "local", "the embedded install.sh on the downloaded archive: release-key signature with /usr/bin/openssl, checksum, unpack, sign, rename into ~/.local/bin; with an archive it reaches no network"),
+    ("src/release.rs", "install_cmd", "spawn", "\"/bin/sh\"", "local", "the embedded install.sh on the downloaded archive: release-key signature with /usr/bin/openssl, checksum, unpack, sign, rename into ~/.local/bin, or for a Homebrew upgrade the checks alone; with an archive it reaches no network"),
+    ("src/release/brew.rs", "cmd", "spawn", "& self . run", "local", "brew --version, brew --cache and brew upgrade nerdterm/tap/nerd for a Homebrew nerd, under /usr/bin/sandbox-exec with the network denied; Homebrew's own build sandbox starts outside it"),
+    ("src/release/brew.rs", "tap_git", "spawn", "crate :: install :: git_exe () ?", "local", "git status and ls-files on nerd's Homebrew tap before and after its upgrade"),
 ];
 
 /// Rows the register states with no door the scan sees: a setting (the sandbox off), or a unix socket (not scanned).

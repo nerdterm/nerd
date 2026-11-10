@@ -65,7 +65,8 @@ main() {
     [ "$("$bin" --version | awk '{ print $2 }')" = "$want" ] || stop "the built nerd says $("$bin" --version), not $want"
     codesign --force --sign - "$bin"
     name="nerd-$tag-macos-arm64.tar.gz"
-    tar -czf "$work/$name" -C "$work/target/release" nerd
+    # No AppleDouble ._nerd beside it: nerd's Homebrew upgrade refuses any member but nerd.
+    COPYFILE_DISABLE=1 tar -czf "$work/$name" -C "$work/target/release" nerd
     # Signed with the release key, then installed by this tag's own install.sh into a scratch folder: a release its users would refuse never leaves.
     /bin/sh -c "$sign_src" sign-release "$work/$name" "$pin/install"
     PATH=$user_path gh release upload "$tag" --repo nerdterm/nerd "$work/$name" "$work/$name.sha256" "$work/$name.sha256.sig" --clobber

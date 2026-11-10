@@ -26,6 +26,7 @@ line=$(cat "$t/$name.sha256")
 printf '%s' "$line" | grep -Eqx '[0-9a-f]{64}  [^/]+' && [ "$(printf '%s' "$line" | wc -l | tr -d ' ')" = 0 ] && [ "${line#*  }" = "$name" ] \
     || { echo "publish-formula: $tag's checksum is not one line for $name" >&2; exit 1; }
 sha=${line%%  *}
+# formula begin
 formula=$(cat <<EOF
 class Nerd < Formula
   desc "Terminal multiplexer for AI agents"
@@ -52,6 +53,7 @@ class Nerd < Formula
 end
 EOF
 )
+# formula end
 if [ -n "$dry" ]; then
     printf '%s\n' "$formula"
     exit 0

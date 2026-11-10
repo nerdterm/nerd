@@ -158,6 +158,33 @@ perm
 grep -q 'can be written' "$t/out" || bad "a group-writable ~/.local got no warning"
 chmod 755 "$h/.local"
 
+# NERD_INSTALL_VERIFY_ONLY=1, nerd's Homebrew upgrade: the same checks, an archive of nerd alone, and nothing written.
+verify() {
+    rm -rf "$t/bin.verify"
+    env HOME="$t/home" NERD_BINDIR="$t/bin.verify" NERD_INSTALL_VERIFY_ONLY=1 PATH="/usr/bin:/bin:/usr/sbin:/sbin" sh "$t/install.sh" "$1" >"$t/out" 2>&1
+    rc=$?
+    [ ! -e "$t/bin.verify" ] || bad "verify-only wrote the install folder: $2"
+}
+verify "$(release "$g/vgood" 0.99.0 main)" good
+[ "$rc" = 0 ] && grep -qx 'nerd: verified nerd 0.99.0' "$t/out" || bad "verify-only refused a good release: $(cat "$t/out")"
+verify "$(release "$g/vother" 0.99.0 other)" other
+[ "$rc" = 1 ] || bad "verify-only took a release signed by a key not in install.sh"
+verify "$(release "$g/vmoved" 1.2.3 main 'echo "nerd 1.2.0 (test)"')" moved
+[ "$rc" = 1 ] && grep -qx 'nerd: the archive holds nerd 1.2.0, not 1.2.3, nothing installed' "$t/out" || bad "verify-only, another version: $(cat "$t/out")"
+a=$(release "$g/vextra" 0.99.0 main)
+printf x >"$g/vextra/build/extra"
+COPYFILE_DISABLE=1 tar -czf "$a" -C "$g/vextra/build" nerd extra
+(cd "$g/vextra" && shasum -a 256 "$(basename "$a")" >"$(basename "$a").sha256")
+sign "$a.sha256" main
+verify "$a" extra
+[ "$rc" = 1 ] && grep -qx "nerd: this release needs Homebrew's own formula: run brew update && brew upgrade nerd" "$t/out" || bad "verify-only, a file beside nerd: $(cat "$t/out")"
+a=$(release "$g/vname" 0.99.0 main)
+cp "$a" "$g/vname/nerd.tar.gz"
+(cd "$g/vname" && shasum -a 256 nerd.tar.gz >nerd.tar.gz.sha256)
+sign "$g/vname/nerd.tar.gz.sha256" main
+verify "$g/vname/nerd.tar.gz" name
+[ "$rc" = 1 ] && grep -qx 'nerd: not a release archive, nothing installed' "$t/out" || bad "verify-only, a name with no version: $(cat "$t/out")"
+
 if [ "$fail" -eq 0 ]; then
     echo "install.test: install.sh refuses every unsigned or altered release"
 else

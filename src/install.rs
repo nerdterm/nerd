@@ -180,7 +180,7 @@ pub fn source(url: &str, local: bool) -> Result<String, String> {
 }
 
 /// git on PATH, new enough, and never Apple's stub that opens an install dialog; found once, a missing one is looked for again.
-fn git_exe() -> Result<PathBuf, String> {
+pub(crate) fn git_exe() -> Result<PathBuf, String> {
     static FOUND: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     if let Some(exe) = FOUND.get() {
         return Ok(exe.clone());
@@ -198,6 +198,18 @@ fn git_exe() -> Result<PathBuf, String> {
         Some(v) if v >= GIT_MIN => Ok(FOUND.get_or_init(|| exe).clone()),
         _ => Err(format!("{} is older than git {}.{}.{}", text.trim(), GIT_MIN.0, GIT_MIN.1, GIT_MIN.2)),
     }
+}
+
+/// The environment of every git nerd runs: no inherited `GIT_*`, proxy, certificate or askpass variable, and no
+/// home folder or user and system config.
+pub(crate) fn git_env(cmd: &mut std::process::Command) {
+    for (k, _) in std::env::vars_os() {
+        let k = k.to_string_lossy();
+        if k.starts_with("GIT_") || k.eq_ignore_ascii_case("http_proxy") || k.eq_ignore_ascii_case("https_proxy") || k.eq_ignore_ascii_case("all_proxy") || k.eq_ignore_ascii_case("no_proxy") || ["SSL_CERT_FILE", "SSL_CERT_DIR", "CURL_CA_BUNDLE", "XDG_CONFIG_HOME", "SSH_ASKPASS", "SSH_ASKPASS_REQUIRE"].contains(&k.as_ref()) {
+            cmd.env_remove(k.as_ref());
+        }
+    }
+    cmd.env("HOME", "/var/empty").env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1").env("GIT_TERMINAL_PROMPT", "0");
 }
 
 /// Whether git reaches the network.
@@ -218,13 +230,7 @@ fn git(net: Net, dir: Option<&Path>, args: &[&str]) -> Result<Vec<u8>, String> {
         return Err(format!("git {} may not reach the network", args.first().unwrap_or(&"")));
     }
     let mut cmd = crate::spawn::cmd(git_exe()?);
-    for (k, _) in std::env::vars_os() {
-        let k = k.to_string_lossy();
-        if k.starts_with("GIT_") || k.eq_ignore_ascii_case("http_proxy") || k.eq_ignore_ascii_case("https_proxy") || k.eq_ignore_ascii_case("all_proxy") || k.eq_ignore_ascii_case("no_proxy") || ["SSL_CERT_FILE", "SSL_CERT_DIR", "CURL_CA_BUNDLE", "XDG_CONFIG_HOME", "SSH_ASKPASS", "SSH_ASKPASS_REQUIRE"].contains(&k.as_ref()) {
-            cmd.env_remove(k.as_ref());
-        }
-    }
-    cmd.env("HOME", "/var/empty").env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1").env("GIT_TERMINAL_PROMPT", "0");
+    git_env(&mut cmd);
     cmd.args(["--no-pager", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "protocol.allow=never"]);
     if net != Net::No {
         cmd.args(["-c", "transfer.fsckObjects=true", "-c", "protocol.https.allow=always"]);
