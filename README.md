@@ -123,7 +123,7 @@ nerd is checked in Ghostty, Kitty, WezTerm and iTerm2.
 - The installer adds `~/.local/bin` to `PATH` in `~/.zshrc` only. With another shell, add it yourself.
 - Inside tmux or screen, image previews fall back to coloured blocks: neither passes a graphics protocol on. In Ghostty, Kitty and WezTerm, nerd offers to open itself in a new window of the same terminal instead.
 - Exact agent states come from the hook, for the supported agents. For other agents the state is read from their output: it can lag, be wrong, or miss "waiting for you".
-- Codex can serve its windows from a shared background server that outlives the window that started it. Its hooks run there, outside every pane, so nerd takes nothing from them and reads that Codex's state from its output. `codex --no-daemon` runs the hooks in its own pane.
+- A hook that runs outside every pane's process tree is ignored, and that agent's state is read from its output. This covers Codex served by its shared background server (`codex --no-daemon` runs the hooks in its own pane) and an agent inside a tmux or screen started from a pane.
 - After a restart, pane text and layout come back; running processes do not. Pane text is lost if the server is killed with `kill -9` or the Mac loses power.
 
 ## Documentation

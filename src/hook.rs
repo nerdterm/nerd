@@ -798,6 +798,23 @@ pub(crate) fn hook_current(agent: &str) -> bool {
     crate::agents::get(agent).is_some_and(|a| installed(&a, &home) && current(&a, &home))
 }
 
+/// The relayed script for `pane`: nerd identified the pane, so it vouches for it (the daemon is under no broker).
+fn relay_cmd(pane: usize, dir: &std::path::Path, word: &str, from: &str) -> std::process::Command {
+    let mut c = crate::spawn::cmd("/bin/sh");
+    c.arg("-c")
+        .arg(script_for(&format!("{}/", crate::paths::state_root().display())))
+        .arg("hook")
+        .arg(word)
+        .arg(from)
+        .env("NERD_PANE", pane.to_string())
+        .env("NERD_STATE", dir)
+        .env("NERD_HOOK_INSIDE", "1")
+        .env_remove("CLAUDE_CODE_MESSAGING_SOCKET")
+        .env_remove("NERD_MSOCK")
+        .env_remove("NERD_BIN");
+    c
+}
+
 /// Runs the hook for `word` on behalf of pane `pane`, relayed from `from`.
 pub fn run_for(pane: crate::layout::PaneId, word: &str, from: &str, payload: &[u8]) -> std::io::Result<String> {
     use std::io::{Read, Seek, Write};
@@ -815,18 +832,7 @@ pub fn run_for(pane: crate::layout::PaneId, word: &str, from: &str, payload: &[u
         Ok(f)
     };
     let (stdin, mut out) = (unlinked("in", payload)?, unlinked("out", b"")?);
-    let mut child = crate::spawn::cmd("/bin/sh")
-        .arg("-c")
-        .arg(script_for(&format!("{}/", crate::paths::state_root().display())))
-        .arg("hook")
-        .arg(word)
-        .arg(from)
-        .env("NERD_PANE", pane.to_string())
-        .env("NERD_STATE", &dir)
-        .env("NERD_HOOK_INSIDE", "1")
-        .env_remove("CLAUDE_CODE_MESSAGING_SOCKET")
-        .env_remove("NERD_MSOCK")
-        .env_remove("NERD_BIN")
+    let mut child = relay_cmd(pane, &dir, word, from)
         .stdin(stdin)
         .stdout(out.try_clone()?)
         .stderr(std::process::Stdio::null())
@@ -3084,6 +3090,9 @@ console.log("{}")
             let note: Value = serde_json::from_str(&run_for(9, "note", "codex", b"{}").unwrap()).unwrap();
             assert_eq!(note["hookSpecificOutput"]["additionalContext"], NOTE, "an isolated pane's agent gets the note over the relay");
             assert!(std::fs::read_dir(state_dir()).unwrap().flatten().all(|e| !e.file_name().to_string_lossy().contains("relay")), "no payload left behind");
+            // run from nerd's daemon, which is under no broker: without the vouch every relayed pane would write nothing
+            let c = relay_cmd(9, &state_dir(), "working", "codex");
+            assert!(c.get_envs().any(|(k, v)| k == "NERD_HOOK_INSIDE" && v == Some(std::ffi::OsStr::new("1"))));
         });
     }
 

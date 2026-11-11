@@ -3907,6 +3907,18 @@ mod tests {
             let kind = if down { MouseEventKind::Down(MouseButton::Left) } else { MouseEventKind::Up(MouseButton::Left) };
             app.mouse(MouseEvent { kind, column, row, modifiers: KeyModifiers::NONE }, app.screen);
         };
+        // everything written until the pane goes quiet; an SGR release ends in `m`, a press in `M`
+        let drain = |s: &mut std::os::unix::net::UnixStream| {
+            let mut all = Vec::new();
+            loop {
+                let b = written(s);
+                if b.is_empty() {
+                    break all;
+                }
+                all.extend(b);
+            }
+        };
+        let release = |b: &[u8]| String::from_utf8_lossy(b).split("\x1b[<").any(|e| e.ends_with('m'));
         // the "Search in pane" row of the pane menu, opened over the pane
         let item = |app: &mut App| {
             app.overlay = app.pane_menu(1, (70, 3));
@@ -3919,16 +3931,16 @@ mod tests {
         app.overlay = Overlay::None;
         click(&mut app, true, at);
         click(&mut app, false, at);
-        assert!(!written(&mut pane).is_empty(), "with no menu the press and the release are the program's: the spot is over the pane");
+        assert!(release(&drain(&mut pane)), "with no menu the press and the release are the program's: the spot is over the pane");
         let at = item(&mut app);
         click(&mut app, true, at);
         assert!(!matches!(app.overlay, Overlay::Menu(..)), "the menu acts on the press and closes");
         click(&mut app, false, at);
-        assert_eq!(written(&mut pane), Vec::<u8>::new(), "the release of a press nerd's menu took never reaches the program");
+        assert!(!release(&drain(&mut pane)), "the release of a press nerd's menu took never reaches the program");
         app.overlay = Overlay::None;
         click(&mut app, true, at);
         click(&mut app, false, at);
-        assert!(!written(&mut pane).is_empty(), "a press the program takes is followed by its release again");
+        assert!(release(&drain(&mut pane)), "a press the program takes is followed by its release again");
     }
 
     #[test]
