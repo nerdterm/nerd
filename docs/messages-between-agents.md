@@ -39,7 +39,7 @@ Above 20 KiB only the first 2 KiB is delivered, with `nerd inbox --show <id>` fo
 | Agent | How the message reaches it |
 |---|---|
 | Claude Code | Its inbox socket, when its session reported one and a process of that pane listens on it; otherwise its hook |
-| Codex | Its hook |
+| Codex | Its hook. A Codex served by its shared background server runs its hooks outside the pane; then typing when idle, and `codex --no-daemon` for the hook |
 | Qwen | Its hook |
 | Copilot | Its hook: `block` at Stop |
 | Gemini | Its hook: `deny` at AfterAgent |
@@ -48,7 +48,7 @@ Above 20 KiB only the first 2 KiB is delivered, with `nerd inbox --show <id>` fo
 
 An agent with no better path gets the message typed in, only while it is idle and is the program in front of its terminal. Nothing is ever typed into a pane waiting for your answer. A question that comes up after the message was typed holds its Enter for as long as it shows; once it is gone, Enter goes in only if the agent is idle and in front and nobody typed into the pane since. Otherwise, or when nerd was updated in place in between, the message stays typed in the agent's input, not sent: it counts as delivered, with the note "typed, not submitted" in `messages.jsonl` and a line in `daemon.log`, and is never typed a second time. After nerd stopped or crashed in between, the pane and what was typed into it are gone, and the message still counts as delivered. `via` in the Messages window says which path was used.
 
-**What an agent is told.** So that an agent uses these messages rather than a tool of its own, nerd hands it one fixed note: Claude Code, Codex, Gemini and Qwen get it from nerd's hook at the start of each session (a resumed or forked session keeps the note it had; Qwen is given it again), pi and OpenCode from nerd's extension as part of their system prompt. It goes to the agent's provider with the rest of the session and holds nothing about you or the pane. Word for word:
+**What an agent is told.** So that an agent uses these messages rather than a tool of its own, nerd hands it one fixed note: Claude Code, Codex, Gemini and Qwen get it from nerd's hook at the start of each session (a resumed or forked session keeps the note it had; Qwen is given it again; a Codex served by its shared background server gets none), pi and OpenCode from nerd's extension as part of their system prompt. It goes to the agent's provider with the rest of the session and holds nothing about you or the pane. Word for word:
 
 > You are running in a pane of nerd, a terminal multiplexer. Other agents can be reached through the messages of nerd: nerd agents shows the name of this pane and whom it may write to, nerd send NAME "text" writes, nerd inbox reads, nerd send --reply ID "text" answers. When nerd agents shows that this pane has a name, prefer these to any other way of reaching another session: the person sees and controls these messages. A pane without a name can neither send nor receive.
 

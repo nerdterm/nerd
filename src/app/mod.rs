@@ -89,6 +89,8 @@ pub struct App {
     word_anchor: Option<((u16, u16), (u16, u16))>,
     /// The line of a triple-click: a drag after it grows whole lines at a time.
     line_anchor: Option<u16>,
+    /// The pane whose program got the last button press: only it gets the drag and the release that follow.
+    pane_press: Option<PaneId>,
     /// Collapsed worktree groups, keyed by shared `.git` directory.
     pub collapsed_groups: HashSet<PathBuf>,
     /// Who reports `blocked`/`done` for panes out of focus.
@@ -329,6 +331,7 @@ impl App {
             reply: None,
             word_anchor: None,
             line_anchor: None,
+            pane_press: None,
             collapsed_groups: HashSet::new(),
             notifier: crate::notify::Notifier::new(),
             search: None,
@@ -3886,6 +3889,58 @@ mod tests {
         use std::io::Read;
         let mut b = [0u8; 64];
         s.read(&mut b).map(|n| b[..n].to_vec()).unwrap_or_default()
+    }
+
+    #[test]
+    fn a_click_on_a_menu_item_keeps_its_release_from_the_pane_under_it() {
+        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+        let mut app = with_one_space();
+        let mut pane = listening_pane(&mut app);
+        app.pane_mut(1).unwrap().term.feed(b"\x1b[?1000h\x1b[?1006h");
+        app.screen = Rect::new(0, 0, 120, 30);
+        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 30)).unwrap();
+        term.draw(|f| {
+            crate::ui::frame(f, &mut app);
+        })
+        .unwrap();
+        let click = |app: &mut App, down: bool, (column, row): (u16, u16)| {
+            let kind = if down { MouseEventKind::Down(MouseButton::Left) } else { MouseEventKind::Up(MouseButton::Left) };
+            app.mouse(MouseEvent { kind, column, row, modifiers: KeyModifiers::NONE }, app.screen);
+        };
+        // everything written until the pane goes quiet; an SGR release ends in `m`, a press in `M`
+        let drain = |s: &mut std::os::unix::net::UnixStream| {
+            let mut all = Vec::new();
+            loop {
+                let b = written(s);
+                if b.is_empty() {
+                    break all;
+                }
+                all.extend(b);
+            }
+        };
+        let release = |b: &[u8]| String::from_utf8_lossy(b).split("\x1b[<").any(|e| e.ends_with('m'));
+        // the "Search in pane" row of the pane menu, opened over the pane
+        let item = |app: &mut App| {
+            app.overlay = app.pane_menu(1, (70, 3));
+            let Overlay::Menu(m, _) = &app.overlay else { panic!("a menu") };
+            let r = m.rect(app.screen);
+            let row = (r.y..r.bottom()).find(|y| m.points_at(app.screen, r.x + 2, *y)).expect("an item to click");
+            (r.x + 2, row)
+        };
+        let at = item(&mut app);
+        app.overlay = Overlay::None;
+        click(&mut app, true, at);
+        click(&mut app, false, at);
+        assert!(release(&drain(&mut pane)), "with no menu the press and the release are the program's: the spot is over the pane");
+        let at = item(&mut app);
+        click(&mut app, true, at);
+        assert!(!matches!(app.overlay, Overlay::Menu(..)), "the menu acts on the press and closes");
+        click(&mut app, false, at);
+        assert!(!release(&drain(&mut pane)), "the release of a press nerd's menu took never reaches the program");
+        app.overlay = Overlay::None;
+        click(&mut app, true, at);
+        click(&mut app, false, at);
+        assert!(release(&drain(&mut pane)), "a press the program takes is followed by its release again");
     }
 
     #[test]

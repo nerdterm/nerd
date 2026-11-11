@@ -57,7 +57,7 @@ const ALLOW: &[(&str, &str, &str, &str, &str, &str)] = &[
     ("src/app/input.rs", "mouse", "pty-write", "", "pane", "your mouse, to a program that asked for it"),
     ("src/app/input.rs", "paste_into", "pty-write", "", "pane", "what you paste, and a message nerd types into an idle agent's pane, its frame first"),
     ("src/app/deliver.rs", "submit_typed", "pty-write", "", "pane", "the carriage return 150 ms after a typed message"),
-    ("src/hook.rs", "run_for", "spawn", "\"/bin/sh\"", "pane", "the hook's answer for an isolated pane: a waiting message or nerd's note, handed to the agent"),
+    ("src/hook.rs", "relay_cmd", "spawn", "\"/bin/sh\"", "pane", "the hook's answer for an isolated pane: a waiting message or nerd's note, handed to the agent"),
     // local: these never leave the Mac.
     ("src/app/remote.rs", "open_outside_tmux", "pty-spawn", "", "local", "opens a terminal window for a nerd on this Mac"),
     ("src/app/commands.rs", "perform", "spawn", "\"/usr/bin/open\" -R", "local", "Show in Finder"),

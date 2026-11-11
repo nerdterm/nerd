@@ -698,6 +698,18 @@ impl App {
         if matches!(ev.kind, MouseEventKind::Down(_)) {
             self.dirty |= std::mem::take(&mut self.prefix);
         }
+        // A press nerd's own menus, windows and areas took keeps its drag and release from the pane under them:
+        // a menu that acts on the press and closes would hand the release to the program, which redraws on it.
+        // Set again only where a press is forwarded to a pane's program.
+        let press = match ev.kind {
+            MouseEventKind::Down(_) => {
+                self.pane_press = None;
+                None
+            }
+            MouseEventKind::Drag(_) => self.pane_press,
+            MouseEventKind::Up(_) => self.pane_press.take(),
+            _ => None,
+        };
         if self.overlay.is_open() {
             self.overlay_mouse(ev, screen);
             return;
@@ -875,7 +887,10 @@ impl App {
                 // The program grabbed the mouse, but focus is still ours, or a pane running claude couldn't be reached with a click.
                 if matches!(ev.kind, MouseEventKind::Down(_)) {
                     self.focus_pane(id);
+                    self.pane_press = Some(id);
                     self.dirty = true;
+                } else if matches!(ev.kind, MouseEventKind::Drag(_) | MouseEventKind::Up(_)) && press != Some(id) {
+                    return;
                 }
                 if let Some(p) = self.tab_mut().and_then(|t| t.panes.get_mut(&id)) {
                     p.pty.write(&bytes);
