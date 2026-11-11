@@ -377,6 +377,21 @@ fi
 # An isolated pane cannot write nerd's state directory: nerd runs this script for it, over its message socket.
 [ -z "$NERD_STATE" ] && [ -n "$NERD_MSOCK" ] && case "$NERD_BIN" in /*) true ;; *) false ;; esac && exec "$NERD_BIN" --hook-relay "$1" "$2"
 [ -n "$NERD_PANE" ] && [ -n "$NERD_STATE" ] || exit 0
+# Only a hook run from inside a nerd pane speaks for one. Codex's shared app-server is started from one pane, outlives
+# it, and runs the hooks of every Codex window with that pane's variables: from there nothing is written, never for
+# the wrong pane. nerd itself sets NERD_HOOK_INSIDE when it runs this for an isolated pane it has already identified.
+inside() {
+  hp=$PPID; hn=0
+  while [ "$hn" -lt 16 ] && [ "${hp:-1}" -gt 1 ]; do
+    hl=$(ps -o ppid=,args= -p "$hp" 2>/dev/null)
+    hl=${hl#"${hl%%[! ]*}"}
+    [ -n "$hl" ] || return 1
+    ha=${hl#* }
+    case "$ha" in *" --broker") he=${ha% --broker}; case "${he##*/}" in nerd*) return 0 ;; esac ;; esac
+    hp=${hl%% *}; hn=$((hn + 1))
+  done
+  return 1; }
+[ "$NERD_HOOK_INSIDE" = 1 ] || inside || exit 0
 # Writes go only under nerd's own state directory: a pane number, and an absolute path below the
 # root this script was installed for, with no `..` and no control characters.
 root=@ROOT@
@@ -808,6 +823,7 @@ pub fn run_for(pane: crate::layout::PaneId, word: &str, from: &str, payload: &[u
         .arg(from)
         .env("NERD_PANE", pane.to_string())
         .env("NERD_STATE", &dir)
+        .env("NERD_HOOK_INSIDE", "1")
         .env_remove("CLAUDE_CODE_MESSAGING_SOCKET")
         .env_remove("NERD_MSOCK")
         .env_remove("NERD_BIN")
@@ -1250,7 +1266,7 @@ pub(crate) mod tests {
 
         fn spawn_as(&self, word: &str, agent: &str, json: &str) -> std::process::Child {
             std::process::Command::new("/bin/sh")
-                .args(["-c", &script_for(&test_root()), "hook", word])
+                .args(["-c", &script_for(&test_root()), "hook", word]).env("NERD_HOOK_INSIDE", "1")
                 .args((!agent.is_empty()).then_some(agent))
                 .env("NERD_PANE", "7")
                 .env("NERD_STATE", &self.0)
@@ -1594,6 +1610,52 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_hook_run_outside_every_pane_writes_for_none() {
+        use std::os::unix::fs::PermissionsExt;
+        let h = Hook::new("inside");
+        std::fs::create_dir_all(&h.0).unwrap();
+        std::fs::write(h.0.join("hook.sh"), script_for(&test_root())).unwrap();
+        let hook = format!("/bin/sh {:?} working < /dev/null", h.0.join("hook.sh"));
+        // `command`, run by a shell whose parent has left, as a daemon's is: the test itself may run in a nerd pane
+        let detached = |command: &str| {
+            let done = h.0.join("done");
+            let _ = std::fs::remove_file(&done);
+            let inner = format!("sleep 0.3; {command}; touch {done:?}");
+            let out = std::process::Command::new("/bin/sh")
+                .arg("-c")
+                .arg(format!("( /bin/sh -c '{}' & )", inner.replace('\'', "'\\''")))
+                .env("NERD_PANE", "7")
+                .env("NERD_STATE", &h.0)
+                .env_remove("NERD_HOOK_INSIDE")
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+            let t = std::time::Instant::now();
+            while !done.exists() {
+                assert!(t.elapsed() < std::time::Duration::from_secs(10), "{command} did not finish");
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            let word = h.word();
+            let _ = std::fs::remove_file(h.0.join("7"));
+            word
+        };
+        // a process named as nerd's broker, which runs the hook as its child: a pane's process tree
+        let wrapper = |name: &str, flag: &str| {
+            let dir = h.0.join(format!("bin-{name}{flag}"));
+            std::fs::create_dir_all(&dir).unwrap();
+            let w = dir.join(name);
+            std::fs::write(&w, format!("#!/bin/sh\n{hook}\ns=$?\nexit $s\n")).unwrap();
+            std::fs::set_permissions(&w, std::fs::Permissions::from_mode(0o700)).unwrap();
+            detached(&format!("{:?} {flag}", w))
+        };
+        assert_eq!(detached(&hook), "", "Codex's shared app-server, from a pane long gone: its variables name pane 7, its tree no pane");
+        assert_eq!(wrapper("nerd", "--daemon"), "", "nerd's own server is no pane");
+        assert_eq!(wrapper("broker", "--broker"), "", "a program that only calls itself broker");
+        assert_eq!(wrapper("nerd", "--broker"), "working", "under nerd's broker, as every pane's program is");
+        assert_eq!(wrapper("nerd-fix5", "--broker"), "working", "a nerd installed under another name");
+    }
+
+    #[test]
     fn a_silent_subagent_after_its_agent_ended_the_turn_is_not_running() {
         let h = Hook::new("lost");
         h.run("working", "{}");
@@ -1854,7 +1916,7 @@ pub(crate) mod tests {
         std::fs::create_dir_all(&h.0).unwrap();
         std::fs::write(h.0.join("hook.sh"), script_for(&test_root())).unwrap();
         let run = r#"require("child_process").spawnSync("/usr/bin/env", ["-u", "NERD_PANE", "-u", "NERD_STATE", "/bin/sh", process.argv[1], "working", "gemini"], { input: "{}" })"#;
-        let out = std::process::Command::new(node).args(["-e", run]).arg(h.0.join("hook.sh")).env("NERD_PANE", "7").env("NERD_STATE", h.0.join("with space")).output().unwrap();
+        let out = std::process::Command::new(node).args(["-e", run]).env("NERD_HOOK_INSIDE", "1").arg(h.0.join("hook.sh")).env("NERD_PANE", "7").env("NERD_STATE", h.0.join("with space")).output().unwrap();
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
         let word = std::fs::read_to_string(h.0.join("with space").join("7")).unwrap_or_default();
         assert_eq!(word.trim(), "working", "a state directory with a space in it survives the walk");
@@ -2132,7 +2194,7 @@ console.log(process.title)
     /// Runs the script for `word` accepting only `root`, with only the pane variables given; what it printed.
     fn run_guarded(root: &Path, word: &str, pane: &str, state: &str, cwd: &Path) -> String {
         let out = hermetic(&mut std::process::Command::new("/bin/sh"))
-            .args(["-c", &script_for(&format!("{}/", root.display())), "hook", word])
+            .args(["-c", &script_for(&format!("{}/", root.display())), "hook", word]).env("NERD_HOOK_INSIDE", "1")
             .env("NERD_PANE", pane)
             .env("NERD_STATE", state)
             .current_dir(cwd)
@@ -2208,7 +2270,7 @@ console.log(process.title)
         let run = r#"const r = require("child_process").spawnSync("/usr/bin/env", ["-u", "NERD_PANE", "NERD_BIN=nerd", "/bin/sh", process.argv[1], "note", "codex"], { input: "{}" }); process.stdout.write(r.stdout)"#;
         let note_with = |state: Option<&str>| {
             let mut c = std::process::Command::new(&node);
-            hermetic(&mut c).args(["-e", run]).arg(h.0.join("hook.sh")).env("NERD_PANE", "7").current_dir(&h.0);
+            hermetic(&mut c).args(["-e", run]).env("NERD_HOOK_INSIDE", "1").arg(h.0.join("hook.sh")).env("NERD_PANE", "7").current_dir(&h.0);
             if let Some(s) = state {
                 c.env("NERD_STATE", s);
             }
@@ -2307,7 +2369,7 @@ console.log(JSON.stringify({ before, main: await sys("m"), child: await sys("ses
         let root = state_root(&h.0);
         let sibling = format!("{}-x/agents", root.trim_end_matches('/'));
         let mut child = std::process::Command::new("/bin/sh")
-            .args(["-c", &script_for(&root), "hook", "working"])
+            .args(["-c", &script_for(&root), "hook", "working"]).env("NERD_HOOK_INSIDE", "1")
             .env("NERD_PANE", "7")
             .env("NERD_STATE", &sibling)
             .stdin(stdin_of(b"{}"))
@@ -2337,7 +2399,7 @@ console.log(JSON.stringify({ before, main: await sys("m"), child: await sys("ses
         std::fs::write(h.0.join("hook.sh"), script_for(&format!("{}/", root.display()))).unwrap();
         let run = r#"require("child_process").spawnSync("/usr/bin/env", ["-u", "NERD_PANE", "-u", "NERD_STATE", "/bin/sh", process.argv[1], "working"], { input: "{}" })"#;
         let junk = format!("x NERD_STATE={}/evil NERD_PANE=7", h.0.display());
-        let out = std::process::Command::new(node).args(["-e", run]).arg(h.0.join("hook.sh")).env_remove("NERD_PANE").env_remove("NERD_STATE").env("JUNK", junk).output().unwrap();
+        let out = std::process::Command::new(node).args(["-e", run]).env("NERD_HOOK_INSIDE", "1").arg(h.0.join("hook.sh")).env_remove("NERD_PANE").env_remove("NERD_STATE").env("JUNK", junk).output().unwrap();
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
         assert!(!h.0.join("evil").exists(), "a path outside nerd's root is never written");
     }
@@ -2824,7 +2886,7 @@ console.log("{}")
         let payload = r#"{"session_id":"s1","hook_event_name":"Stop"}"#;
         for (word, agent) in [("idle", Some("codex")), ("working", None)] {
             let mut child = std::process::Command::new("/bin/sh")
-                .args(["-c", &script_for(&test_root()), "hook", word])
+                .args(["-c", &script_for(&test_root()), "hook", word]).env("NERD_HOOK_INSIDE", "1")
                 .args(agent)
                 .env("NERD_PANE", "7")
                 .env("NERD_STATE", h.0.join("agents"))
@@ -2859,7 +2921,7 @@ console.log("{}")
         /// What the script prints for `word`.
         fn say(&self, word: &str, agent: &str, json: &str) -> String {
             let child = std::process::Command::new("/bin/sh")
-                .args(["-c", &script_for(&test_root()), "hook", word, agent])
+                .args(["-c", &script_for(&test_root()), "hook", word, agent]).env("NERD_HOOK_INSIDE", "1")
                 .env("NERD_PANE", "7")
                 .env("NERD_STATE", &self.0)
                 .stdin(stdin_of(json.as_bytes()))
@@ -2949,7 +3011,7 @@ console.log("{}")
         let h = Hook::new("inbox");
         let run = |agent: &str, sock: &str, event: &str| {
             let mut child = std::process::Command::new("/bin/sh")
-                .args(["-c", &script_for(&test_root()), "hook", "idle"])
+                .args(["-c", &script_for(&test_root()), "hook", "idle"]).env("NERD_HOOK_INSIDE", "1")
                 .args((!agent.is_empty()).then_some(agent))
                 .env("NERD_PANE", "7")
                 .env("NERD_STATE", &h.0)
@@ -3006,7 +3068,7 @@ console.log("{}")
             return;
         };
         let run = r#"require("child_process").spawnSync("/usr/bin/env", ["-u", "NERD_PANE", "-u", "NERD_MSOCK", "-u", "NERD_BIN", "/bin/sh", process.argv[1], "working", "gemini"], { input: "{}" })"#;
-        let out = std::process::Command::new(node).args(["-e", run]).arg(&script).env("NERD_PANE", "7").env_remove("NERD_STATE").env("NERD_MSOCK", "/tmp/nerd-x.msock").env("NERD_BIN", &bin).output().unwrap();
+        let out = std::process::Command::new(node).args(["-e", run]).env("NERD_HOOK_INSIDE", "1").arg(&script).env("NERD_PANE", "7").env_remove("NERD_STATE").env("NERD_MSOCK", "/tmp/nerd-x.msock").env("NERD_BIN", &bin).output().unwrap();
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
         assert_eq!(relayed(), ("--hook-relay|working|gemini|".to_string(), "{}".to_string()));
     }
