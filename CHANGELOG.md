@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.22.0](https://github.com/nerdterm/nerd/compare/v0.21.0...v0.22.0) (2026-11-11)
+
+
+### Added
+
+* a Homebrew-installed nerd upgrades from the release window ([#191](https://github.com/nerdterm/nerd/issues/191)) ([02c9c8a](https://github.com/nerdterm/nerd/commit/02c9c8a5b517e4c08be5cdea545d421c55ae0b4d))
+
+
+### Fixed
+
+* a menu click keeps its release from the pane, and a hook outside every pane writes for none ([#196](https://github.com/nerdterm/nerd/issues/196)) ([9ade0da](https://github.com/nerdterm/nerd/commit/9ade0da346aa202db38d78d41a34a1edad4a7ad9))
+
 ## [0.21.0](https://github.com/nerdterm/nerd/compare/v0.20.0...v0.21.0) (2026-11-08)
 
 
