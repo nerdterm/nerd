@@ -315,6 +315,9 @@ const RUN_LATER_DIRS: &[&str] = &[
     // The system Python's bytecode, Homebrew's downloads and bootsnap, compiler caches, downloaded build tools.
     "Library/Caches/com.apple.python", "Library/Caches/Homebrew", "Library/Caches/ccache", "Library/Caches/Mozilla.sccache", "Library/Caches/esbuild",
     "Library/Caches/bazelisk", "Library/Caches/Coursier",
+    // Homebrew's settings: brew.env, which every brew run loads, trust.json, its tap trust list, and services/<formula>.env, loaded into launchd jobs.
+    // ceiling: brew reads `$XDG_CONFIG_HOME/homebrew` (or `$HOMEBREW_XDG_CONFIG_HOME/homebrew`) instead when set, so a value other than `~/.config` is not covered; reading the variable is the way past.
+    ".homebrew", ".config/homebrew",
     // Agents' own: sourced before each command, ahead on PATH, downloaded tools, git repos the agent runs git in, tasks other sessions take up.
     ".claude/shell-snapshots", ".claude/session-env", ".codex/shell_snapshots", ".codex/tmp", ".codex/.tmp", ".gemini/tmp/bin", ".gemini/history", ".local/share/opencode/snapshot", ".claude/tasks",
     // Terminals' configs, which start programs and which `nerd --preset` edits.
@@ -853,6 +856,7 @@ mod tests {
              (subpath \"/Users/u/Library/Caches/pip\") (subpath \"/Users/u/Library/Caches/Cypress\") (subpath \"/Users/u/Library/Caches/org.swift.swiftpm\") (subpath \"/Users/u/Library/Caches/copilot\") (subpath \"/Users/u/go/pkg/mod\") \
              (subpath \"/Users/u/Library/Caches/com.apple.python\") (subpath \"/Users/u/Library/Caches/Homebrew\") (subpath \"/Users/u/Library/Caches/ccache\") (subpath \"/Users/u/Library/Caches/Mozilla.sccache\") (subpath \"/Users/u/Library/Caches/esbuild\") \
              (subpath \"/Users/u/Library/Caches/bazelisk\") (subpath \"/Users/u/Library/Caches/Coursier\") \
+             (subpath \"/Users/u/.homebrew\") (subpath \"/Users/u/.config/homebrew\") \
              (subpath \"/Users/u/.claude/shell-snapshots\") (subpath \"/Users/u/.claude/session-env\") (subpath \"/Users/u/.codex/shell_snapshots\") (subpath \"/Users/u/.codex/tmp\") (subpath \"/Users/u/.codex/.tmp\") (subpath \"/Users/u/.gemini/tmp/bin\") (subpath \"/Users/u/.gemini/history\") (subpath \"/Users/u/.local/share/opencode/snapshot\") (subpath \"/Users/u/.claude/tasks\") \
              (subpath \"/Users/u/.config/ghostty\") (subpath \"/Users/u/Library/Application Support/com.mitchellh.ghostty\") (subpath \"/Users/u/.config/kitty\") (subpath \"/Users/u/.config/wezterm\") (subpath \"/Users/u/Library/Application Support/iTerm2/DynamicProfiles\") (subpath \"/Users/u/.claude/hooks\") \
              (literal \"/Users/u/.local/bin/nerd\") (literal \"/Users/u/.zshrc\") (literal \"/Users/u/.zprofile\") (literal \"/Users/u/.zshenv\") (literal \"/Users/u/.zlogin\") (literal \"/Users/u/.zlogout\") (literal \"/Users/u/.bashrc\") (literal \"/Users/u/.bash_profile\") (literal \"/Users/u/.bash_login\") (literal \"/Users/u/.bash_logout\") (literal \"/Users/u/.profile\") (literal \"/Users/u/.gitconfig\") (literal \"/Users/u/.netrc\") (literal \"/Users/u/.npmrc\") (literal \"/Users/u/.cargo/config.toml\") (literal \"/Users/u/.vimrc\") (literal \"/Users/u/.tmux.conf\") (literal \"/Users/u/.emacs\") (literal \"/Users/u/.wezterm.lua\") (literal \"/Users/u/.claude/settings.json\") (literal \"/Users/u/.1p/agent.sock\") \
