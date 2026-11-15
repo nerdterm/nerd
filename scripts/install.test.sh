@@ -196,7 +196,7 @@ ran "$v" "verify-only" 1
 rm -rf "$v"
 env HOME="$t/home" NERD_BINDIR="$v" NERD_INSTALL_VERIFY_ONLY=1 PATH="/usr/bin:/bin:/usr/sbin:/sbin" sh "$t/install.sh" "$g/vgood/nerd-v0.99.0-macos-arm64.tar.gz" >"$t/out" 2>&1
 rc=$?
-[ "$rc" = 1 ] && [ ! -e "$v" ] && grep -qF "$v" "$t/out" || bad "verify-only with no folder: rc $rc, $(cat "$t/out")"
+[ "$rc" = 1 ] && [ ! -e "$v" ] && grep -qxF "nerd: $v is not a folder, nothing checked" "$t/out" || bad "verify-only with no folder: rc $rc, $(cat "$t/out")"
 verify "$(release "$g/vother" 0.99.0 other)" other
 [ "$rc" = 1 ] || bad "verify-only took a release signed by a key not in install.sh"
 verify "$(release "$g/vmoved" 1.2.3 main 'echo "nerd 1.2.0 (test)"')" moved
