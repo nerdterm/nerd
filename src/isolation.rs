@@ -386,10 +386,12 @@ fn text(p: &Places, files: &Files, network: &Network, cwd: &Path, msock: &Path, 
     let mux = p.mux.as_ref().map(|m| quote(&canon(m.parent().unwrap_or(Path::new("/"))).join(m.file_name().unwrap_or_default()))).transpose()?;
     let mux_allow = |op: &str| mux.as_ref().map_or(String::new(), |m| format!("(allow {op} (subpath {m}))\n"));
     let tmp_re = crate::plugins::regex_escape(&tmp.to_string_lossy());
-    // Where tmux, Zellij and screen keep sockets other programs trust: a pane may neither plant nor reach one there.
+    // Where tmux, Zellij, screen and shared daemons (Codex's) keep sockets other programs trust: a pane may neither plant nor reach one there.
+    // ceiling: sockets in temp folders are refused by name, so another program's daemon or a renamed Codex stays reachable; deny-by-default unix sockets with an allowlist (msock, DNS) is the way past.
     let muxes = format!(
         " (regex #\"^/private/tmp/tmux-[0-9]+(/|$)\") (regex #\"^/private/tmp/zellij-[0-9]+(/|$)\") (regex #\"^/private/tmp/u?screens(/|$)\") \
-         (regex #\"^{tmp_re}/zellij-[0-9]+(/|$)\") (regex #\"^{tmp_re}/\\.screen(/|$)\") (regex #\"^{tmp_re}/nm[0-9]+(/|$)\"){}",
+         (regex #\"^{tmp_re}/zellij-[0-9]+(/|$)\") (regex #\"^{tmp_re}/\\.screen(/|$)\") (regex #\"^{tmp_re}/nm[0-9]+(/|$)\") \
+         (regex #\"^/private/tmp/codex-daemon-[0-9]+(/|$)\") (regex #\"^{tmp_re}/codex-daemon-[0-9]+(/|$)\") (regex #\"^/private/tmp/codex-rc-[^/]+(/|$)\") (regex #\"^{tmp_re}/codex-rc-[^/]+(/|$)\"){}",
         rules("subpath", p.outer.iter().cloned())?
     );
     // Allow default: a pane needs its tty. The last matching rule wins, so the denies after the allows hold.
@@ -479,7 +481,7 @@ fn text(p: &Places, files: &Files, network: &Network, cwd: &Path, msock: &Path, 
     }
     match network {
         Network::Open if *files == Files::Folder => {
-            // DNS's own socket must keep working, so unix sockets are denied by place; Codex's daemon runs its tools outside the pane, an ssh agent signs and Docker runs as the owner.
+            // DNS's own socket must keep working, so unix sockets are denied by place; Codex's daemon (in /private/tmp, ~/.codex or $TMPDIR, where Codex may put it) runs its tools outside the pane, an ssh agent signs and Docker runs as the owner.
             let run = canon(&p.run);
             out += &format!(
                 "(deny network-outbound (regex #\"^/private/tmp/cc-socks\") (regex #\"^{tmp_re}/cc-socks\") (regex #\"^{}/com\\.apple\\.launchd\\.[^/]+/Listeners$\"){muxes}{}{})\n\
@@ -859,7 +861,8 @@ mod tests {
              (deny file-write-create {above})\n\
              (deny file-write-create (require-all (vnode-type SYMLINK) (require-any {parents})))\n\
              (deny file-write* (regex #\"^/private/tmp/tmux-[0-9]+(/|$)\") (regex #\"^/private/tmp/zellij-[0-9]+(/|$)\") (regex #\"^/private/tmp/u?screens(/|$)\") \
-             (regex #\"^/private/var/folders/ab/T/zellij-[0-9]+(/|$)\") (regex #\"^/private/var/folders/ab/T/\\.screen(/|$)\") (regex #\"^/private/var/folders/ab/T/nm[0-9]+(/|$)\") (subpath \"/k/kitty.sock\") \
+             (regex #\"^/private/var/folders/ab/T/zellij-[0-9]+(/|$)\") (regex #\"^/private/var/folders/ab/T/\\.screen(/|$)\") (regex #\"^/private/var/folders/ab/T/nm[0-9]+(/|$)\") \
+             (regex #\"^/private/tmp/codex-daemon-[0-9]+(/|$)\") (regex #\"^/private/var/folders/ab/T/codex-daemon-[0-9]+(/|$)\") (regex #\"^/private/tmp/codex-rc-[^/]+(/|$)\") (regex #\"^/private/var/folders/ab/T/codex-rc-[^/]+(/|$)\") (subpath \"/k/kitty.sock\") \
              (subpath \"/Users/u/.local/share/wezterm\") (subpath \"/Users/u/Library/Application Support/iTerm2\") (subpath \"/Users/u/.screen\"))\n\
              (allow file-write* (subpath \"/private/var/folders/ab/T/nm7\"))\n\
              (deny file-read-data (subpath \"/Users/u/.ssh\") (subpath \"/Users/u/.aws\") (subpath \"/Users/u/.gnupg\") (subpath \"/Users/u/.netrc\") (subpath \"/Users/u/.docker\") (subpath \"/Users/u/.kube\") (subpath \"/Users/u/.azure\") (subpath \"/Users/u/.config/gh\") (subpath \"/Users/u/.config/gcloud\") (subpath \"/Users/u/Library/Mail\") (subpath \"/Users/u/Library/Messages\") (subpath \"/Users/u/Library/Cookies\") (subpath \"/Users/u/Library/Application Support/nerd\"))\n"
@@ -875,7 +878,8 @@ mod tests {
             format!(
                 "{head}{folder}(deny network-outbound (regex #\"^/private/tmp/cc-socks\") (regex #\"^/private/var/folders/ab/T/cc-socks\") (regex #\"^/private/var/run/com\\.apple\\.launchd\\.[^/]+/Listeners$\") \
                  (regex #\"^/private/tmp/tmux-[0-9]+(/|$)\") (regex #\"^/private/tmp/zellij-[0-9]+(/|$)\") (regex #\"^/private/tmp/u?screens(/|$)\") \
-                 (regex #\"^/private/var/folders/ab/T/zellij-[0-9]+(/|$)\") (regex #\"^/private/var/folders/ab/T/\\.screen(/|$)\") (regex #\"^/private/var/folders/ab/T/nm[0-9]+(/|$)\") (subpath \"/k/kitty.sock\") \
+                 (regex #\"^/private/var/folders/ab/T/zellij-[0-9]+(/|$)\") (regex #\"^/private/var/folders/ab/T/\\.screen(/|$)\") (regex #\"^/private/var/folders/ab/T/nm[0-9]+(/|$)\") \
+                 (regex #\"^/private/tmp/codex-daemon-[0-9]+(/|$)\") (regex #\"^/private/var/folders/ab/T/codex-daemon-[0-9]+(/|$)\") (regex #\"^/private/tmp/codex-rc-[^/]+(/|$)\") (regex #\"^/private/var/folders/ab/T/codex-rc-[^/]+(/|$)\") (subpath \"/k/kitty.sock\") \
                  (literal \"/private/var/run/docker.sock\") (literal \"/Users/u/.1p/agent.sock\") (subpath \"/Users/u/Library/Application Support/nerd\") (subpath \"/Users/u/.codex\") (subpath \"/private/var/folders/ab/T/podman\") \
                  (subpath \"/Users/u/.ssh\") (subpath \"/Users/u/.docker\") (subpath \"/Users/u/Library/Containers/com.docker.docker\") (subpath \"/Users/u/.colima\") (subpath \"/Users/u/.orbstack\") (subpath \"/Users/u/.rd\") (subpath \"/Users/u/.lima\") \
                  (subpath \"/Users/u/Library/Application Support/rancher-desktop\") (subpath \"/Users/u/.local/share/containers/podman\") (subpath \"/Users/u/Library/Group Containers/2BUA8C4S2C.com.1password/t\") \
@@ -1460,9 +1464,28 @@ mod tests {
             "home/.local/share/wezterm/gui-sock-1", "home/Library/Application Support/iTerm2/private/socket", "home/.screen/s", "tmp/zellij-501/s", "tmp/.screen/s", "tmp/nm1/s", "kitty/k.sock"]
             .map(|p| base.join(p)).to_vec();
         let zellij_here = base.join(format!("tmp/zellij-{}{}", u32::MAX, std::process::id()));
+        // Codex's shared daemon and its remote control, where Codex puts them by default.
+        let n = format!("{}{}", u32::MAX, std::process::id());
+        let codex = [PathBuf::from(format!("/private/tmp/codex-daemon-{n}/s")), base.join(format!("tmp/codex-daemon-{n}/s")), PathBuf::from(format!("/private/tmp/codex-rc-{n}/rc.sock"))];
+        let near = PathBuf::from(format!("/private/tmp/codex-daemonx-{n}/s"));
+        let codex_dirs: Vec<PathBuf> = codex.iter().chain([&near]).map(|s| s.parent().unwrap().to_path_buf()).collect();
+        // Each folder and the two absent names of its kind the pane tries to make, removed even when an assertion fails.
+        struct Clear(Vec<PathBuf>);
+        impl Drop for Clear {
+            fn drop(&mut self) {
+                for d in &self.0 {
+                    for end in ["", "0", "1"] {
+                        let _ = std::fs::remove_dir_all(format!("{}{end}", d.display()));
+                    }
+                }
+            }
+        }
+        drop(Clear(codex_dirs.clone()));
+        let _clear = Clear(codex_dirs);
         owners.extend([tmux.join("default"), zellij.join("s"), zellij_here.join("s")]);
+        owners.extend(codex.iter().cloned());
         let (other, mine) = (base.join("run/com.apple.launchd.x/Other"), base.join("tmp/nm2/tmux-1/default"));
-        let _l: Vec<_> = [&own, &msock, &daemon, &other, &mine].into_iter().chain(&owners).map(|p| {
+        let _l: Vec<_> = [&own, &msock, &daemon, &other, &mine, &near].into_iter().chain(&owners).map(|p| {
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
             std::os::unix::net::UnixListener::bind(p).unwrap()
         }).collect();
@@ -1470,6 +1493,10 @@ mod tests {
         std::fs::write(base.join("tmp/nm1/f"), "x").unwrap();
         std::os::unix::fs::symlink(base.join("home/.docker/run/docker.sock"), base.join("work/l")).unwrap();
         std::os::unix::fs::symlink(&tmux, base.join("tmp/nm2/l")).unwrap();
+        // Codex's outside clients reach the daemon through links laid out so.
+        let control = base.join("home/.codex/app-server-control/app-server-control.sock");
+        std::fs::create_dir_all(control.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&codex[0], &control).unwrap();
         let places = Places { outer: vec![base.join("kitty/k.sock")], ..places(&base) };
         for (files, network) in [(Files::Everything, Network::None), (Files::Folder, Network::Providers(Vec::new())), (Files::Folder, Network::None), (Files::Folder, Network::Open)] {
             let profile = text(&places, &files, &network, &base.join("work"), &msock, Some(9)).unwrap();
@@ -1483,7 +1510,16 @@ mod tests {
             for p in &owners {
                 assert_ne!(connect(p), Some(0), "{p:?}: {files:?} {network:?}");
             }
+            let short = Path::new("/tmp").join(codex[0].strip_prefix("/private/tmp").unwrap());
+            assert_ne!(connect(&short), Some(0), "Codex's daemon as /tmp spells it: {files:?} {network:?}");
+            assert_ne!(connect(&control), Some(0), "Codex's daemon through its control link: {files:?} {network:?}");
             if network == Network::Open {
+                assert_eq!(connect(&near), Some(0), "a socket in a folder whose name only starts like Codex's");
+                let ln = sandboxed(&profile, &format!("/bin/ln '{}' '{}'", codex[0].display(), base.join("work/hc").display()));
+                assert_ne!(ln, Some(0), "a hard link to Codex's daemon");
+                if base.join("work/hc").exists() {
+                    assert_ne!(connect(&base.join("work/hc")), Some(0), "a hard link to Codex's daemon that was made");
+                }
                 assert_eq!(connect(&other), Some(0), "another socket beside launchd's agent: {files:?} {network:?}");
                 assert_eq!(connect(&mine), Some(0), "the pane's own tmux: {files:?} {network:?}");
                 assert_ne!(connect(&base.join("work/l")), Some(0), "a link in the pane's folder to Docker's socket");
@@ -1519,7 +1555,41 @@ mod tests {
                     assert!(sock.exists() && !dir.join("moved").exists() && !dir.join("b").exists(), "{dir:?}");
                 }
                 assert_eq!(sandboxed(&profile, &format!("echo x > '{}'", base.join("tmp/nm2/x").display())), Some(0), "its own: {files:?} {network:?}");
+                // A pane may not replace Codex's socket for the clients outside, nor make the folder before the daemon does.
+                for sock in &codex {
+                    let dir = sock.parent().unwrap().display();
+                    std::fs::create_dir_all(base.join("work/f")).unwrap();
+                    for (what, script) in [
+                        ("a rename", format!("mv '{}' '{dir}/moved'", sock.display())),
+                        ("a removal", format!("rm '{}'", sock.display())),
+                        ("a bind", format!("/usr/bin/perl -MIO::Socket::UNIX -e 'IO::Socket::UNIX->new(Local => \"{dir}/b\", Listen => 1) or exit 1'")),
+                        ("a new file", format!("echo x > '{dir}/x'")),
+                        ("a folder of the name", format!("mkdir '{dir}0'")),
+                        ("a folder moved to the name", format!("mv '{}' '{dir}1'", base.join("work/f").display())),
+                    ] {
+                        assert_ne!(sandboxed(&profile, &script), Some(0), "{what} at {dir}: {files:?} {network:?}");
+                    }
+                    assert!(sock.exists(), "{sock:?}");
+                    for left in ["moved", "b", "x"] {
+                        assert!(!sock.with_file_name(left).exists(), "{left} in {dir}");
+                    }
+                    assert!(!Path::new(&format!("{dir}0")).exists() && !Path::new(&format!("{dir}1")).exists(), "{dir}");
+                }
             }
+        }
+        // Codex's own folders stay closed to a pane whatever Codex's manifest lets it write.
+        let cx = crate::agents::builtins().into_iter().find(|m| m.name == "codex").unwrap();
+        let home = base.join("home");
+        let p = Places {
+            data: cx.data_paths(&home),
+            roots: cx.dir(&home).into_iter().chain(cx.agent.data.iter().filter_map(|d| crate::agents::data_root(d)).map(|r| home.join(r))).flat_map(|r| [r.with_extension("json"), r]).collect(),
+            hook_files: cx.config(&home).into_iter().collect(),
+            ..places
+        };
+        let profile = text(&p, &Files::Folder, &Network::None, &base.join("work"), &msock, None).unwrap();
+        for no in ["app-server-control/x", "app-server-daemon/x", "packages/x"] {
+            assert_ne!(sandboxed(&profile, &format!("mkdir -p \"$(dirname '{0}')\" 2>/dev/null; echo x > '{0}'", home.join(".codex").join(no).display())), Some(0), "{no}");
+            assert!(!home.join(".codex").join(no).exists(), "{no}");
         }
         let _ = std::fs::remove_dir_all(&base);
         let _ = std::fs::remove_dir_all(&tmux);

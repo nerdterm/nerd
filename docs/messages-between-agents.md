@@ -39,7 +39,7 @@ Above 20 KiB only the first 2 KiB is delivered, with `nerd inbox --show <id>` fo
 | Agent | How the message reaches it |
 |---|---|
 | Claude Code | Its inbox socket, when its session reported one and a process of that pane listens on it; otherwise its hook |
-| Codex | Its hook. A Codex served by its shared background server runs its hooks outside the pane; then typing when idle, and `codex --no-daemon` for the hook |
+| Codex | Its hook. A Codex served by its shared background server runs its hooks outside the pane; then typing when idle, and `codex --no-daemon` for the hook. In a This-folder-only pane Codex starts only as `codex --no-daemon` |
 | Qwen | Its hook |
 | Copilot | Its hook: `block` at Stop |
 | Gemini | Its hook: `deny` at AfterAgent |
