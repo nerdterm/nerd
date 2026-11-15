@@ -40,6 +40,19 @@ release() {
     echo "$dir/$name"
 }
 sign() { "$ssl" dgst -sha256 -sign "$t/$2.key" -out "$1.sig" "$1"; }
+# A nerd body that notes the path it runs from in $t/ran, then prints `version`.
+rec() { printf 'echo "$0" >>"%s/ran"; echo "nerd %s (test)"' "$t" "$1"; }
+# $t/ran holds `n` runs: the first from install.sh's work folder inside `dir`, every later one the nerd installed in `dir`.
+ran() {
+    dir=$1 case=$2 n=$3
+    [ "$(wc -l <"$t/ran" | tr -d ' ')" = "$n" ] || bad "$case: the test nerd ran other than $n times: $(cat "$t/ran")"
+    case $(head -n 1 "$t/ran") in
+        "$dir/.nerd-install."*/nerd) ;;
+        *) bad "$case: the archive's nerd ran from $(head -n 1 "$t/ran")" ;;
+    esac
+    tail -n +2 "$t/ran" | grep -qvxF "$dir/nerd" && bad "$case: a nerd ran from $(tail -n +2 "$t/ran" | grep -vxF "$dir/nerd")"
+    rm -f "$t/ran"
+}
 
 # install.sh into a fresh bin; prints the installed version, or "none".
 run() {
@@ -103,6 +116,13 @@ grep -qx 'nerd: the archive holds nerd 1.2.0, not 1.2.3, nothing installed' "$t/
 a=$(release "$g/broken" 0.99.0 main 'exit 3')
 expect "$(A=$a run broken)" none "an archive whose nerd does not run"
 grep -qx "nerd: the archive's nerd does not run, nothing installed" "$t/out" || bad "does not run: $(cat "$t/out")"
+a=$(release "$g/where" 0.99.0 main "$(rec 0.99.0)")
+expect "$(A=$a run where)" 0.99.0 "an archive given by hand, run inside the install folder"
+ran "$t/bin.where" "an archive given by hand" 3
+a=$(release "$g/fresh" 0.99.0 main)
+rm -rf "$t/fresh"
+env HOME="$t/home" NERD_BINDIR="$t/fresh/bin" PATH="/usr/bin:/bin:/usr/sbin:/sbin" sh "$t/install.sh" "$a" >"$t/out" 2>&1
+expect "$("$t/fresh/bin/nerd" --version 2>/dev/null | awk '{ print $2 }')" 0.99.0 "a first install, no install folder yet"
 
 # The download path, through a stand-in curl serving $SERVED by the last part of the url.
 mkdir -p "$t/stub"
@@ -138,6 +158,9 @@ release "$s" 1.2.3 main 'echo "nerd 1.2.0 (test)"' >/dev/null
 printf '{"tag_name": "v1.2.3", "assets": []}\n' >"$s/latest"
 expect "$(dl moved)" none "the latest release's archive holding nerd 1.2.0"
 grep -qx 'nerd: the archive holds nerd 1.2.0, not 1.2.3, nothing installed' "$t/out" || bad "download, another version: $(cat "$t/out")"
+release "$s" 1.2.3 main "$(rec 1.2.3)" >/dev/null
+expect "$(dl where)" 1.2.3 "a download, run inside the install folder"
+ran "$t/bin.where" "a download" 3
 
 # A folder above the install folder writable by others is named once, with its fix; a normal home prints nothing about it.
 a=$(release "$g/perm" 0.99.0 main)
@@ -158,15 +181,22 @@ perm
 grep -q 'can be written' "$t/out" || bad "a group-writable ~/.local got no warning"
 chmod 755 "$h/.local"
 
-# NERD_INSTALL_VERIFY_ONLY=1, nerd's Homebrew upgrade: the same checks, an archive of nerd alone, and nothing written.
+# NERD_INSTALL_VERIFY_ONLY=1, nerd's Homebrew upgrade: the same checks, an archive of nerd alone, and nothing left in
+# the folder nerd gives it, as private as the one nerd downloads into.
+v="$t/bin verify"
 verify() {
-    rm -rf "$t/bin.verify"
-    env HOME="$t/home" NERD_BINDIR="$t/bin.verify" NERD_INSTALL_VERIFY_ONLY=1 PATH="/usr/bin:/bin:/usr/sbin:/sbin" sh "$t/install.sh" "$1" >"$t/out" 2>&1
+    rm -rf "$v" && mkdir -m 700 "$v"
+    env HOME="$t/home" NERD_BINDIR="$v" NERD_INSTALL_VERIFY_ONLY=1 PATH="/usr/bin:/bin:/usr/sbin:/sbin" sh "$t/install.sh" "$1" >"$t/out" 2>&1
     rc=$?
-    [ ! -e "$t/bin.verify" ] || bad "verify-only wrote the install folder: $2"
+    [ -z "$(ls -A "$v")" ] || bad "verify-only left files in its folder: $2"
 }
-verify "$(release "$g/vgood" 0.99.0 main)" good
+verify "$(release "$g/vgood" 0.99.0 main "$(rec 0.99.0)")" good
 [ "$rc" = 0 ] && grep -qx 'nerd: verified nerd 0.99.0' "$t/out" || bad "verify-only refused a good release: $(cat "$t/out")"
+ran "$v" "verify-only" 1
+rm -rf "$v"
+env HOME="$t/home" NERD_BINDIR="$v" NERD_INSTALL_VERIFY_ONLY=1 PATH="/usr/bin:/bin:/usr/sbin:/sbin" sh "$t/install.sh" "$g/vgood/nerd-v0.99.0-macos-arm64.tar.gz" >"$t/out" 2>&1
+rc=$?
+[ "$rc" = 1 ] && [ ! -e "$v" ] && grep -qF "$v" "$t/out" || bad "verify-only with no folder: rc $rc, $(cat "$t/out")"
 verify "$(release "$g/vother" 0.99.0 other)" other
 [ "$rc" = 1 ] || bad "verify-only took a release signed by a key not in install.sh"
 verify "$(release "$g/vmoved" 1.2.3 main 'echo "nerd 1.2.0 (test)"')" moved

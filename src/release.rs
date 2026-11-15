@@ -169,16 +169,17 @@ fn install_sh(archive: &Path, home: &Path, verify_only: bool) -> Result<String, 
     Ok(crate::render::unspoofed(&said.unwrap_or_default()))
 }
 
-/// `verify_only`: install.sh stops after its checks, before it writes anything.
+/// `verify_only`: install.sh stops after its checks, before it writes anything outside its work folder.
 fn install_cmd(archive: &Path, home: &Path, verify_only: bool) -> std::process::Command {
     let bindir = home.join(".local/bin");
     let mut cmd = crate::spawn::cmd("/bin/sh");
     cmd.arg("-s").arg("--").arg(archive);
     // The bindir on PATH, so install.sh leaves ~/.zshrc alone; last, so no tool of the user's stands in for the system's.
-    cmd.env_remove("NERD_INSTALL_UNVERIFIED").env_remove("NERD_RELEASE_API").env("HOME", home).env("NERD_BINDIR", &bindir);
+    cmd.env_remove("NERD_INSTALL_UNVERIFIED").env_remove("NERD_RELEASE_API").env("HOME", home);
+    // install.sh works inside NERD_BINDIR; verify-only gets the archive's private folder, so a Homebrew nerd gains no ~/.local/bin.
     match verify_only {
-        true => cmd.env("NERD_INSTALL_VERIFY_ONLY", "1"),
-        false => cmd.env_remove("NERD_INSTALL_VERIFY_ONLY"),
+        true => cmd.env("NERD_INSTALL_VERIFY_ONLY", "1").env("NERD_BINDIR", archive.parent().unwrap_or(archive)),
+        false => cmd.env_remove("NERD_INSTALL_VERIFY_ONLY").env("NERD_BINDIR", &bindir),
     };
     cmd.env("PATH", format!("/usr/bin:/bin:/usr/sbin:/sbin:{}", bindir.display()));
     cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -454,6 +455,16 @@ mod tests {
         let env: std::collections::HashMap<_, _> = cmd.get_envs().collect();
         assert_eq!(env.get(std::ffi::OsStr::new("NERD_INSTALL_VERIFY_ONLY")), Some(&Some(std::ffi::OsStr::new("1"))), "set by nerd alone");
         assert!(INSTALL_SH.contains("# release keys begin\n") && INSTALL_SH.contains("# release keys end\n"), "the key block the tests replace");
+    }
+
+    #[test]
+    fn install_sh_works_in_the_archive_s_folder_to_verify_and_in_local_bin_to_install() {
+        for (verify_only, bindir) in [(false, "/tmp/home/.local/bin"), (true, "/tmp/r")] {
+            let cmd = install_cmd(Path::new("/tmp/r/a.tar.gz"), Path::new("/tmp/home"), verify_only);
+            let env: std::collections::HashMap<_, _> = cmd.get_envs().collect();
+            assert_eq!(env.get(std::ffi::OsStr::new("NERD_BINDIR")), Some(&Some(std::ffi::OsStr::new(bindir))), "verify_only {verify_only}");
+            assert_eq!(env.get(std::ffi::OsStr::new("PATH")), Some(&Some(std::ffi::OsStr::new("/usr/bin:/bin:/usr/sbin:/sbin:/tmp/home/.local/bin"))), "verify_only {verify_only}");
+        }
     }
 
     #[test]

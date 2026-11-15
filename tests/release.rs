@@ -70,6 +70,13 @@ impl Env {
         self.sign("main");
     }
 
+    /// The release's nerd of 0.99.0 that notes each path it runs from in the returned file, outside the state root.
+    fn archive_noting_runs(&self) -> PathBuf {
+        let ran = self.home.parent().unwrap().join("ran");
+        self.archive(&format!("#!/bin/sh\necho \"$0\" >> '{}'\necho 'nerd 0.99.0 (test)'\n", ran.display()));
+        ran
+    }
+
     /// The served checksum signed with the test key `key`.
     fn sign(&self, key: &str) {
         let sum = self.served.join(format!("{ARCHIVE}.sha256"));
@@ -227,7 +234,7 @@ fn a_release_is_installed_only_for_the_window_s_click_and_only_when_nerd_s_key_s
     assert_eq!(e.said()["Failed"], "the archive holds nerd 0.98.0, not 0.99.0, nothing installed");
     assert_eq!(std::fs::read(&nerd).unwrap(), before, "nothing installed");
 
-    e.archive("#!/bin/sh\necho 'nerd 0.99.0 (test)'\n");
+    let ran = e.archive_noting_runs();
     std::fs::write(&go, "v0.98.0").unwrap();
     e.run(&nerd, &["--check-update", "--install", "--window"], &[]);
     assert!(e.said()["Failed"].as_str().unwrap().contains("the newest release is now v0.99.0"), "only what the window showed");
@@ -237,6 +244,10 @@ fn a_release_is_installed_only_for_the_window_s_click_and_only_when_nerd_s_key_s
     assert_eq!(e.said()["Installed"], "nerd 0.99.0 (test)");
     let out = Command::new(&nerd).arg("--version").output().unwrap();
     assert_eq!(String::from_utf8_lossy(&out.stdout), "nerd 0.99.0 (test)\n");
+    let ran = std::fs::read_to_string(ran).unwrap();
+    let (first, later) = ran.split_once('\n').unwrap();
+    assert!(first.starts_with(&format!("{}/.nerd-install.", nerd.parent().unwrap().display())), "checked inside ~/.local/bin: {ran}");
+    assert!(later.lines().all(|l| Path::new(l) == nerd), "then only the installed nerd: {ran}");
     assert!(e.asked().iter().any(|u| u == &format!("https://github.com/nerdterm/nerd/releases/download/{TAG}/{ARCHIVE}.sha256")), "{:?}", e.asked());
     let left: Vec<_> = std::fs::read_dir(nerd.parent().unwrap()).unwrap().flatten().map(|d| d.file_name()).collect();
     assert_eq!(left, ["nerd"], "renamed into place, nothing left beside it");
@@ -315,9 +326,13 @@ fn a_homebrew_nerd_from_nerd_s_tap_is_upgraded_by_its_own_brew_with_nerd_s_formu
     let f = &e.said()["Found"];
     assert!(f["brew"] == true && f["blocked"].is_null(), "{f}");
 
+    let ran = e.archive_noting_runs();
     std::fs::write(e.state().join("release-install"), TAG).unwrap();
     e.run(&nerd, &["--check-update", "--install", "--window"], &vars);
     assert_eq!(e.said()["Installed"], "nerd 0.99.0");
+    let ran = std::fs::read_to_string(ran).unwrap();
+    let at = ran.strip_prefix(&format!("{}/release-", e.state().display())).and_then(|r| r.split_once("/.nerd-install."));
+    assert!(ran.lines().count() == 1 && at.is_some_and(|(pid, _)| pid.parse::<u32>().is_ok()), "checked inside the download's own folder: {ran}");
     let sum = std::fs::read_to_string(e.served.join(format!("{ARCHIVE}.sha256"))).unwrap();
     let seen = std::fs::read_to_string(root.join("seen.rb")).unwrap();
     assert!(seen.contains(&format!("  url \"https://github.com/nerdterm/nerd/releases/download/{TAG}/{ARCHIVE}\"\n")) && seen.contains(&format!("  sha256 \"{}\"\n", &sum[..64])), "{seen}");

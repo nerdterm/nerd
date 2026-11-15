@@ -12,6 +12,12 @@ die() { printf 'nerd: %s\n' "$*" >&2; exit 1; }
 
 [ "$(uname -s)" = Darwin ] || die "macOS only"
 [ "$(uname -m)" = arm64 ] || die "Apple Silicon only (this Mac is $(uname -m))"
+# Verify-only is set by nerd alone, with a folder of its own: it makes no install folder.
+if [ "${NERD_INSTALL_VERIFY_ONLY:-}" = 1 ]; then
+    [ -d "$bindir" ] || die "$bindir is not a folder, nothing checked"
+else
+    mkdir -p "$bindir"
+fi
 
 # The public halves of nerd's release keys, the main one and its backup: a release installs only if one of them signed its .sha256.
 # release keys begin
@@ -25,7 +31,8 @@ ShA+LTUymRoqK08IRKf7isD1xa04XkiG4nuQE61urBbeFrsaSmLmjpW9Mw==
 -----END PUBLIC KEY-----'
 # release keys end
 
-work=$(mktemp -d)
+# In the install folder, which no isolated pane may write: a per-user temp folder is theirs to swap files in.
+work=$(mktemp -d "$bindir/.nerd-install.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 
 # "x.y.z" is below "a.b.c".
@@ -107,7 +114,6 @@ if [ "${NERD_INSTALL_VERIFY_ONLY:-}" = 1 ]; then
     say "verified nerd $got"
     exit 0
 fi
-mkdir -p "$bindir"
 # Anyone who can write a folder on the way to nerd can rename it and put their own nerd in its place. Symlinks: ls on "$d/." reads the folder a link points to, the one the install writes through; the folders above that target are not checked.
 d=$bindir
 case $bindir/ in
