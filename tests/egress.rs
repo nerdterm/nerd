@@ -85,8 +85,8 @@ const ALLOW: &[(&str, &str, &str, &str, &str, &str)] = &[
     ("src/daemon.rs", "start", "spawn", "& exe --version", "local", "asks the installed build its version"),
     ("src/daemon.rs", "handover_exec", "command", "std :: env :: current_exe ()", "local", "update in place: the new build takes over the open panes and sockets"),
     ("src/git.rs", "read_cmd", "spawn", "\"git\"", "local", "the file tree's git and the menu's worktree add and remove, without lazy fetch, fsmonitor, the repository's hooks or filters"),
-    ("src/install.rs", "git_exe", "spawn", "\"/usr/bin/xcode-select\"", "local", "checks that Apple's git is installed"),
-    ("src/install.rs", "git_exe", "spawn", "& exe --version", "local", "asks git its version"),
+    ("src/install.rs", "git_in", "spawn", "\"/usr/bin/xcode-select\"", "local", "checks that Apple's git is installed"),
+    ("src/install.rs", "git_in", "spawn", "& exe --version", "local", "asks git its version"),
     ("src/notify.rs", "run", "spawn", "cmd", "local", "runs what a notify call below names"),
     ("src/notify.rs", "observe", "notify", "afplay", "local", "plays a system sound"),
     ("src/preview.rs", "convert_to_png_from", "spawn", "\"/usr/bin/sips\"", "local", "converts an image for the preview"),
@@ -97,8 +97,9 @@ const ALLOW: &[(&str, &str, &str, &str, &str, &str)] = &[
     ("src/spawn.rs", "cmd", "command", "program", "local", "the one door every other spawn goes through"),
     ("src/trial.rs", "trial", "spawn", "exe --plugin-exec", "local", "a plugin's trial run, with no network"),
     ("src/release.rs", "install_cmd", "spawn", "\"/bin/sh\"", "local", "the embedded install.sh on the downloaded archive: release-key signature with /usr/bin/openssl, checksum, unpack, sign, rename into ~/.local/bin, or for a Homebrew upgrade the checks alone; with an archive it reaches no network"),
-    ("src/release/brew.rs", "cmd", "spawn", "& self . run", "local", "brew --version, brew --cache and brew upgrade nerdterm/tap/nerd for a Homebrew nerd, under /usr/bin/sandbox-exec with the network denied; Homebrew's own build sandbox starts outside it"),
-    ("src/release/brew.rs", "tap_git", "spawn", "crate :: install :: git_exe () ?", "local", "git status and ls-files on nerd's Homebrew tap before and after its upgrade"),
+    ("src/release/brew.rs", "cmd", "spawn", "& self . run", "local", "brew --version, brew config, brew --cache and brew upgrade nerdterm/tap/nerd for a Homebrew nerd, under /usr/bin/sandbox-exec with the network denied; Homebrew's own build sandbox starts outside it"),
+    ("src/release/brew.rs", "tap_git", "spawn", "git", "local", "git status and ls-files on nerd's Homebrew tap before and after its upgrade, only the prefix's or the system's git"),
+    ("src/release/brew.rs", "archived_nerd", "spawn", "\"/usr/bin/tar\" -xOzf", "local", "reads nerd out of the checked archive to compare it with the one Homebrew installed, writing no file"),
 ];
 
 /// Rows the register states with no door the scan sees: a setting (the sandbox off), or a unix socket (not scanned).

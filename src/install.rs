@@ -179,23 +179,29 @@ pub fn source(url: &str, local: bool) -> Result<String, String> {
     Err(bad())
 }
 
-/// git on PATH, new enough, and never Apple's stub that opens an install dialog; found once, a missing one is looked for again.
+/// git on PATH, through `git_in`; found once, a missing one is looked for again.
 pub(crate) fn git_exe() -> Result<PathBuf, String> {
     static FOUND: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     if let Some(exe) = FOUND.get() {
         return Ok(exe.clone());
     }
     let path = std::env::var("PATH").unwrap_or_default();
-    let exe = path.split(':').chain(["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]).map(|d| Path::new(d).join("git")).find(|p| p.is_file()).ok_or("git is not installed")?;
+    let dirs: Vec<PathBuf> = path.split(':').chain(["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]).map(PathBuf::from).collect();
+    let exe = git_in(&dirs)?;
+    // Apple's git is asked about each time: removing the Command Line Tools turns it back into the stub.
+    Ok(if exe == Path::new("/usr/bin/git") { exe } else { FOUND.get_or_init(|| exe).clone() })
+}
+
+/// The first git in `dirs` that are absolute, new enough, and never Apple's stub that opens an install dialog.
+pub(crate) fn git_in(dirs: &[PathBuf]) -> Result<PathBuf, String> {
+    let exe = dirs.iter().filter(|d| d.is_absolute()).map(|d| d.join("git")).find(|p| p.is_file()).ok_or("git is not installed")?;
     if exe == Path::new("/usr/bin/git") && !crate::spawn::cmd("/usr/bin/xcode-select").arg("-p").stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success()) {
         return Err("git is not installed: run xcode-select --install".into());
     }
     let out = crate::spawn::cmd(&exe).arg("--version").env_remove("GIT_EXEC_PATH").output().map_err(|e| format!("git: {e}"))?;
     let text = String::from_utf8_lossy(&out.stdout);
     match crate::git::version(&text) {
-        // Apple's git is asked about each time: removing the Command Line Tools turns it back into the stub.
-        Some(v) if v >= GIT_MIN && exe == Path::new("/usr/bin/git") => Ok(exe),
-        Some(v) if v >= GIT_MIN => Ok(FOUND.get_or_init(|| exe).clone()),
+        Some(v) if v >= GIT_MIN => Ok(exe),
         _ => Err(format!("{} is older than git {}.{}.{}", text.trim(), GIT_MIN.0, GIT_MIN.1, GIT_MIN.2)),
     }
 }
@@ -964,6 +970,27 @@ mod tests {
             std::fs::write(&lock, format!(r#"[{{"name":"p","source":"https://x/p.git","commit":"{}"}}]"#, "a".repeat(40))).unwrap();
             assert_eq!(read_lock().unwrap().len(), 1);
         });
+    }
+
+    #[test]
+    fn git_is_taken_only_from_an_absolute_folder_and_only_new_enough() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let t = crate::paths::test_dir("git-in").canonicalize().unwrap();
+        let fake = |dir: &str, says: &str| {
+            std::fs::create_dir_all(t.join(dir)).unwrap();
+            std::fs::write(t.join(dir).join("git"), format!("#!/bin/sh\necho '{says}'\n")).unwrap();
+            std::fs::set_permissions(t.join(dir).join("git"), std::fs::Permissions::from_mode(0o755)).unwrap();
+            t.join(dir)
+        };
+        let (new, old, none) = (fake("new", "git version 2.99.0"), fake("old", "git version 2.30.0"), t.join("none"));
+        assert_eq!(git_in(&[none.clone(), new.clone()]), Ok(new.join("git")), "the first folder that holds one");
+        assert_eq!(git_in(&[old.clone(), new.clone()]), Err("git version 2.30.0 is older than git 2.45.1".into()));
+        assert_eq!(git_in(std::slice::from_ref(&none)), Err("git is not installed".into()));
+        // The same folder spelled from the working folder, as an empty or relative PATH entry would find it.
+        let cwd = std::env::current_dir().unwrap();
+        let relative = PathBuf::from("../".repeat(cwd.components().count() - 1)).join(new.strip_prefix("/").unwrap());
+        assert!(relative.join("git").is_file());
+        assert_eq!(git_in(&[relative, PathBuf::new(), PathBuf::from("."), none]), Err("git is not installed".into()));
     }
 
     #[test]

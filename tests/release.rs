@@ -130,12 +130,21 @@ impl Env {
         std::fs::copy(env!("CARGO_BIN_EXE_nerd"), keg.join("bin/nerd")).unwrap();
         std::fs::write(keg.join("INSTALL_RECEIPT.json"), r#"{"source":{"tap":"nerdterm/tap"}}"#).unwrap();
         std::os::unix::fs::symlink(keg.join("bin/nerd"), prefix.join("bin/nerd")).unwrap();
-        let (r, t) = (root.display(), tap.display());
+        std::fs::create_dir_all(prefix.join("opt")).unwrap();
+        std::os::unix::fs::symlink(&keg, prefix.join("opt/nerd")).unwrap();
+        let (r, t, p) = (root.display(), tap.display(), prefix.display());
         let script = |p: &Path, text: String| {
             std::fs::write(p, text).unwrap();
             std::fs::set_permissions(p, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
         };
-        script(&prefix.join("bin/brew"), format!("#!/bin/sh\ncase $1 in\n--version) echo 'Homebrew 7.0.11' ;;\n--cache) echo '{r}/cache' ;;\nupgrade) cp '{t}/Formula/nerd.rb' '{r}/seen.rb'; ls '{r}/cache/downloads' > '{r}/cached' ;;\n*) exit 9 ;;\nesac\n"));
+        // On upgrade: nerd from the primed archive into a keg of 0.99.0, linked as Homebrew links it.
+        script(
+            &prefix.join("bin/brew"),
+            format!(
+                "#!/bin/sh\ncase $1 in\n--version) echo 'Homebrew 7.0.11' ;;\nconfig) echo \"HOMEBREW_TEMP: $HOMEBREW_TEMP\" ;;\n--cache) echo \"$HOME/Library/Caches/Homebrew\" ;;\n\
+                 upgrade) cp '{t}/Formula/nerd.rb' '{r}/seen.rb'; d=\"$HOME/Library/Caches/Homebrew/downloads\"; ls \"$d\" > '{r}/cached'; k='{p}/Cellar/nerd/0.99.0'; mkdir -p \"$k/bin\" && tar -xOzf \"$d\"/*--{ARCHIVE} nerd > \"$k/bin/nerd\" && chmod 755 \"$k/bin/nerd\" && ln -sfn \"$k\" '{p}/opt/nerd' ;;\n*) exit 9 ;;\nesac\n"
+            ),
+        );
         script(&root.join("sandbox-exec"), format!("#!/bin/sh\n[ \"$1\" = -p ] || exit 97\nprintf '%s' \"$2\" > '{r}/profile'\nshift 2\nexec \"$@\"\n"));
         std::fs::write(tap.join("README.md"), "# nerdterm/tap\n").unwrap();
         std::fs::write(tap.join("Formula/nerd.rb"), "class Nerd < Formula\nend\n").unwrap();
@@ -343,7 +352,10 @@ fn a_homebrew_nerd_from_nerd_s_tap_is_upgraded_by_its_own_brew_with_nerd_s_formu
     assert!(status.status.success() && status.stdout.is_empty(), "{}", String::from_utf8_lossy(&status.stdout));
     assert!(!e.home.join(".local/bin").exists(), "nothing in ~/.local/bin");
     let log = e.log();
-    for line in ["release v0.99.0: Homebrew 7.0.11", "release v0.99.0: tap checked", "release v0.99.0: formula written", "release v0.99.0: brew upgrade done", "release v0.99.0: tap restored", "release v0.99.0 installed with Homebrew: nerd 0.99.0"] {
+    let release = e.state().display().to_string();
+    let staged = format!("release v0.99.0: Homebrew stages in {release}/release-");
+    let cache = format!("release v0.99.0: Homebrew's cache is {}/Library/Caches/Homebrew", e.home.display());
+    for line in [&staged, &cache, "release v0.99.0: nerd in the checked archive ", "release v0.99.0: Homebrew 7.0.11", "release v0.99.0: tap checked", "release v0.99.0: formula written", "release v0.99.0: brew upgrade done", "release v0.99.0: tap restored", "release v0.99.0 installed with Homebrew: nerd 0.99.0"] {
         assert!(log.contains(line), "{line}: {log}");
     }
 }
