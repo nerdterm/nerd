@@ -1307,7 +1307,20 @@ mod tests {
     fn an_agent_without_its_own_prompt_text_is_read_by_claudes() {
         let claude = get("claude").unwrap().agent.blocked_text;
         assert_eq!(blocked_text(Some("claude")), claude);
-        assert_eq!(blocked_text(Some("codex")), claude, "a manifest without blocked_text");
+        assert_eq!(blocked_text(Some("gemini")), claude, "a manifest without blocked_text");
+        assert_eq!(
+            blocked_text(Some("codex")),
+            [
+                "Would you like to run the following command",
+                "Would you like to make the following edits",
+                "Would you like to grant these permissions",
+                "Would you like to send input to the existing terminal",
+                "Would you like to send input to terminal ",
+                "Do you want to approve network access to",
+                "\u{203a} 1."
+            ],
+            "Codex's own questions"
+        );
         assert_eq!(blocked_text(Some("amp")), claude, "an agent known by name only");
         assert!(blocked_text(None).is_empty(), "a shell is never asked a question");
     }

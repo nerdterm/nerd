@@ -98,12 +98,25 @@ fn private_mode(bytes: &[u8], mode: &[u8]) -> Option<bool> {
     found
 }
 
-/// Whether `text` shows the blocked-text entry `t`; a digit in it stands for any of 1-9, the option the cursor is on.
+/// Whether `text` shows the entry `t`; a digit in it is the option 1-9 the cursor is on, counted only when the nearest option row above or below is one away.
+// ceiling: two numbered lines the person typed have a list's shape and read as a question; matching the view's footer too is the way past.
 fn shows(t: &str, text: &str) -> bool {
-    match t.find(|c: char| c.is_ascii_digit()) {
-        Some(i) => ('1'..='9').any(|d| text.contains(&format!("{}{d}{}", &t[..i], &t[i + 1..]))),
-        None => text.contains(t),
-    }
+    let Some(i) = t.find(|c: char| c.is_ascii_digit()) else { return text.contains(t) };
+    let rows: Vec<&str> = text.lines().collect();
+    rows.iter().enumerate().any(|(k, row)| {
+        (1..=9).any(|n| {
+            row.contains(&format!("{}{n}{}", &t[..i], &t[i + 1..]))
+                && [nearest_option(rows[..k].iter().rev()), nearest_option(rows[k + 1..].iter())].into_iter().flatten().any(|m| m.abs_diff(n) == 1)
+        })
+    })
+}
+
+// ceiling: an option whose description or label runs past 5 rows hides its list; a longer walk, bounded by the blank row, is the way past.
+fn nearest_option<'a>(rows: impl Iterator<Item = &'a &'a str>) -> Option<u32> {
+    rows.take(6).take_while(|r| !r.trim().is_empty()).find_map(|r| {
+        let (n, rest) = r.trim_start().split_once('.')?;
+        if rest.is_empty() || rest.starts_with(' ') { n.parse().ok() } else { None }
+    })
 }
 
 /// Whether a ground counts as dark: its luma under the middle.
@@ -675,7 +688,7 @@ impl Term {
         self.hook = s;
     }
 
-    /// Whether `text` shows the agent's question; a "❯ 1." row matches whichever option the cursor is on.
+    /// Whether `text` shows the agent's question; a "❯ 1." row matches whichever option of a list the cursor is on.
     fn asks(&self, text: &str) -> bool {
         self.blocked_text.iter().any(|t| shows(t, text))
     }
@@ -695,16 +708,16 @@ impl Term {
         if let Some(s) = self.hook {
             return if s == AgentState::Blocked && self.answered { AgentState::Working } else { s };
         }
-        // Decided from the visible prompt text, cheaper than tracking the protocol; built only when a rule reads it, and once.
+        // Decided from the live screen's prompt text, cheaper than tracking the protocol; built only when a rule reads it, and once.
         let text = std::cell::OnceCell::new();
-        let visible = || {
+        let live = || {
             text.get_or_init(|| {
                 #[cfg(test)]
                 CONTENTS.with(|c| c.set(c.get() + 1));
-                self.screen().contents()
+                self.screen().live_contents()
             })
         };
-        if !self.blocked_text.is_empty() && self.asks(visible()) {
+        if !self.blocked_text.is_empty() && self.asks(live()) {
             return AgentState::Blocked;
         }
         // blocked_text is set exactly while an agent is in front; without its hook, only sustained output is work.
@@ -716,7 +729,7 @@ impl Term {
         } else if self.last_output.elapsed() < IDLE_AFTER {
             return AgentState::Working;
         }
-        if self.started.elapsed() < STARTUP_GRACE && visible().trim().is_empty() {
+        if self.started.elapsed() < STARTUP_GRACE && live().trim().is_empty() {
             return AgentState::Unknown;
         }
         AgentState::Idle
@@ -1026,6 +1039,7 @@ impl Screen<'_> {
     }
 
     /// The visible text: rows joined by newlines, a wrapped row joined to the next, trailing blanks dropped.
+    #[cfg(test)]
     pub fn contents(&self) -> String {
         self.text_from(-(self.0.grid().display_offset() as i32))
     }
@@ -1416,6 +1430,99 @@ mod tests {
         assert_ne!(t.state(), AgentState::Blocked, "a shell's text is not a question");
         t.set_blocked_text(crate::agents::get("claude").unwrap().agent.blocked_text);
         assert_eq!(t.state(), AgentState::Blocked);
+    }
+
+    /// Titles read from codex-cli 0.167.0; a newer Codex may word its questions differently.
+    #[test]
+    fn codexs_questions_on_the_live_screen_are_blocked_without_a_hook_and_its_prose_is_not() {
+        let codex = crate::agents::blocked_text(Some("codex"));
+        for title in &codex {
+            for scrolled in [false, true] {
+                let mut t = Term::new(80, 5, 100);
+                t.set_blocked_text(codex.clone());
+                for i in 0..20 {
+                    t.feed(format!("line {i}\r\n").as_bytes());
+                }
+                t.feed(format!("{title} ls\r\n  2. No").as_bytes());
+                if scrolled {
+                    t.scroll_by(-10);
+                    assert!(!t.screen().contents().contains(title.as_str()), "{title}: out of view");
+                }
+                assert_eq!(t.state(), AgentState::Blocked, "{title}, scrolled back: {scrolled}");
+                assert_eq!(t.shows_question(), title.contains('1'), "{title}");
+            }
+        }
+        let mut t = Term::new(80, 5, 100);
+        t.set_blocked_text(codex.clone());
+        t.feed("Do you want to proceed?\r\nWould you like to see the diff?\r\n\u{203a} ".as_bytes());
+        assert_ne!(t.state(), AgentState::Blocked, "the model's prose is not a question");
+        assert!(!t.shows_question());
+        t.feed("\r\n  1. Yes, proceed (y)\r\n\u{203a} 2. No, and tell Codex what to do differently".as_bytes());
+        assert!(t.shows_question(), "a numbered row whichever option the cursor is on");
+        assert_eq!(t.state(), AgentState::Blocked);
+    }
+
+    /// Codex's approval as codex-cli 0.167.0 drew it live, and lines the person typed, which Codex also marks with "›".
+    #[test]
+    fn a_numbered_marker_is_a_question_only_inside_a_choice_list() {
+        let screen = |text: &str| {
+            let mut t = Term::new(80, 24, 100);
+            t.set_blocked_text(crate::agents::blocked_text(Some("codex")));
+            t.feed(text.as_bytes());
+            t
+        };
+        let rows = ["Yes, proceed (y)", "Yes, and don't ask again for commands that start with `ls` (p)", "No, and tell Codex what to do differently (esc)"];
+        for on in 0..2 {
+            let list: Vec<String> = rows.iter().enumerate().map(|(i, r)| format!("{} {}. {r}", if i == on { "\u{203a}" } else { " " }, i + 1)).collect();
+            let t = screen(&format!("Would you like to run the following command?\r\n\r\n  $ ls\r\n\r\n{}\r\n\r\n  Press enter to confirm or esc to cancel", list.join("\r\n")));
+            assert_eq!(t.state(), AgentState::Blocked, "the selection on row {}", on + 1);
+            assert!(t.shows_question(), "the selection on row {}", on + 1);
+        }
+        for (case, text) in [
+            ("typed in the composer", "\u{203a} 1. Reply with just the word ok"),
+            ("typed in the composer above its footer", "\u{2022} ok\r\n\r\n\u{203a} 1. Reply with just the word ok\r\n  ? for shortcuts"),
+            ("typed above a number that is no option", "\u{203a} 1. x\r\n  2.5 is fine"),
+            ("in history above an idle composer", "\u{203a} 1. Reply with just the word ok\r\n\r\n\u{2022} ok\r\n\r\n\u{203a} Ask Codex to do anything"),
+        ] {
+            let t = screen(text);
+            assert_ne!(t.state(), AgentState::Blocked, "{case}");
+            assert!(!t.shows_question(), "{case}");
+        }
+        let t = screen("\u{203a} 1. a\r\n  2. b");
+        assert_eq!(t.state(), AgentState::Blocked, "the known false question: two numbered lines typed have a list's shape");
+    }
+
+    /// A list whose rows are `options`, the one at `on` marked, read with `agent`'s blocked text.
+    fn choice_list(agent: &str, marker: &str, title: &str, options: &[&str], on: usize) -> Term {
+        let list: Vec<String> = options.iter().enumerate().map(|(i, o)| format!("{} {}. {o}", if i == on { marker } else { " " }, i + 1)).collect();
+        let mut t = Term::new(80, 24, 100);
+        t.set_blocked_text(crate::agents::blocked_text(Some(agent)));
+        t.feed(format!("{title}{}", list.join("\r\n")).as_bytes());
+        t
+    }
+
+    /// Claude Code's question view as 2.1.325 draws it: a description row under each option.
+    #[test]
+    fn a_choice_list_is_found_past_description_rows() {
+        let options = ["A\r\n     description of A", "B\r\n     description of B", "C\r\n     description of C"];
+        for on in 0..3 {
+            let t = choice_list("claude", "\u{276f}", "Which approach should I take?\r\n\r\n", &options, on);
+            assert_eq!(t.state(), AgentState::Blocked, "the selection on {}", on + 1);
+            assert!(t.shows_question(), "the selection on {}", on + 1);
+        }
+        let options = ["A\r\n     3.0 is faster", "B\r\n     description of B"];
+        let t = choice_list("claude", "\u{276f}", "Which approach should I take?\r\n\r\n", &options, 0);
+        assert!(t.shows_question(), "a description that starts with a number is no option");
+    }
+
+    #[test]
+    fn a_choice_list_is_found_past_a_wrapped_label() {
+        let options = ["Yes, proceed (y)", "Yes, and don't ask again for commands that\r\n     start with `ls` (p)", "No, and tell Codex what to do differently (esc)"];
+        for on in [0, 2] {
+            let t = choice_list("codex", "\u{203a}", "", &options, on);
+            assert_eq!(t.state(), AgentState::Blocked, "the selection on {}", on + 1);
+            assert!(t.shows_question(), "the selection on {}", on + 1);
+        }
     }
 
     #[test]
