@@ -16,7 +16,8 @@ trap 'rm -rf "$t"' EXIT
 gh release download "$tag" --repo nerdterm/nerd -p "$name.sha256" -O "$t/$name.sha256" || { echo "publish-formula: $tag has no checksum" >&2; exit 1; }
 gh release download "$tag" --repo nerdterm/nerd -p "$name.sha256.sig" -O "$t/$name.sha256.sig" || { echo "publish-formula: $tag has no signature" >&2; exit 1; }
 # The keys of this checkout's install.sh, never fetched: GitHub is what the signature guards against.
-installer=${NERD_INSTALL_SH:-$(git rev-parse --show-toplevel)/install.sh}
+# Beside this script, not found through git: the checkout's .git may say its top is another folder.
+installer=${NERD_INSTALL_SH:-$(cd "$(dirname "$0")/.." && pwd)/install.sh}
 awk '/^# release keys begin/ { f = 1; next } /^# release keys end/ { f = 0 } f' "$installer" | sed -e "1s/^keys='//" -e "\$s/'\$//" \
     | awk -v d="$t" '/BEGIN PUBLIC KEY/ { n++ } { print > (d "/key" n ".pem") }'
 signed=

@@ -4,41 +4,37 @@ set -eu
 # All of it in main, called by the last line: /bin/sh rereads a running script from disk, which the build can rewrite.
 main() {
     tag=${1:?usage: scripts/publish-binary.sh vX.Y.Z}
-    cd "$(git rev-parse --show-toplevel)"
-    # This checkout is trusted (docs/releasing.md). As a second line, no git here or in build.rs runs what its .git names:
-    # hooks, fsmonitor, replace refs, ext:: or a local upload-pack, credential helpers, signature checks, submodules, filters.
-    n=0
-    add() { export "GIT_CONFIG_KEY_$n=$1" "GIT_CONFIG_VALUE_$n=$2"; n=$((n + 1)); export GIT_CONFIG_COUNT=$n; }
-    for kv in core.hooksPath=/dev/null core.fsmonitor=false protocol.ext.allow=never remote.origin.uploadpack=git-upload-pack \
-        credential.helper= log.showSignature=false submodule.recurse=false fetch.recurseSubmodules=false; do
-        add "${kv%%=*}" "${kv#*=}"
-    done
-    while IFS= read -r k; do
-        case $k in filter.*.required) add "$k" false ;; filter.*) add "$k" "" ;; esac
-    done <<EOF
-$(git config --name-only --get-regexp '^filter\.' || true)
-EOF
-    export GIT_NO_REPLACE_OBJECTS=1
-    [ -z "$(git status --porcelain)" ] || { echo "publish: the tree must be clean" >&2; exit 1; }
-    git fetch -q --tags origin
+    # Under ~/.local/bin, which no This-folder-only pane may write: one in the temp folders could change the build before it is signed.
+    mkdir -p "$HOME/.local/bin"
+    work=$(mktemp -d "$HOME/.local/bin/.nerd-publish.XXXXXX")
+    trap 'rm -rf "$work"' EXIT
+    # Nothing reads the checkout's .git, which a pane may have written (docs/releasing.md): no git, gh or build runs in the
+    # checkout, and every git call names the repository made here from the public URL. ~/.gitconfig is the maintainer's.
+    cd "$work"
+    src="$work/src"
+    # No template: hooks in a folder that init.templateDir names would run at the checkout below.
+    git init -q --template= "$src"
+    g() { git --git-dir="$src/.git" --work-tree="$src" "$@"; }
+    # Every tag, so build.rs finds the last release for the update window's list of commits.
+    g fetch -q --no-tags https://github.com/nerdterm/nerd.git +refs/heads/master:refs/remotes/origin/master '+refs/tags/*:refs/tags/*'
     # A draft release has no git tag until it is published: build its target commit.
     stop() { echo "publish: $*; stop and look at who changed it" >&2; exit 1; }
     ref=$tag
-    if ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+    if ! g rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
         ref=$(gh release view "$tag" --repo nerdterm/nerd --json targetCommitish -q .targetCommitish)
         printf '%s' "$ref" | grep -Eqx '[0-9a-f]{40}' || stop "the draft $tag targets $ref, not a commit id"
-        git fetch -q origin "$ref"
     fi
     # Only the release commit itself is built and signed: on master, changing the version and the changelog and nothing
     # else. Whoever can move a tag, edit a draft or push to the release pull request's branch cannot choose the commit.
-    git fetch -q origin master
     want=${tag#v}
-    d() { git diff --no-color --no-ext-diff --no-textconv --no-renames "$@"; }
-    sha=$(git rev-parse -q --verify "$ref^{commit}") || stop "$ref is not a commit"
-    git merge-base --is-ancestor "$sha" origin/master || stop "$tag ($sha) is not on master"
+    # The maintainer's own diff settings must not change what is counted.
+    d() { g diff --no-color --no-ext-diff --no-textconv --no-renames "$@"; }
+    # Only master and the tags were fetched: a commit that is not here is not on master.
+    sha=$(g rev-parse -q --verify "$ref^{commit}") || stop "$tag ($ref) is not on master"
+    g merge-base --is-ancestor "$sha" refs/remotes/origin/master || stop "$tag ($sha) is not on master"
     files=$(d --name-only "$sha^" "$sha" | LC_ALL=C sort | tr '\n' ' ')
     [ "$files" = ".release-please-manifest.json CHANGELOG.md Cargo.lock Cargo.toml " ] || stop "$tag ($sha) is not a release commit: it changes $files"
-    was=$(git cat-file blob "$sha^:Cargo.toml" | sed -n 's/^version = "\(.*\)"$/\1/p' | head -n 1)
+    was=$(g cat-file blob "$sha^:Cargo.toml" | sed -n 's/^version = "\(.*\)"$/\1/p' | head -n 1)
     # Counted, not read off the diff's text: a line of content may itself begin with "--" or "++".
     for f in Cargo.toml Cargo.lock; do
         [ "$(d --numstat "$sha^" "$sha" -- "$f")" = "$(printf '1\t1\t%s' "$f")" ] \
@@ -47,19 +43,15 @@ EOF
             || stop "$f at $tag changes more than nerd's version from $was to $want"
     done
     [ "$(d --numstat "$sha^" "$sha" -- CHANGELOG.md | cut -f2)" = 0 ] || stop "CHANGELOG.md at $tag removes lines"
-    # Under ~/.local/bin, which no This-folder-only pane may write: one in this checkout or the temp folders could change the build before it is signed.
-    mkdir -p "$HOME/.local/bin"
-    work=$(mktemp -d "$HOME/.local/bin/.nerd-publish.XXXXXX")
-    # The worktree first: a run that stops leaves no entry for it in this clone's .git.
-    trap 'git worktree remove --force "$work/src" 2>/dev/null || true; rm -rf "$work"' EXIT
     # Read from git before the build, which can rewrite any file of this user: what runs after it is the release's text.
-    sign_src=$(git cat-file blob "$sha:scripts/sign-release.sh")
-    formula_src=$(git cat-file blob "$sha:scripts/publish-formula.sh")
-    install_src=$(git cat-file blob "$sha:install.sh")
-    git worktree add -q --detach "$work/src" "$sha"
-    # The tests write programs to their temp folder and run them, so theirs is in the work folder, and HOME inside it:
-    # a test build takes HOME only from inside its temp folder (paths::home). One letter: the daemon tests' socket paths
-    # fit macOS's 104 bytes only while it is no longer than the system's temp folder.
+    sign_src=$(g cat-file blob "$sha:scripts/sign-release.sh")
+    formula_src=$(g cat-file blob "$sha:scripts/publish-formula.sh")
+    install_src=$(g cat-file blob "$sha:install.sh")
+    # A checkout, not an archive: build.rs stamps the version with the hash and date it reads from git there.
+    g checkout -q --detach "$sha"
+    # The build and the tests write programs to their temp folder and run them, so theirs is in the work folder, and the
+    # tests' HOME inside it: a test build takes HOME only from inside its temp folder (paths::home). One letter: the daemon
+    # tests' socket paths fit macOS's 104 bytes only while it is no longer than the system's temp folder.
     tmp="$work/t"
     fresh="$tmp/home"
     mkdir -m 700 "$tmp" "$fresh"
@@ -72,12 +64,11 @@ EOF
     cargo_home=${CARGO_HOME:-$HOME/.cargo}
     rustup_home=${RUSTUP_HOME:-$HOME/.rustup}
     user_path=$PATH
-    (cd "$work/src" \
-        && cargo build --release --locked --target-dir "$work/target" \
+    (cd "$src" \
+        && TMPDIR="$tmp" cargo build --release --locked --target-dir "$work/target" \
         && TMPDIR="$tmp" HOME="$fresh" CARGO_HOME="$cargo_home" RUSTUP_HOME="$rustup_home" \
            cargo test --release --locked --target-dir "$work/target" -- --exact $skips >"$work/tests.log" \
-        && HOME="$fresh" CARGO_HOME="$cargo_home" RUSTUP_HOME="$rustup_home" \
-           cargo test --release --locked --target-dir "$work/target" --bin nerd -- --exact $sys >>"$work/tests.log" \
+        && cargo test --release --locked --target-dir "$work/target" --bin nerd -- --exact $sys >>"$work/tests.log" \
         || { sed -n '/^failures:/,$p' "$work/tests.log" >&2; exit 1; })
     # From here on only the system's commands: the build may have planted others in a folder on the user's PATH.
     # gh and the formula get that PATH back, after the key.
@@ -98,7 +89,6 @@ EOF
     PATH=$user_path gh release upload "$tag" --repo nerdterm/nerd "$work/$name" "$work/$name.sha256" "$work/$name.sha256.sig" --clobber
     # The bot leaves the release as a draft; this asset is what publishes it.
     PATH=$user_path gh release edit "$tag" --repo nerdterm/nerd --draft=false
-    git worktree remove --force "$work/src"
     echo "attached $name to $tag and published it"
     # nerdterm.dev is built from the latest release: rebuild it now rather than at the next daily run.
     PATH=$user_path gh workflow run pages --repo nerdterm/nerd-plugins

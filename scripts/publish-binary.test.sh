@@ -1,41 +1,63 @@
 #!/bin/sh
-# Runs the real publish-binary.sh in a scratch repository with stand-ins for gh, cargo and the signing and formula
-# scripts: nothing is built, signed or sent anywhere. Each refusal is checked by its message and by gh's calls.
+# Runs the real publish-binary.sh from a checkout with stand-ins for gh, cargo and the signing and formula scripts:
+# nothing is built, signed or sent anywhere. The global git config, which is the maintainer's and trusted, sends the
+# public URL to a local repository and every other https or ssh address nowhere. Each refusal is checked by its message
+# and by gh's calls.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 t=$(mktemp -d)
 trap 'rm -rf "$t"' EXIT
 fail=0
 bad() { echo "FAIL: $*" >&2; fail=1; }
-export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
+o="$t/origin.git"
+cat >"$t/gitconfig" <<EOF
+[url "file://$o"]
+    insteadOf = https://github.com/nerdterm/nerd.git
+[url "file:///nonexistent/"]
+    insteadOf = https://
+    insteadOf = ssh://
+    insteadOf = git@
+EOF
+export GIT_CONFIG_GLOBAL="$t/gitconfig" GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
+unset GIT_TEMPLATE_DIR
 # A gh that is not the stand-in must never be reached: no token, no config.
 export GH_TOKEN= GH_CONFIG_DIR="$t/gh-config"
 # The script works under ~/.local/bin: a HOME of its own.
 export HOME="$t/home"
 
 mkdir -p "$t/stub"
+# Every git and gh call, with the folder it ran in: none may run in the checkout or name it.
+cat >"$t/stub/git" <<EOF
+#!/bin/sh
+echo "\$PWD \$*" >>"\$STUB/calls.log"
+exec "$(command -v git)" "\$@"
+EOF
 cat >"$t/stub/gh" <<'EOF'
 #!/bin/sh
+echo "$PWD $*" >>"$STUB/calls.log"
 echo "$*" >>"$STUB/gh.log"
 case "$1 $2" in "release view") echo "$STUB_TARGET" ;; esac
 EOF
 cat >"$t/stub/cargo" <<'EOF'
 #!/bin/sh
 echo "$*" >>"$STUB/cargo.log"
-[ "$1" != test ] || echo "${TMPDIR:-} $HOME" >>"$STUB/home.log"
+echo "$1 ${TMPDIR:-} $HOME" >>"$STUB/home.log"
 [ "$1" = build ] || exit 0
-# As build.rs does, and what it was asked to build.
-git status --porcelain >/dev/null && git log -1 --format=%cd >/dev/null
+# What it was asked to build, and the version stamp as build.rs makes it, from git in the folder it builds.
 cat main.rs >"$STUB/built-main.rs"
+git status --porcelain >/dev/null
+stamp="$(git rev-parse --short HEAD), $(git log -1 --format=%cd --date=format:'%Y-%m-%d %H:%M')"
+git describe --tags --abbrev=0 >"$STUB/described" 2>/dev/null || true
 while [ $# -gt 0 ]; do [ "$1" = --target-dir ] && dir=$2; shift; done
 mkdir -p "$dir/release"
-printf '#!/bin/sh\necho "nerd %s (test)"\n' "${STUB_VERSION:-$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)}" >"$dir/release/nerd"
+printf '#!/bin/sh\necho "nerd %s (%s)"\n' "${STUB_VERSION:-$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)}" "$stamp" >"$dir/release/nerd"
 chmod 755 "$dir/release/nerd"
+"$dir/release/nerd" --version >"$STUB/version"
 [ -n "${STUB_HIJACK:-}" ] || exit 0
-# What a build script could do: append to every script run after it (in the clone this worktree belongs to) and plant
-# commands in a folder on PATH.
-top=$(cd "$(git rev-parse --git-common-dir)/.." && pwd)
-for f in "$top/scripts/publish-binary.sh" "$top/scripts/sign-release.sh" "$top/scripts/publish-formula.sh" "$top/install.sh" "$PWD/install.sh" "$(cd .. && pwd)/pin/install"; do
+# What a build script could do: append to every script run after it, in the checkout and in the source it builds, and
+# plant commands in a folder on PATH.
+for f in "$STUB_CHECKOUT/scripts/publish-binary.sh" "$STUB_CHECKOUT/scripts/sign-release.sh" "$STUB_CHECKOUT/scripts/publish-formula.sh" \
+    "$STUB_CHECKOUT/install.sh" "$PWD/scripts/sign-release.sh" "$PWD/scripts/publish-formula.sh" "$PWD/install.sh" "$(cd .. && pwd)/pin/install"; do
     if [ -f "$f" ]; then printf 'echo %s >>"$STUB/hijacked"\n' "$f" >>"$f"; fi
 done
 for c in shasum dirname basename awk tar codesign rm mktemp; do
@@ -43,13 +65,12 @@ for c in shasum dirname basename awk tar codesign rm mktemp; do
     chmod 755 "$STUB/plant/$c"
 done
 EOF
-chmod 755 "$t/stub/gh" "$t/stub/cargo"
+chmod 755 "$t/stub/git" "$t/stub/gh" "$t/stub/cargo"
 export STUB="$t" PATH="$t/stub:$PATH"
 [ "$(command -v gh)" = "$t/stub/gh" ] || { echo "FAIL: gh is not the stand-in" >&2; exit 1; }
 
-# origin: a parent, its release commit to 0.2.0, a later master commit, one more release that also touches build.rs,
+# origin: v0.1.0, its release commit to 0.2.0, a later master commit, one more release that also touches build.rs,
 # and a release-shaped commit on a branch that never reached master.
-o="$t/origin.git"
 git init -q --bare -b master "$o"
 w="$t/make"
 git clone -q "$o" "$w" 2>/dev/null
@@ -79,7 +100,7 @@ version() { # files of release $1 with history $2
 commit() { git -C "$w" add -A && git -C "$w" commit -q -m "$1" && git -C "$w" rev-parse HEAD; }
 version 0.1.0
 echo src >"$w/main.rs"
-commit parent >/dev/null
+first=$(commit parent)
 version 0.2.0
 release=$(commit 'release 0.2.0')
 echo more >>"$w/main.rs"
@@ -103,49 +124,83 @@ version 0.6.0
 grep -v -e '^-- hidden$' "$w/CHANGELOG.md" >"$t/changelog" && mv "$t/changelog" "$w/CHANGELOG.md"
 log=$(commit 'release 0.6.0, and a changelog line gone')
 git -C "$w" push -q origin master
+git -C "$o" tag v0.1.0 "$first"
 git -C "$w" switch -q -c side "$release^"
 version 0.2.0
 side=$(commit 'release-shaped, never on master')
 git -C "$w" push -q origin side
+# Another repository with its own clean release 0.2.0 of another source, for a checkout whose origin points there.
+git -C "$w" switch -q -c decoy "$release^"
+echo decoy >"$w/main.rs"
+commit 'another source' >/dev/null
+version 0.2.0
+decoy=$(commit 'release 0.2.0')
+git init -q --bare -b master "$t/decoy.git"
+git -C "$w" push -q "$t/decoy.git" decoy:master
+git -C "$t/decoy.git" tag v0.2.0 "$decoy"
 
-# publish TAG: a fresh clone runs the real script; the tag, if any, points where $at says.
+# publish TAG: the real script runs from a fresh checkout; the tag, if any, points where $at says.
+runs=0
 publish() {
-    rm -rf "$t/ran" "$t/built-main.rs" "$t/gh.log" "$t/cargo.log" "$t/home.log" "$t/sign.log" "$t/formula.log" "$t/formula-install" "$t/hijacked" "$t/planted" "$t/plant"
-    mkdir "$t/plant"
+    rm -rf "$t/plant" && mkdir "$t/plant"
+    for f in ran built-main.rs gh.log cargo.log home.log sign.log formula.log formula-install hijacked planted calls.log version described; do
+        rm -f "$t/$f"
+    done
     git -C "$o" tag -d "$1" >/dev/null 2>&1 || true
     [ -z "${at:-}" ] || git -C "$o" tag "$1" "$at"
-    c="$t/clone-$1-$(date +%s%N)"
+    runs=$((runs + 1))
+    c="$t/checkout-$runs"
     git clone -q "$o" "$c"
     [ -z "${STUB_PLANT:-}" ] || plant "$c" "$STUB_PLANT"
-    (cd "$c" && PATH="$t/plant:$PATH" sh scripts/publish-binary.sh "$1") >"$t/out" 2>&1 && rc=0 || rc=$?
+    rm -f "$t/calls.log"
+    (cd "$c" && export STUB_CHECKOUT="$c" && if [ -n "${STUB_TEMPLATE:-}" ]; then export GIT_TEMPLATE_DIR="$t/templates"; fi \
+        && if [ -n "${STUB_DIFF:-}" ]; then export GIT_CONFIG_GLOBAL="$t/gitconfig-diff"; fi \
+        && PATH="$t/plant:$PATH" sh scripts/publish-binary.sh "$1") >"$t/out" 2>&1 && rc=0 || rc=$?
     cat "$t/out"
     [ -z "$(ls -A "$HOME/.local/bin" 2>/dev/null)" ] || bad "$1: left $(ls -A "$HOME/.local/bin") in ~/.local/bin"
-    [ "$(git -C "$c" worktree list | wc -l | tr -d ' ')" = 1 ] || bad "$1: left a worktree entry: $(git -C "$c" worktree list)"
+    ! grep -F "$c" "$t/calls.log" >/dev/null 2>&1 || bad "$1: ran git or gh in the checkout or on it: $(grep -F "$c" "$t/calls.log")"
     # A prefix assignment before a function call outlives it in sh: each case starts clean.
-    unset at STUB_VERSION STUB_TARGET STUB_HIJACK STUB_PLANT
+    unset at STUB_VERSION STUB_TARGET STUB_HIJACK STUB_PLANT STUB_TEMPLATE STUB_DIFF
     return "$rc"
 }
-# What a pane whose folder is the checkout can leave in its .git: each program it names records that it ran.
+# What a pane whose folder is the checkout could leave in its .git: each program it names records that it ran.
 cat >"$t/evil" <<'EOF'
 #!/bin/sh
 echo "$1" >>"$STUB/ran"
-case $1 in hook) echo planted >>main.rs ;; textconv) cat "$2" ;; fsmonitor) exit 1 ;; smudge) sed 's/^src$/planted/' ;; *) cat ;; esac
+case $1 in
+    hook) echo planted >>main.rs ;;
+    textconv) cat "$2" ;;
+    textconv-x) sed 's/^/x/' "$2" ;;
+    smudge) sed 's/^src$/planted/' ;;
+    fsmonitor | uploadpack | helper | proxy) exit 1 ;;
+    askpass | credential | alternates) exit 0 ;;
+    *) cat ;;
+esac
 EOF
-chmod 755 "$t/evil"
-plant() { # clone, what
+mkdir -p "$t/hooks" "$t/templates/hooks"
+for h in post-checkout reference-transaction; do
+    printf '#!/bin/sh\nexec "%s" hook\n' "$t/evil" | tee "$t/hooks/$h" >"$t/templates/hooks/$h"
+done
+chmod 755 "$t/evil" "$t/hooks/"* "$t/templates/hooks/"*
+plant() { # checkout, what
     case $2 in
-        hook)
-            printf '#!/bin/sh\nexec "%s" hook\n' "$t/evil" >"$1/.git/hooks/post-checkout"
-            chmod 755 "$1/.git/hooks/post-checkout"
-            ;;
+        hooks) cp "$t/hooks/"* "$1/.git/hooks/" ;;
         replace) git -C "$1" update-ref "refs/replace/$(git -C "$1" rev-parse "$release:main.rs")" "$(echo planted | git -C "$1" hash-object -w --stdin)" ;;
+        # master's tip with the off-master commit as a second parent.
+        grafts) printf '%s %s %s\n' "$(git -C "$1" rev-parse origin/master)" "$(git -C "$1" rev-parse origin/master^)" "$side" >"$1/.git/info/grafts" ;;
         config)
-            printf '* filter=evil diff=evil\n' >"$1/.git/info/attributes"
-            for kv in "core.fsmonitor=$t/evil fsmonitor" "filter.evil.smudge=$t/evil smudge" "filter.evil.clean=$t/evil clean" \
-                filter.evil.required=true "diff.evil.textconv=$t/evil textconv"; do
+            printf '* filter=evil diff=evil text eol=crlf\n' >"$1/.git/info/attributes"
+            echo "$o/objects" >"$1/.git/objects/info/alternates"
+            for kv in "core.hooksPath=$t/hooks" "core.fsmonitor=$t/evil fsmonitor" "remote.origin.uploadpack=$t/evil uploadpack" \
+                "remote.origin.fetch=+refs/heads/side:refs/remotes/origin/master" "remote.other.url=$o" "remote.other.uploadpack=$t/evil uploadpack" \
+                "remotes.origin=other" "pager.fetch=$t/evil pager" "core.pager=$t/evil pager" "core.alternateRefsCommand=$t/evil alternates" \
+                "core.gitProxy=$t/evil proxy" "core.askPass=$t/evil askpass" "credential.helper=$t/evil credential" \
+                "filter.evil.smudge=$t/evil smudge" "filter.evil.clean=$t/evil clean" filter.evil.required=true "diff.evil.textconv=$t/evil textconv"; do
                 git -C "$1" config "${kv%%=*}" "${kv#*=}"
             done
             ;;
+        helper) git -C "$1" config remote.origin.url evil::x && git -C "$1" config alias.remote-evil "!$t/evil helper" ;;
+        decoy) git -C "$1" config remote.origin.url "$t/decoy.git" ;;
     esac
 }
 uploaded() { grep -q '^release upload' "$t/gh.log" 2>/dev/null; }
@@ -153,12 +208,27 @@ expect_refused() { # case, message
     if uploaded; then bad "$1: uploaded"; fi
     grep -q "$2" "$t/out" || bad "$1: no \"$2\" in: $(cat "$t/out")"
 }
+built_src() { # case
+    [ ! -f "$t/ran" ] || bad "$1: ran what the checkout's .git named: $(tr '\n' ' ' <"$t/ran")"
+    [ "$(cat "$t/built-main.rs" 2>/dev/null)" = src ] || bad "$1: built another source: $(cat "$t/built-main.rs" 2>/dev/null)"
+    uploaded || bad "$1: the release commit was not uploaded"
+}
 
 at=$release publish v0.2.0 >/dev/null || bad "(a) the release commit: $(cat "$t/out")"
-uploaded || bad "(a) the release commit was not uploaded"
+built_src "(a)"
 [ -f "$t/sign.log" ] || bad "(a) not signed"
-case $(head -n 1 "$t/home.log" 2>/dev/null) in "$HOME"/.local/bin/.nerd-publish.*/t\ "$HOME"/.local/bin/.nerd-publish.*/t/home) ;; *) bad "(a) the tests' TMPDIR and HOME are not in the work folder: $(cat "$t/home.log" 2>/dev/null)" ;; esac
-[ "$(wc -l <"$t/home.log" | tr -d ' ')" = 2 ] && ! sed -n 2p "$t/home.log" | grep -q '^[^ ]*/\.nerd-publish\.' || bad "(a) the four tests that need the system's temp folder did not run in it: $(cat "$t/home.log")"
+grep -qF " fetch -q --no-tags https://github.com/nerdterm/nerd.git +refs/heads/master:" "$t/calls.log" || bad "(a) fetched from another address: $(grep fetch "$t/calls.log")"
+# The stamp build.rs makes: the release commit's own hash and date.
+grep -Eqx "nerd 0\.2\.0 \($(git -C "$o" rev-parse --short "$release"), [0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}\)" "$t/version" \
+    || bad "(a) the version stamp: $(cat "$t/version")"
+p="$HOME/.local/bin/.nerd-publish.*/t"
+build="build $p $HOME" tests="test $p $p/home"
+# shellcheck disable=SC2254 # a glob on purpose
+case $(sed -n 1p "$t/home.log") in $build) ;; *) bad "(a) the build's TMPDIR is not in the work folder: $(cat "$t/home.log")" ;; esac
+# shellcheck disable=SC2254 # a glob on purpose
+case $(sed -n 2p "$t/home.log") in $tests) ;; *) bad "(a) the tests' TMPDIR and HOME are not in the work folder: $(cat "$t/home.log")" ;; esac
+case $(sed -n 3p "$t/home.log") in *.nerd-publish.*) bad "(a) the four tests that need the system's temp folder did not run in it: $(cat "$t/home.log")" ;; "test "*" $HOME") ;; *) bad "(a) the third cargo call: $(cat "$t/home.log")" ;; esac
+[ "$(wc -l <"$t/home.log" | tr -d ' ')" = 3 ] || bad "(a) cargo ran $(wc -l <"$t/home.log") times"
 
 at=$side publish v0.2.0 >/dev/null && bad "(b) published a commit off master"
 expect_refused "(b) off master" "is not on master"
@@ -175,6 +245,7 @@ expect_refused "(e) another binary" "the built nerd says"
 
 STUB_TARGET=$release at= publish v0.2.0 >/dev/null || bad "(f) the draft's release commit: $(cat "$t/out")"
 uploaded || bad "(f) the draft's release commit was not uploaded"
+[ "$(cat "$t/described" 2>/dev/null)" = v0.1.0 ] || bad "(f) build.rs did not find the last release: $(cat "$t/described" 2>/dev/null)"
 
 STUB_TARGET=$side at= publish v0.2.0 >/dev/null && bad "(g) published a draft target off master"
 expect_refused "(g) draft off master" "is not on master"
@@ -197,16 +268,41 @@ expect_refused "(l) draft target" "targets master, not a commit id"
 
 STUB_HIJACK=1 at=$release publish v0.2.0 >/dev/null || bad "(m) the release commit, with a build that rewrites scripts: $(cat "$t/out")"
 uploaded || bad "(m) the release commit was not uploaded"
-grep -q hijacked "$c/scripts/sign-release.sh" || bad "(m) the build never reached the clone's scripts"
+grep -q hijacked "$c/scripts/sign-release.sh" || bad "(m) the build never reached the checkout's scripts"
 [ ! -f "$t/hijacked" ] || bad "(m) ran what the build appended to: $(tr '\n' ' ' <"$t/hijacked")"
 [ ! -f "$t/planted" ] || bad "(m) ran commands the build planted: $(tr '\n' ' ' <"$t/planted")"
 cmp -s "$t/formula-install" "$w/install.sh" || bad "(m) the formula did not read the release commit's install.sh"
 
-for p in "n hook" "o replace" "p config"; do
-    STUB_PLANT=${p#* } at=$release publish v0.2.0 >/dev/null || bad "(${p%% *}) the release commit, with a ${p#* } a pane left in .git: $(cat "$t/out")"
-    [ ! -f "$t/ran" ] || bad "(${p%% *}) ran what .git named: $(tr '\n' ' ' <"$t/ran")"
-    [ "$(cat "$t/built-main.rs" 2>/dev/null)" = src ] || bad "(${p%% *}) built another source: $(cat "$t/built-main.rs" 2>/dev/null)"
+# What the checkout's .git holds has no effect: hooks, a replace ref, config (a hook path, upload-pack, a fetch refspec, a
+# remote group, a pager, filters, textconv, fsmonitor, alternates, a proxy, askpass, a credential helper) with attributes,
+# an alias remote helper, an origin that points at another repository.
+for p in "n hooks" "o replace" "p config" "q helper" "r decoy"; do
+    STUB_PLANT=${p#* } at=$release publish v0.2.0 >/dev/null || bad "(${p%% *}) the release commit, with ${p#* } in the checkout's .git: $(cat "$t/out")"
+    built_src "(${p%% *}) ${p#* }"
 done
 
-[ "$fail" = 0 ] && echo "publish-binary: 16 cases pass"
+STUB_PLANT=grafts at=$side publish v0.2.0 >/dev/null && bad "(s) published a commit off master that the checkout's grafts put on it"
+expect_refused "(s) grafts" "is not on master"
+
+STUB_TEMPLATE=1 at=$release publish v0.2.0 >/dev/null || bad "(t) the release commit, with hooks in the git template folder: $(cat "$t/out")"
+built_src "(t) template"
+
+# The maintainer's own diff settings do not change what the checks count.
+cat >"$t/gitconfig-diff" <<EOF
+[include]
+    path = $t/gitconfig
+[color]
+    ui = always
+[diff]
+    external = $t/evil external
+[diff "x"]
+    textconv = $t/evil textconv-x
+[core]
+    attributesFile = $t/attributes-diff
+EOF
+printf 'Cargo.toml diff=x\nCargo.lock diff=x\n' >"$t/attributes-diff"
+STUB_DIFF=1 at=$release publish v0.2.0 >/dev/null || bad "(u) the release commit, with the maintainer's own diff settings: $(cat "$t/out")"
+built_src "(u) diff settings"
+
+[ "$fail" = 0 ] && echo "publish-binary: 21 cases pass"
 exit "$fail"

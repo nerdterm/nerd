@@ -65,6 +65,16 @@ serve "not-a-sum  $name" main
 render v1.2.3 >/dev/null 2>&1 && { echo "publish-formula: took a bad checksum" >&2; fail=1; }
 serve "$sha  nerd-v1.2.0-macos-arm64.tar.gz" main
 render v1.2.3 >/dev/null 2>&1 && { echo "publish-formula: took a checksum for another archive" >&2; fail=1; }
+# Run alone, it takes the keys of the install.sh beside it, not of the folder the checkout's .git calls its top.
+c="$stub/checkout"
+mkdir -p "$c/scripts" "$stub/elsewhere"
+cp "$here/publish-formula.sh" "$c/scripts/"
+cp "$stub/install.sh" "$c/install.sh"
+sed "s|$(sed -n 2p "$stub/main.pub")|$(sed -n 2p "$stub/other.pub")|" "$stub/install.sh" >"$stub/elsewhere/install.sh"
+GIT_CONFIG_GLOBAL=/dev/null git init -q "$c" && GIT_CONFIG_GLOBAL=/dev/null git -C "$c" config core.worktree "$stub/elsewhere"
+serve "$sha  $name" main
+(cd "$c" && PATH="$stub:$PATH" STUB=$stub sh scripts/publish-formula.sh --dry-run v1.2.3) >"$stub/out" 2>&1 \
+    || { echo "publish-formula: run alone, it did not take the keys beside it: $(cat "$stub/out")" >&2; fail=1; }
 [ -z "$(ls -A "$HOME/.local/bin")" ] || { echo "publish-formula: left $(ls -A "$HOME/.local/bin") in ~/.local/bin" >&2; fail=1; }
 if [ "$fail" -eq 0 ]; then
     echo "publish-formula: the formula renders only for a release signed with install.sh's keys"
