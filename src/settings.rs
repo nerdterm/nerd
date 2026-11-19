@@ -90,7 +90,7 @@ pub enum SettingsOutcome {
     None,
     Changed,
     Close,
-    /// Agents not hooked before: the caller asks first.
+    /// Agents not hooked before, or a hooked agent's changed resume line: the caller asks first.
     InstallHook,
     /// Agents already hooked: the caller asks before taking the hook out.
     RemoveHook,
@@ -110,6 +110,10 @@ pub struct Settings {
     /// `draw()` only receives the theme, so the screen keeps its own copy of the values.
     cfg: Config,
     hook_installed: bool,
+    /// A hooked agent's resume line changed since the person confirmed it.
+    resume_changed: bool,
+    /// The record of confirmed resume lines is there but could not be read.
+    resume_unread: bool,
     /// An install error, red, under the list; without one the selected row's hint shows there.
     message: Option<(bool, String)>,
     /// The window is attached from inside a pane: agent hooks are not changed from it.
@@ -146,22 +150,32 @@ pub const KEYS: &[Key] = &[
 
 impl Settings {
     pub fn new(cfg: &Config) -> Self {
+        let ask = crate::hook::first_installs();
         Self {
             selected: 0,
             cfg: cfg.clone(),
             hook_installed: crate::hook::is_installed(),
+            resume_changed: !ask.relined().is_empty(),
+            resume_unread: ask.unread,
             message: None,
             inside: false,
             scroll: Default::default(),
         }
     }
 
-    /// The message line under the list is cut rather than wrapped; the key strip under it wraps.
+    /// The window grows by the rows an error wraps onto, where the screen has them; a row's hint takes one row,
+    /// so hovering never moves the rows.
     pub fn rect(&self, screen: Rect) -> Rect {
         let w = crate::chrome::WINDOW_W;
-        let strip = hint_strip(crate::chrome::fit(screen, w, 0).width.saturating_sub(4) as usize).len();
-        // the list, the message line, the key strip
-        crate::chrome::fit(screen, w, (lines().len() + 1 + strip) as u16)
+        let width = crate::chrome::fit(screen, w, 0).width.saturating_sub(4) as usize;
+        let note = self.message.as_ref().map_or(1, |(_, t)| crate::menu::wrap(t, width).len().max(1));
+        // the list, the message lines, the key strip
+        crate::chrome::fit(screen, w, (lines().len() + note + hint_strip(width).len()) as u16)
+    }
+
+    /// The error under the list, else the selected row's hint.
+    fn note(&self) -> Option<(bool, &str)> {
+        self.message.as_ref().map(|(bad, t)| (*bad, t.as_str())).or(hint(ROWS[self.selected].2).map(|t| (false, t)))
     }
 
     /// Draws the panel; returns each setting's row and its index into `ROWS`.
@@ -181,13 +195,22 @@ impl Settings {
 
         // Carve off the bottom before the list, or a long list overwrites the hint.
         let mut bottom = crate::chrome::draw_hint(buf, inner, &hint_strip(width), theme).max(y);
-        let note = self.message.as_ref().map(|(bad, t)| (*bad, t.as_str())).or(hint(ROWS[self.selected].2).map(|t| (false, t)));
-        if let Some((is_error, text)) = note
-            && bottom > y
-        {
-            bottom -= 1;
+        if let Some((is_error, text)) = self.note() {
             let color = if is_error { theme.bad } else { theme.faint };
-            buf.set_stringn(inner.x, bottom, text, width, Style::default().fg(color));
+            // The list keeps its rows: the note gets what is left beside them, at least one, cut at its end.
+            let fits = (bottom.saturating_sub(y) as usize).saturating_sub(lines().len()).max(1);
+            let mut said = crate::menu::wrap(text, width);
+            if said.len() > fits {
+                let rest = said.split_off(fits - 1).join(" ");
+                said.push(crate::slots::fit(&rest, width));
+            }
+            for line in said.iter().rev() {
+                if bottom <= y {
+                    break;
+                }
+                bottom -= 1;
+                buf.set_stringn(inner.x, bottom, line, width, Style::default().fg(color));
+            }
         }
 
         // A screen shorter than the list scrolls so the selected row stays in view.
@@ -360,6 +383,8 @@ impl Settings {
             Item::Scrollback => c.scrollback.to_string(),
             Item::PaneGap => c.pane_gap.to_string(),
             Item::EditConfig => String::new(),
+            Item::Hook if self.hook_installed && self.resume_changed && self.resume_unread => "confirmed resume lines unreadable, confirm".into(),
+            Item::Hook if self.hook_installed && self.resume_changed => "a resume line changed, confirm".into(),
             Item::Hook => if self.hook_installed { "installed" } else { "not installed" }.into(),
             Item::Messaging => on_off(crate::policy::current().on),
             Item::PanesStop => if crate::policy::current().allow_from_panes { "yes" } else { "no" }.into(),
@@ -429,11 +454,14 @@ impl Settings {
         SettingsOutcome::Changed
     }
 
-    /// Both ways ask first when a person has not yet read what changes; a hooked agent is removed even if its resume line changed.
+    /// Both ways ask first when a person has not yet read what changes; a changed resume line is confirmed before hooks can be removed here.
     fn toggle_hook(&mut self) -> SettingsOutcome {
         if self.inside {
             self.message = Some((true, crate::app::INSIDE_REFUSED.into()));
             return SettingsOutcome::None;
+        }
+        if self.hook_installed && self.resume_changed {
+            return SettingsOutcome::InstallHook;
         }
         if self.hook_installed {
             return SettingsOutcome::RemoveHook;
@@ -1025,6 +1053,100 @@ mod tests {
         assert_eq!(s.key(key(KeyCode::Enter), &mut cfg), SettingsOutcome::RemoveHook);
         let mut s = at(Item::EditConfig, &cfg);
         assert_eq!(s.key(key(KeyCode::Enter), &mut cfg), SettingsOutcome::EditConfig);
+    }
+
+    #[test]
+    fn a_refusal_wider_than_the_window_is_shown_whole_and_every_row_still_answers_its_click() {
+        let screen = Rect::new(0, 0, 100, 60);
+        let mut cfg = Config::default();
+        let mut s = at(Item::Hook, &cfg);
+        s.inside = true;
+        assert_eq!(s.key(key(KeyCode::Enter), &mut cfg), SettingsOutcome::None);
+        assert!(crate::app::INSIDE_REFUSED.chars().count() > crate::chrome::WINDOW_W as usize, "the case this test is for");
+        let mut buf = Buffer::empty(screen);
+        let rows = s.draw(&mut buf, screen, &theme());
+        let text: Vec<String> = (0..screen.height).map(|y| text_of(&buf, Rect::new(0, y, screen.width, 1))).collect();
+        let words = text.iter().map(|l| l.trim_matches(|c| c == '│' || c == ' ')).filter(|l| !l.is_empty()).collect::<Vec<_>>().join(" ");
+        assert!(words.contains(crate::app::INSIDE_REFUSED), "{text:#?}");
+        assert_eq!(rows.len(), ROWS.len(), "no row lost to the second line");
+        for (r, i) in &rows {
+            assert!(text_of(&buf, *r).contains(ROWS[*i].1), "row {i} is drawn where a click finds it");
+        }
+        let theme_row = rows.iter().find(|(_, i)| ROWS[*i].2 == Item::Theme).unwrap().0;
+        let click = crossterm::event::MouseEvent { kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left), column: theme_row.x + 2, row: theme_row.y, modifiers: crossterm::event::KeyModifiers::NONE };
+        assert_eq!(s.mouse(click, screen, &mut cfg, &rows), SettingsOutcome::Changed);
+        assert_eq!(cfg.theme, ThemeMode::Dark, "the click on Theme changed the theme");
+    }
+
+    #[test]
+    fn a_message_never_takes_a_row_and_hovering_keeps_the_window_where_it_was_drawn() {
+        let mut cfg = Config::default();
+        let draw = |s: &Settings, screen: Rect| {
+            let mut buf = Buffer::empty(screen);
+            let rows = s.draw(&mut buf, screen, &theme());
+            (buf, rows)
+        };
+        let narrow = Rect::new(0, 0, 40, 60);
+        let mut s = at(Item::Theme, &cfg);
+        let (_, rows) = draw(&s, narrow);
+        let width = s.rect(narrow).width.saturating_sub(4) as usize;
+        assert!(CONFIG_HINT.chars().count() > width, "a hint that wraps at 40 columns");
+        let before = s.rect(narrow);
+        let edit = rows.iter().find(|(_, i)| ROWS[*i].2 == Item::EditConfig).unwrap().0;
+        let moved = crossterm::event::MouseEvent { kind: crossterm::event::MouseEventKind::Moved, column: edit.x + 2, row: edit.y, modifiers: crossterm::event::KeyModifiers::NONE };
+        s.mouse(moved, narrow, &mut cfg, &rows);
+        assert_eq!(s.chosen(), "Edit config.json…");
+        assert_eq!(s.rect(narrow), before, "hovering a row with a long hint does not move the rows under the pointer");
+        let (buf, again) = draw(&s, narrow);
+        assert_eq!(again, rows);
+        for (r, i) in &again {
+            assert!(text_of(&buf, *r).contains(&ROWS[*i].1.chars().take(12).collect::<String>()), "row {i} is drawn where a click finds it");
+        }
+
+        let short = Rect::new(0, 0, 100, 12);
+        let mut s = at(Item::Hook, &cfg);
+        s.inside = true;
+        s.key(key(KeyCode::Enter), &mut cfg);
+        let (buf, rows) = draw(&s, short);
+        let said_then = s.message.replace((true, "short".into()));
+        let (_, plain) = draw(&s, short);
+        s.message = said_then;
+        assert!(!rows.is_empty() && rows == plain, "a long message takes the one row a short one does, never a row of the list: {rows:?} {plain:?}");
+        let text: Vec<String> = (0..short.height).map(|y| text_of(&buf, Rect::new(0, y, short.width, 1))).collect();
+        let said = text.iter().find(|l| l.contains("Not from a window")).expect("the message's start is shown");
+        assert!(said.trim_matches(|c| c == '│' || c == ' ').ends_with('…'), "cut at its end: {said}");
+        let first = rows[0];
+        let click = crossterm::event::MouseEvent { kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left), column: first.0.x + 2, row: first.0.y, modifiers: crossterm::event::KeyModifiers::NONE };
+        s.mouse(click, short, &mut cfg, &rows);
+        assert_eq!(s.chosen(), ROWS[first.1].1, "a click hits the row drawn there");
+    }
+
+    #[test]
+    fn an_unreadable_record_is_called_that_on_the_hook_item_and_fits_beside_its_label() {
+        let mut s = at(Item::Hook, &Config::default());
+        (s.hook_installed, s.resume_changed, s.resume_unread) = (true, true, true);
+        assert_eq!(s.hook_row_value(), "confirmed resume lines unreadable, confirm");
+        let screen = Rect::new(0, 0, 120, 60);
+        let mut buf = Buffer::empty(screen);
+        let rows = s.draw(&mut buf, screen, &theme());
+        let (row, _) = rows.iter().find(|(_, i)| ROWS[*i].2 == Item::Hook).unwrap();
+        let line = text_of(&buf, *row);
+        assert!(line.contains("Agent hooks ") && line.trim_end().ends_with("confirmed resume lines unreadable, confirm"), "{line:?}");
+    }
+
+    #[test]
+    fn a_changed_resume_line_turns_the_hook_item_into_its_confirmation() {
+        let mut cfg = Config::default();
+        let mut s = at(Item::Hook, &cfg);
+        (s.hook_installed, s.resume_changed) = (true, true);
+        assert_eq!(s.hook_row_value(), "a resume line changed, confirm");
+        assert_eq!(s.key(key(KeyCode::Enter), &mut cfg), SettingsOutcome::InstallHook, "the window that asks to confirm");
+        s.resume_changed = false;
+        assert_eq!(s.hook_row_value(), "installed");
+        assert_eq!(s.key(key(KeyCode::Enter), &mut cfg), SettingsOutcome::RemoveHook, "confirmed: the ordinary item");
+        (s.resume_changed, s.inside) = (true, true);
+        assert_eq!(s.key(key(KeyCode::Enter), &mut cfg), SettingsOutcome::None);
+        assert_eq!(s.message, Some((true, crate::app::INSIDE_REFUSED.into())), "not from a window inside a pane");
     }
 
     #[test]

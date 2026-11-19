@@ -19,11 +19,20 @@
       { "on": "SubagentStop", "do": "sub-stop" }
     ],
     "session": { "field": "session_id", "kind": "word" },
-    "resume": ["codex", "resume", "{id}"],
+    "resume": ["codex", "--no-daemon", "resume", "{id}"],
     "strip": {
       "value": ["resume"],
       "flag": ["--last"]
     },
+    "blocked_text": [
+      "Would you like to run the following command",
+      "Would you like to make the following edits",
+      "Would you like to grant these permissions",
+      "Would you like to send input to the existing terminal",
+      "Would you like to send input to terminal ",
+      "Do you want to approve network access to",
+      "› 1."
+    ],
     "data": ["~/.codex/sessions", "~/.codex/log", "~/.codex/history.jsonl", "~/.codex/session_index.jsonl", "~/.codex/installation_id", "~/.codex/thread-writer-locks"],
     "network": { "hosts": ["api.openai.com", "auth.openai.com", "chatgpt.com"], "ports": [443] },
     "own_sandbox": "start it with --sandbox danger-full-access"

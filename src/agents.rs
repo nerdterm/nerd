@@ -1106,18 +1106,37 @@ impl Manifest {
         self.agent.resume.join(" ").replace("{id}", "<id>")
     }
 
+    /// What starts the agent fresh: a built-in's resume line without the resume part, so it runs as a resumed session
+    /// does; a plugin's words are typed only once the person confirmed its line, so it starts as its program.
+    pub fn fresh_argv(&self) -> Vec<String> {
+        let line: Vec<String> = self.agent.resume.iter().filter(|w| !w.contains("{id}")).cloned().collect();
+        if line.is_empty() || !self.builtin { vec![self.program().to_string()] } else { self.strip_resume(&line) }
+    }
+
+    /// ceiling: a session name, not a uuid, after a flag is kept as that flag's value; knowing which flags take one is the way past.
     pub fn strip_resume(&self, argv: &[String]) -> Vec<String> {
         let s = &self.agent.strip;
         let mut out = Vec::new();
-        let mut skip = false;
+        // Some(next): a resume word passed and its id is still to come; `next`: this is the word right after it.
+        let mut id: Option<bool> = None;
         for a in argv {
-            if std::mem::take(&mut skip) {
-                continue;
-            }
+            let waiting = id.take();
             if s.value.contains(a) {
-                skip = true;
-            } else if !s.flag.contains(a) && !s.value.iter().any(|v| a.strip_prefix(v.as_str()).is_some_and(|r| r.starts_with('='))) {
+                id = Some(true);
+            } else if s.flag.contains(a) || s.value.iter().any(|v| a.strip_prefix(v.as_str()).is_some_and(|r| r.starts_with('='))) {
+                id = waiting.map(|_| false);
+            } else if a.starts_with('-') {
+                id = waiting.map(|_| false);
                 out.push(a.clone());
+            } else {
+                match waiting {
+                    Some(next) if next || is_uuid(a) => {}
+                    Some(_) => {
+                        id = Some(false);
+                        out.push(a.clone());
+                    }
+                    None => out.push(a.clone()),
+                }
             }
         }
         out
@@ -1307,7 +1326,20 @@ mod tests {
     fn an_agent_without_its_own_prompt_text_is_read_by_claudes() {
         let claude = get("claude").unwrap().agent.blocked_text;
         assert_eq!(blocked_text(Some("claude")), claude);
-        assert_eq!(blocked_text(Some("codex")), claude, "a manifest without blocked_text");
+        assert_eq!(blocked_text(Some("gemini")), claude, "a manifest without blocked_text");
+        assert_eq!(
+            blocked_text(Some("codex")),
+            [
+                "Would you like to run the following command",
+                "Would you like to make the following edits",
+                "Would you like to grant these permissions",
+                "Would you like to send input to the existing terminal",
+                "Would you like to send input to terminal ",
+                "Do you want to approve network access to",
+                "\u{203a} 1."
+            ],
+            "Codex's own questions"
+        );
         assert_eq!(blocked_text(Some("amp")), claude, "an agent known by name only");
         assert!(blocked_text(None).is_empty(), "a shell is never asked a question");
     }
@@ -1826,6 +1858,21 @@ mod tests {
         assert_eq!(by("claude").strip_resume(&v(&["claude", "--resume=abc", "--continue"])), v(&["claude"]));
         assert_eq!(by("claude").strip_resume(&v(&["zsh", "-f"])), v(&["zsh", "-f"]));
         assert_eq!(by("codex").strip_resume(&v(&["codex", "resume", "abc", "--model", "o"])), v(&["codex", "--model", "o"]));
+        assert_eq!(by("codex").strip_resume(&v(&["codex", "--no-daemon", "resume", "X"])), v(&["codex", "--no-daemon"]), "a fresh Codex keeps running without the shared server");
+        let uuid = "019a0e00-52ae-7ef0-a6ff-7e16d3f63eeb";
+        assert_eq!(by("codex").strip_resume(&v(&["codex", "resume", "--no-daemon", uuid])), v(&["codex", "--no-daemon"]), "a flag between resume and its id stays, the id goes");
+        assert_eq!(by("codex").strip_resume(&v(&["codex", "resume", "--model", "o3"])), v(&["codex", "--model", "o3"]), "no id: a flag's value is not taken for one");
+        assert_eq!(by("codex").strip_resume(&v(&["codex", "resume", uuid, "--model", "o3"])), v(&["codex", "--model", "o3"]));
+        assert_eq!(by("codex").strip_resume(&v(&["codex", "resume", "--model", "o3", uuid])), v(&["codex", "--model", "o3"]), "an id after a flag with a value");
+        let fresh = |n: &str| by(n).fresh_argv().join(" ");
+        assert_eq!(fresh("codex"), "codex --no-daemon", "its resume line without the resume part");
+        for m in b.iter().filter(|m| m.name != "codex") {
+            assert_eq!(m.fresh_argv(), v(&[m.program()]), "{}", m.name);
+        }
+        let mut plugin: Manifest = serde_json::from_value(serde_json::json!({ "name": "fake", "title": "Fake", "agent": { "names": ["fake"], "session": { "field": "id", "kind": "word" }, "resume": ["fake", "--yolo", "resume", "{id}"], "strip": { "value": ["resume"] } } })).unwrap();
+        assert_eq!(plugin.fresh_argv(), v(&["fake"]), "a plugin's flags are typed only on a confirmed resume");
+        plugin.builtin = true;
+        assert_eq!(plugin.fresh_argv(), v(&["fake", "--yolo"]));
         assert_eq!(by("opencode").strip_resume(&v(&["opencode", "-s", "ses_1", "-c"])), v(&["opencode"]));
         assert_eq!(by("pi").strip_resume(&v(&["pi", "--session", "019a", "--model", "m", "-c"])), v(&["pi", "--model", "m"]));
     }
@@ -1836,9 +1883,9 @@ mod tests {
         let uuid = "0b5e7c3a-1d2f-4e6a-9b8c-7d6e5f4a3b2c";
         let argv = |n: &str, id: &str| b.iter().find(|m| m.name == n).unwrap().resume_argv(id).map(|v| v.join(" "));
         assert_eq!(argv("claude", uuid), Some(format!("claude --resume={uuid}")));
-        assert_eq!(argv("codex", uuid), Some(format!("codex resume {uuid}")));
+        assert_eq!(argv("codex", uuid), Some(format!("codex --no-daemon resume {uuid}")));
         let recorded = "01a0e00a-52ae-7ef0-a6ff-7e16d3f63eeb";
-        assert_eq!(argv("codex", recorded), Some(format!("codex resume {recorded}")), "a Codex id as recorded: uuid-shaped, taken as a word");
+        assert_eq!(argv("codex", recorded), Some(format!("codex --no-daemon resume {recorded}")), "a Codex id as recorded: uuid-shaped, taken as a word");
         assert_eq!(argv("copilot", uuid), Some(format!("copilot --resume {uuid}")));
         assert_eq!(argv("gemini", uuid), Some(format!("gemini --resume {uuid}")));
         assert_eq!(argv("qwen", uuid), Some(format!("qwen --resume {uuid}")));

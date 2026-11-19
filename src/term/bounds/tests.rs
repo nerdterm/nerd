@@ -584,7 +584,7 @@ fn a_huge_title_saved_many_times_stays_small() {
 #[test]
 fn an_update_holds_at_most_2_mib_and_vte_never_buffers() {
     let mut t = Term::new(80, 24, 30_000);
-    t.take(b"\x1b[?2026h");
+    t.feed(b"\x1b[?2026h");
     let total = (2 << 20) + (16 << 10);
     for _ in 0..total / 8192 {
         t.take(&[b'x'; 8192]);

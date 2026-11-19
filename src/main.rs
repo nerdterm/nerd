@@ -164,28 +164,58 @@ fn run() -> std::io::Result<()> {
         Some("--install") => return install_autostart(),
         Some("--preset") => return presets::main(&args[1..]),
         Some("--install-hook") => {
+            // agent titles and paths come from manifests: printed as the prompt prints them
+            let say = |line: String| println!("{}", render::unspoofed(&line));
             let first = hook::first_installs();
-            if !first.is_empty() {
-                print!("{}", first.prompt());
-                std::io::Write::flush(&mut std::io::stdout())?;
-                let yes = install::answered_yes(std::io::stdin().lock())?;
-                log::info(&format!("first hook install from the command line {}: {}", if yes { "confirmed" } else { "declined" }, first.summary()));
-                if !yes {
-                    println!("Nothing installed");
-                    return Ok(());
+            if first.is_empty() {
+                let done = hook::install()?;
+                for (agent, r) in &done {
+                    match r {
+                        Ok(file) => say(format!("{agent}: {}", file.display())),
+                        Err(e) => say(format!("{agent}: not installed, {e}")),
+                    }
+                }
+                if done.iter().any(|(_, r)| r.is_err()) {
+                    std::process::exit(1);
+                }
+                return Ok(());
+            }
+            print!("{}", first.prompt());
+            std::io::Write::flush(&mut std::io::stdout())?;
+            let yes = install::answered_yes(std::io::stdin().lock())?;
+            log::info(&format!("first hook install from the command line {}: {}", if yes { "confirmed" } else { "declined" }, first.summary()));
+            if !yes {
+                println!("{}", if first.changed() { "Nothing confirmed" } else { "Nothing installed" });
+                return Ok(());
+            }
+            // A yes does what the table showed, and nothing for an agent that changed or appeared while it waited.
+            let (done, moved, unrecorded) = hook::apply(&first);
+            for (agent, r) in &done {
+                match r {
+                    Ok(file) => say(format!("{agent}: {}", file.display())),
+                    Err(e) => say(format!("{agent}: not installed, {e}")),
                 }
             }
-            for (agent, done) in hook::install()? {
-                match done {
-                    Ok(file) => println!("{agent}: {}", file.display()),
-                    Err(e) => println!("{agent}: not installed, {e}"),
+            let rows = || first.rows.iter().zip(&first.hooked).zip(&first.names);
+            if unrecorded.is_none() {
+                for ((row, _), _) in rows().filter(|((_, hooked), name)| **hooked && !moved.contains(name)) {
+                    say(format!("{}: resume line confirmed", row[0]));
                 }
+            }
+            for ((row, _), _) in rows().filter(|(_, name)| moved.contains(name)) {
+                say(format!("{}: changed while you were asked; nothing was done for it", row[0]));
+            }
+            if let Some(e) = &unrecorded {
+                say(e.clone());
+            }
+            if !moved.is_empty() || unrecorded.is_some() || done.iter().any(|(_, r)| r.is_err()) {
+                std::process::exit(1);
             }
             return Ok(());
         }
         Some("--uninstall-hook") => {
             let gone = hook::uninstall()?;
-            println!("{}", if gone.is_empty() { "No hook was installed".to_string() } else { format!("Removed from {}", gone.join(", ")) });
+            println!("{}", if gone.is_empty() { "No hook was installed".to_string() } else { render::unspoofed(&format!("Removed from {}", gone.join(", "))) });
             return Ok(());
         }
         Some("--uninstall") => {

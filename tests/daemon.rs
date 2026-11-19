@@ -3646,3 +3646,150 @@ fn a_plugin_installed_while_panes_are_open_hears_them_as_they_are() {
     assert!(wait_reading(&mut client, Duration::from_secs(15), || read(&log).contains("\"event\":\"pane_opened\",\"pane\":1")), "{:?}\n{}", read(&log), daemon_log(&env));
     let _ = std::fs::remove_dir_all(&env.dir);
 }
+
+/// A yes at `nerd --install-hook` does what its table showed: an agent folder that appears while it waits is left
+/// alone, and an agent already hooked is not written again.
+#[test]
+fn a_yes_at_the_install_prompt_does_what_it_showed() {
+    let home = std::env::temp_dir().join(format!("nerd-prompt-yes-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    let state = home.join("state");
+    std::fs::create_dir_all(home.join(".gemini")).unwrap();
+    let start = || {
+        Command::new(env!("CARGO_BIN_EXE_nerd"))
+            .arg("--install-hook")
+            .env("HOME", &home)
+            .env("NERD_STATE_DIR", &state)
+            .env_remove("NERD_SOCKET")
+            .env_remove("NERD_INSTANCE")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap()
+    };
+    let mut first = start();
+    first.stdin.take().unwrap().write_all(b"y\n").unwrap();
+    assert!(first.wait_with_output().unwrap().status.success());
+    let gemini = home.join(".gemini/settings.json");
+    let _ = std::fs::remove_file(home.join(".gemini/settings.json.bak-nerd"));
+    let before = std::fs::read(&gemini).unwrap();
+
+    std::fs::create_dir_all(home.join(".qwen")).unwrap();
+    let mut child = start();
+    let mut out = child.stdout.take().unwrap();
+    let mut asked = Vec::new();
+    let mut chunk = [0u8; 4096];
+    while !String::from_utf8_lossy(&asked).contains("Install? [y/N] ") {
+        let n = out.read(&mut chunk).unwrap();
+        assert!(n > 0, "the prompt never came: {}", String::from_utf8_lossy(&asked));
+        asked.extend_from_slice(&chunk[..n]);
+    }
+    let asked = String::from_utf8_lossy(&asked).into_owned();
+    assert!(asked.contains("Qwen Code") && !asked.contains("Codex") && !asked.contains("Gemini CLI"), "{asked}");
+    std::fs::create_dir_all(home.join(".codex")).unwrap();
+    child.stdin.take().unwrap().write_all(b"y\n").unwrap();
+    let mut said = String::new();
+    out.read_to_string(&mut said).unwrap();
+    assert!(child.wait().unwrap().success(), "{said}");
+    assert!(std::fs::read_to_string(home.join(".qwen/settings.json")).unwrap().contains("nerd-agent-state.sh' idle qwen"), "what it showed is hooked: {said}");
+    let confirmed = std::fs::read_to_string(state.join("hook-confirmed.json")).unwrap();
+    assert!(!home.join(".codex/hooks.json").exists() && !confirmed.contains("codex"), "a folder that appeared while it asked is neither hooked nor recorded: {said}\n{confirmed}");
+    assert_eq!(std::fs::read(&gemini).unwrap(), before, "an agent hooked before and not shown is not written: {said}");
+    assert!(!home.join(".gemini/settings.json.bak-nerd").exists(), "and gains no backup");
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+/// What `nerd --install-hook` prints after the answer, and `nerd --uninstall-hook`, carry no format character from a manifest's title.
+#[test]
+fn install_and_uninstall_hook_print_no_format_characters() {
+    let home = std::env::temp_dir().join(format!("nerd-prompt-bidi-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    let state = home.join("state");
+    std::fs::create_dir_all(state.join("plugins/bidi")).unwrap();
+    std::fs::create_dir_all(home.join(".bidi")).unwrap();
+    let manifest = serde_json::json!({
+        "name": "bidi",
+        "title": "Bi\u{202E}di",
+        "agent": { "names": ["bidi"], "config": { "path": "~/.bidi/hooks.json", "shape": "nested" }, "arg": "bidi", "events": [{ "on": "Start", "do": "idle" }], "session": { "field": "sid", "kind": "word" }, "resume": ["bidi", "{id}"] }
+    });
+    std::fs::write(state.join("plugins/bidi/plugin.json"), manifest.to_string()).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_nerd"))
+        .arg("--install-hook")
+        .env("HOME", &home)
+        .env("NERD_STATE_DIR", &state)
+        .env_remove("NERD_SOCKET")
+        .env_remove("NERD_INSTANCE")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(b"y\n").unwrap();
+    let said = String::from_utf8_lossy(&child.wait_with_output().unwrap().stdout).into_owned();
+    assert!(said.contains("Bidi: ") && !said.contains('\u{202E}'), "{said:?}");
+    let out = Command::new(env!("CARGO_BIN_EXE_nerd"))
+        .arg("--uninstall-hook")
+        .env("HOME", &home)
+        .env("NERD_STATE_DIR", &state)
+        .env_remove("NERD_SOCKET")
+        .env_remove("NERD_INSTANCE")
+        .output()
+        .unwrap();
+    let gone = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(gone.contains("Removed from Bidi") && !gone.contains('\u{202E}'), "{gone:?}");
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+/// `nerd --install-hook` exits non-zero whenever something it was to do was not done, asked or not, and a
+/// prompt that only confirms resume lines says so.
+#[test]
+fn the_install_prompt_fails_loudly_and_a_confirmation_says_confirm() {
+    use std::os::unix::fs::PermissionsExt;
+    let home = std::env::temp_dir().join(format!("nerd-prompt-fail-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    let state = home.join("state");
+    std::fs::create_dir_all(&state).unwrap();
+    let run = |answer: &[u8]| {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_nerd"))
+            .arg("--install-hook")
+            .env("HOME", &home)
+            .env("NERD_STATE_DIR", &state)
+            .env_remove("NERD_SOCKET")
+            .env_remove("NERD_INSTANCE")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(answer).unwrap();
+        let out = child.wait_with_output().unwrap();
+        (out.status.code(), String::from_utf8_lossy(&out.stdout).into_owned())
+    };
+    std::fs::create_dir_all(home.join(".gemini")).unwrap();
+    std::fs::write(home.join(".gemini/settings.json"), "{not json").unwrap();
+    let (code, said) = run(b"y\n");
+    assert!(said.contains("Install? [y/N]") && said.contains("Gemini CLI: not installed"), "{said}");
+    assert_eq!(code, Some(1), "asked, and the install failed: {said}");
+
+    std::fs::write(home.join(".gemini/settings.json"), "{}").unwrap();
+    assert_eq!(run(b"y\n").0, Some(0));
+    let gemini = home.join(".gemini/settings.json");
+    // still nerd's, so nothing is asked; no longer JSON, so the install fails
+    std::fs::write(&gemini, format!("{}\n}}", std::fs::read_to_string(&gemini).unwrap())).unwrap();
+    let (code, said) = run(b"");
+    assert!(!said.contains("[y/N]") && said.contains("Gemini CLI: not installed"), "{said}");
+    assert_eq!(code, Some(1), "nothing asked, and the install failed: {said}");
+    std::fs::write(&gemini, "{}").unwrap();
+    assert_eq!(run(b"y\n").0, Some(0));
+
+    let confirmed = state.join("hook-confirmed.json");
+    std::fs::write(&confirmed, r#"{"gemini": "gemini --resume <old>"}"#).unwrap();
+    let (code, said) = run(b"n\n");
+    assert!(said.contains("Confirm? [y/N]") && !said.contains("Install?") && said.contains("Nothing confirmed"), "{said}");
+    assert_eq!(code, Some(0));
+
+    std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let (code, said) = run(b"y\n");
+    std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(said.contains(&confirmed.display().to_string()) && !said.contains("resume line confirmed"), "{said}");
+    assert_eq!(code, Some(1), "nothing was recorded: {said}");
+    let _ = std::fs::remove_dir_all(&home);
+}

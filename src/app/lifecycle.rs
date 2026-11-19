@@ -641,6 +641,32 @@ impl App {
         self.notice = Some(CFG_BROKEN.into());
     }
 
+    /// Once per server start: a confirmed resume line that changed stops resume until confirmed again.
+    pub fn tell_changed_resume(&mut self) {
+        self.resume_told = crate::hook::first_installs().notice();
+    }
+
+    /// Each frame: the resume line's message waits until no error, toast or card shows, then shows as a toast, said once drawn.
+    pub fn tell_when_free(&mut self) {
+        self.resume_fresh = self.notice.is_none() && self.toast.is_none() && self.resume_told.is_some();
+        if self.resume_fresh {
+            self.toast = self.resume_told.take();
+        }
+    }
+
+    /// The frame that put the resume message up did not reach the window: it waits for the next free frame.
+    pub fn resume_unseen(&mut self) {
+        if std::mem::take(&mut self.resume_fresh) {
+            self.resume_told = self.toast.take();
+        }
+    }
+
+    /// A toast the frame's copy sets; a resume message that frame drew was not read yet.
+    pub fn toast_after_frame(&mut self, t: String) {
+        self.resume_unseen();
+        self.toast = Some(t);
+    }
+
     /// The one writer of config.json; a file that does not parse is never overwritten with defaults.
     pub(super) fn save_cfg(&mut self) {
         if self.cfg_broken {
@@ -1230,12 +1256,12 @@ pub(super) fn restored_command(argv: &[String], session: Option<(&str, &str)>, l
         .map(|a| crate::agents::get(&a).map_or_else(|| argv.to_vec(), |m| m.strip_resume(argv)));
     let Some((agent, id)) = session else { return stored };
     let Some(m) = crate::agents::get(agent) else { return stored };
-    (!live).then(|| m.resume_argv(id)).flatten().or(stored).or_else(|| Some(vec![m.program().to_string()]))
+    (!live).then(|| m.resume_argv(id)).flatten().or(stored).or_else(|| Some(m.fresh_argv()))
 }
 
 /// What a restarted pane types: its session resumed, else the agent it ran started fresh; a plain shell types nothing.
 pub(super) fn restart_command(argv: &[String], session: Option<(&str, &str)>, agent: Option<&str>) -> Option<Vec<String>> {
-    restored_command(argv, session, false).or_else(|| agent.and_then(crate::agents::get).map(|m| vec![m.program().to_string()]))
+    restored_command(argv, session, false).or_else(|| agent.and_then(crate::agents::get).map(|m| m.fresh_argv()))
 }
 
 /// The line typed into a restored pane's shell; None when an argument holds a control character.

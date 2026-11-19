@@ -221,7 +221,7 @@ impl App {
                 }
                 h.typed_over |= self.mail.owner_typed.is_some_and(|(p, t)| p == pane && t > h.at);
                 // A question that came up after the paste would take this carriage return as its answer: held while it shows.
-                if self.pane(pane).is_some_and(|p| p.term.shows_question()) {
+                if state == AgentState::Blocked || self.pane(pane).is_some_and(|p| p.term.shows_question()) {
                     if !h.asked {
                         crate::log::warn(&format!("pane {pane}: a question came up before a typed message was submitted"));
                     }
@@ -243,7 +243,7 @@ impl App {
                 if h.at.elapsed() < SUBMIT_CHECK {
                     return Some(h);
                 }
-                let last = self.pane(pane).and_then(|p| p.term.screen().contents().lines().rev().find(|l| !l.trim().is_empty()).map(str::to_string));
+                let last = self.pane(pane).and_then(|p| p.term.screen().live_contents().lines().rev().find(|l| !l.trim().is_empty()).map(str::to_string));
                 if last.is_some_and(|l| l.contains(&h.id)) && self.mail.delivery.warned_typed.insert(pane) {
                     crate::log::warn(&format!("pane {pane}: a typed message was not submitted"));
                 }
@@ -539,7 +539,7 @@ mod tests {
 
     fn install_hook(home: &Path, dir: &str, agent: &str) {
         std::fs::create_dir_all(home.join(dir)).unwrap();
-        crate::hook::install().unwrap();
+        crate::hook::install_all().unwrap();
         assert!(crate::hook::hook_current(agent), "{agent}'s hook is current");
     }
 
@@ -599,7 +599,7 @@ mod tests {
             let id = queue(app);
             assert!(app.tick_deliver());
             let pasted = read_until(typed, |s| s.contains(&id));
-            ask(app, "\r\nDo you want to proceed?\r\n\u{276f} 1. Yes");
+            ask(app, "\r\nDo you want to proceed?\r\n\u{276f} 1. Yes\r\n  2. No");
             std::thread::sleep(CR_AFTER + Duration::from_millis(20));
             app.tick_deliver();
             std::thread::sleep(Duration::from_millis(60));
@@ -615,7 +615,7 @@ mod tests {
             let id = queue(app);
             assert!(app.tick_deliver());
             let pasted = read_until(typed, |s| s.contains(&id));
-            ask(app, "\r\nDo you want to proceed?\r\n\u{276f} 1. Yes");
+            ask(app, "\r\nDo you want to proceed?\r\n\u{276f} 1. Yes\r\n  2. No");
             app.mail.delivery.hands.get_mut(&2).unwrap().at = Instant::now().checked_sub(TAKE_BACK + Duration::from_millis(1)).unwrap();
             app.tick_deliver();
             std::thread::sleep(Duration::from_millis(60));
@@ -642,7 +642,7 @@ mod tests {
                 let id = queue(app);
                 assert!(app.tick_deliver());
                 let pasted = read_until(typed, |s| s.contains(&id));
-                ask(app, "\r\nDo you want to proceed?\r\n\u{276f} 1. Yes");
+                ask(app, "\r\nDo you want to proceed?\r\n\u{276f} 1. Yes\r\n  2. No");
                 std::thread::sleep(CR_AFTER + Duration::from_millis(20));
                 app.tick_deliver();
                 if case == "not idle" {
@@ -658,6 +658,81 @@ mod tests {
                 assert_eq!(notes(&rec(app, &id)).last().and_then(|n| n.1.clone()).as_deref(), Some("typed, not submitted"), "{case}");
             });
         }
+    }
+
+    /// Codex served by its shared daemon: no hook state, read by its own question text as it draws it.
+    fn ask_codex(app: &mut App, text: &str) {
+        let t = &mut app.pane_mut(2).unwrap().term;
+        t.set_hook_state(None);
+        t.set_blocked_text(crate::agents::blocked_text(Some("codex")));
+        t.feed(text.as_bytes());
+    }
+
+    #[test]
+    fn nothing_is_typed_into_a_codex_approval_when_no_hook_reports() {
+        with_app("codex-approval", "codex", AgentState::Idle, |app, _, typed| {
+            let id = queue(app);
+            ask_codex(app, "Would you like to run the following command?\r\n\u{203a} 1. Yes, proceed (y)\r\n  2. Yes, and don't ask again (p)");
+            assert!(!app.tick_deliver());
+            std::thread::sleep(Duration::from_millis(60));
+            assert_eq!((read(typed), rec(app, &id).state), (String::new(), State::Queued));
+        });
+    }
+
+    #[test]
+    fn nothing_is_typed_into_claudes_question_view_when_no_hook_reports() {
+        for on in 0..3 {
+            with_app(&format!("claude-question-{on}"), "claude", AgentState::Idle, |app, _, typed| {
+                let id = queue(app);
+                app.pane_mut(2).unwrap().term.set_hook_state(None);
+                let list: Vec<String> = ["A", "B", "C"].iter().enumerate().map(|(i, o)| format!("{} {}. {o}\r\n     description of {o}", if i == on { "\u{276f}" } else { " " }, i + 1)).collect();
+                ask(app, &format!("Which approach should I take?\r\n\r\n{}", list.join("\r\n")));
+                assert!(!app.tick_deliver(), "the selection on {}", on + 1);
+                std::thread::sleep(Duration::from_millis(60));
+                assert_eq!((read(typed), rec(app, &id).state), (String::new(), State::Queued), "the selection on {}", on + 1);
+            });
+        }
+    }
+
+    #[test]
+    fn a_codex_question_after_the_paste_holds_its_carriage_return_when_no_hook_reports() {
+        let numbered = "\r\nWould you like to run the following command?\r\n  1. Yes, proceed (y)\r\n\u{203a} 2. Yes, and don't ask again";
+        for (tag, question) in [("numbered", numbered), ("title", "\r\nWould you like to make the following edits?")] {
+            with_app(&format!("codex-approval-after-{tag}"), "codex", AgentState::Idle, |app, _, typed| {
+                let id = queue(app);
+                ask_codex(app, "\u{203a} ");
+                assert!(app.tick_deliver());
+                let pasted = read_until(typed, |s| s.contains(&id));
+                app.pane_mut(2).unwrap().term.feed(question.as_bytes());
+                std::thread::sleep(CR_AFTER + Duration::from_millis(20));
+                app.tick_deliver();
+                std::thread::sleep(Duration::from_millis(60));
+                assert_eq!(read(typed), pasted, "{tag}: no carriage return into the question");
+                assert_eq!(rec(app, &id).via, None, "{tag}: not handed before its carriage return");
+            });
+        }
+    }
+
+    #[test]
+    fn a_typed_message_left_in_the_input_is_found_on_the_live_screen_when_scrolled_back() {
+        with_app("typed-left-scrolled", "codex", AgentState::Idle, |app, _, typed| {
+            let id = queue(app);
+            ask_codex(app, "\u{203a} ");
+            assert!(app.tick_deliver());
+            read_until(typed, |s| s.contains(&id));
+            std::thread::sleep(CR_AFTER + Duration::from_millis(20));
+            app.tick_deliver();
+            assert!(read_until(typed, |s| s.ends_with('\r')).ends_with('\r'));
+            let t = &mut app.pane_mut(2).unwrap().term;
+            for i in 0..40 {
+                t.feed(format!("line {i}\r\n").as_bytes());
+            }
+            t.feed(format!("\u{203a} [message from planner via nerd, id {id}]").as_bytes());
+            t.scroll_by(-10);
+            app.mail.delivery.hands.get_mut(&2).unwrap().at = Instant::now().checked_sub(SUBMIT_CHECK + Duration::from_millis(1)).unwrap();
+            app.tick_deliver();
+            assert!(log().contains("pane 2: a typed message was not submitted"), "{}", log());
+        });
     }
 
     #[test]

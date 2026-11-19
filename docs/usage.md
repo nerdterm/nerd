@@ -109,7 +109,7 @@ Only a named pane receives messages: name it with **Rename pane…** first. Befo
 | `nerd --disconnect [NAME]` | End every connection to a server, or to all; programs keep running. Also **Disconnect everyone…** |
 | `nerd --remote M [NAME]` | Open a server on machine `M` from `remotes` in config.json, over ssh. Also **Servers…**: open the machine's section, then **Open** on a server |
 | `nerd --daemon` | Start a server with no window; nerd does this itself when a window needs one |
-| `nerd --install-hook` | Install the hook into every supported agent found. Also **Settings… → Agent hooks** |
+| `nerd --install-hook` | Install the hook into every supported agent found; it shows which and asks first. Also **Settings… → Agent hooks** |
 | `nerd --uninstall-hook` | Take the hook out of every agent |
 | `nerd --install` | Start nerd at login |
 | `nerd --uninstall` | Stop starting nerd at login, and undo every terminal preset |
