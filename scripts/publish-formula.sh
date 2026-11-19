@@ -1,6 +1,8 @@
 #!/bin/sh
 # Writes Formula/nerd.rb in nerdterm/homebrew-tap for a published release; --dry-run prints it and writes nothing.
 set -eu
+# An exported CDPATH would send the relative cd below to another folder's install.sh.
+unset CDPATH
 dry=
 [ "${1:-}" = --dry-run ] && { dry=1; shift; }
 tag=${1:?usage: scripts/publish-formula.sh [--dry-run] vX.Y.Z}
@@ -8,13 +10,16 @@ tag=${1:?usage: scripts/publish-formula.sh [--dry-run] vX.Y.Z}
 case $tag in *[!v0-9.]* | '') tag_ok= ;; *) tag_ok=1 ;; esac
 [ -n "$tag_ok" ] && echo "$tag" | grep -Eqx 'v[0-9]+\.[0-9]+\.[0-9]+' || { echo "publish-formula: not a release tag: $tag" >&2; exit 1; }
 name="nerd-$tag-macos-arm64.tar.gz"
-t=$(mktemp -d)
+# The keys, checksum and signature it checks, under ~/.local/bin: every isolated pane may write the temp folders, none this one.
+mkdir -p "$HOME/.local/bin"
+t=$(mktemp -d "$HOME/.local/bin/.nerd-formula.XXXXXX")
 trap 'rm -rf "$t"' EXIT
 # The published checksum, never a rebuilt one: a second archive of the same tag has another hash.
 gh release download "$tag" --repo nerdterm/nerd -p "$name.sha256" -O "$t/$name.sha256" || { echo "publish-formula: $tag has no checksum" >&2; exit 1; }
 gh release download "$tag" --repo nerdterm/nerd -p "$name.sha256.sig" -O "$t/$name.sha256.sig" || { echo "publish-formula: $tag has no signature" >&2; exit 1; }
 # The keys of this checkout's install.sh, never fetched: GitHub is what the signature guards against.
-installer=${NERD_INSTALL_SH:-$(git rev-parse --show-toplevel)/install.sh}
+# Beside this script, not found through git: the checkout's .git may say its top is another folder.
+installer=${NERD_INSTALL_SH:-$(cd "$(dirname "$0")/.." && pwd)/install.sh}
 awk '/^# release keys begin/ { f = 1; next } /^# release keys end/ { f = 0 } f' "$installer" | sed -e "1s/^keys='//" -e "\$s/'\$//" \
     | awk -v d="$t" '/BEGIN PUBLIC KEY/ { n++ } { print > (d "/key" n ".pem") }'
 signed=

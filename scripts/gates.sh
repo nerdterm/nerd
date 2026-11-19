@@ -16,6 +16,7 @@ sh scripts/publish-binary.test.sh
 if [ -f target/.rustc_info.json ] && { ! grep -qF -- "$(rustc -V)" target/.rustc_info.json || [ "$(du -sk target | cut -f1)" -gt 4194304 ]; }; then
     cargo clean
 fi
+# In the temp folder: a test build takes HOME only from there (paths::home), and the gates must run inside an isolated pane.
 fresh=$(mktemp -d)
 trap 'rm -rf "$fresh"' EXIT
 cargo build --release

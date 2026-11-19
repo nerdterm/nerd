@@ -498,10 +498,18 @@ fn relay(mut from: TcpStream, mut to: TcpStream, idle: Duration, last: &Mutex<In
     let _ = to.set_write_timeout(Some(idle));
     loop {
         let left = idle.saturating_sub(last.lock().unwrap_or_else(|e| e.into_inner()).elapsed());
-        if left.is_zero() || from.set_read_timeout(Some(left)).is_err() {
+        if left.is_zero() {
             break;
         }
-        match from.read(&mut buf) {
+        let got = match from.set_read_timeout(Some(left)) {
+            Ok(()) => from.read(&mut buf),
+            // macOS refuses the option once the socket can neither send nor receive: what is left is read without waiting, nothing to read ends both.
+            Err(_) => match nix::sys::socket::recv(std::os::fd::AsRawFd::as_raw_fd(&from), &mut buf, nix::sys::socket::MsgFlags::MSG_DONTWAIT) {
+                Ok(k) => Ok(k),
+                Err(_) => break,
+            },
+        };
+        match got {
             Ok(0) => {
                 let _ = to.shutdown(Shutdown::Write);
                 return n;
@@ -838,6 +846,32 @@ mod tests {
         c.shutdown(Shutdown::Write).unwrap();
         let mut got = String::new();
         c.read_to_string(&mut got).unwrap();
+        assert_eq!(got, "got question");
+    }
+
+    #[test]
+    fn an_answer_that_arrived_before_the_relay_started_still_reaches_the_client() {
+        // The order a busy machine can give: our write half is shut, the upstream answered and closed, and only then the relay starts.
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let up = TcpStream::connect(l.local_addr().unwrap()).unwrap();
+        let (mut server, _) = l.accept().unwrap();
+        up.shutdown(Shutdown::Write).unwrap();
+        server.read_to_end(&mut Vec::new()).unwrap();
+        server.write_all(b"got question").unwrap();
+        drop(server);
+        // macOS refuses socket options once a socket can neither send nor receive: wait for that state, not for a time.
+        let t = Instant::now();
+        while up.set_read_timeout(Some(Duration::from_secs(1))).is_ok() {
+            assert!(t.elapsed() < Duration::from_secs(5), "the upstream's end never arrived");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut client = TcpStream::connect(l.local_addr().unwrap()).unwrap();
+        let (c, _) = l.accept().unwrap();
+        assert_eq!(relay(up, c, IDLE, &Mutex::new(Instant::now())), 12);
+        client.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let mut got = String::new();
+        client.read_to_string(&mut got).unwrap();
         assert_eq!(got, "got question");
     }
 

@@ -37,10 +37,13 @@ pull request, `chore(master): release X.Y.Z`. Replace `N` and `X.Y.Z` below with
    until gh release view vX.Y.Z >/dev/null 2>&1; do sleep 5; done; echo ready
    ```
 
-5. From a plain terminal (gh needs the keychain), in a clean checkout, build, test, sign and attach the binary, which
-   publishes the release, starts the nerdterm.dev build and points the Homebrew formula in nerdterm/homebrew-tap at
-   the new archive. It asks for the release key's passphrase once, installs the signed archive with the tag's own
-   install.sh into a scratch folder before uploading anything, and stops if that refuses it. It takes several minutes
+5. From a plain terminal (gh needs the keychain), in a checkout that is not inside any folder an isolated pane has had
+   and not in a temp folder (a fresh `git clone` in such a place is the simple form), build, test, sign and attach the
+   binary, which publishes the release, starts the nerdterm.dev build and points the Homebrew formula in
+   nerdterm/homebrew-tap at the new archive. It asks for the release key's passphrase once, installs the signed archive
+   with the tag's own install.sh into a scratch folder before uploading anything, and stops if that refuses it. It
+   fetches, builds, tests and signs in a folder of its own, `~/.local/bin/.nerd-publish.*`, which no isolated pane may write: about 300 MB
+   while it runs, removed when it ends or stops (only a killed run leaves it behind). It takes several minutes
    and ends with `attached nerd-vX.Y.Z-macos-arm64.tar.gz to vX.Y.Z and published it`, `started the nerdterm.dev
    build` and `updated the Homebrew formula to X.Y.Z`:
 
@@ -53,8 +56,8 @@ pull request, `chore(master): release X.Y.Z`. Replace `N` and `X.Y.Z` below with
    to the changelog ("is not a release commit", "changes more than nerd's version", "removes lines"); and after
    building, before anything is signed, if the built nerd reports another version ("the built nerd says"). Any of
    these means someone moved the tag or changed the release pull request: stop and look at who did, never work around
-   it. Other stops are ordinary: a failing test (it prints cargo test's `failures:`), "the tree must be clean", and
-   network errors from git or gh; fix the cause and run it again.
+   it. Other stops are ordinary: a failing test (it prints cargo test's `failures:`) and network errors from git or
+   gh; fix the cause and run it again.
 
    Building and testing run every dependency's build code as you. Before building, the script reads the release
    commit's `scripts/sign-release.sh`, `scripts/publish-formula.sh` and `install.sh` from git and later runs that text,
@@ -64,6 +67,29 @@ pull request, `chore(master): release X.Y.Z`. Replace `N` and `X.Y.Z` below with
    your gh login without a prompt (upload to the draft, write the tap), change the binary being built, or wait for a
    later release. Only building releases as a separate macOS user closes that; if a run looks wrong, see "If a release
    run looks wrong".
+
+   The script reads nothing of the checkout's `.git`. It makes a new repository in its work folder, fetches master and
+   every tag into it from `https://github.com/nerdterm/nerd.git`, checks the release commit there, and builds a
+   checkout of that repository, so `build.rs` stamps the version with that commit's hash and date. No git, gh or build
+   runs in the checkout, so hooks, config, grafts, replace refs, attributes or another origin left in its `.git` change
+   nothing. It first clears every variable a git hook exports that points git elsewhere: the ones
+   `git rev-parse --local-env-vars` names, `GIT_NAMESPACE`, and each `GIT_CONFIG_KEY_n` and `GIT_CONFIG_VALUE_n`.
+   cargo and rustup read a `Cargo.toml`, `rust-toolchain`, `rust-toolchain.toml` and `.cargo/config` or
+   `.cargo/config.toml` in every folder above the source, by real paths; the script stops before building if any
+   folder holds one or a link by one of these names, naming it, except your own `$CARGO_HOME/config.toml`
+   (`~/.cargo/config.toml` by default). It looks from the real path of its work folder up to the real path of your
+   home, whose parents belong to the system, or up to `/` when a link in `~/.local` takes the work folder outside your
+   home. The build and the tests write programs to their temp folder and run them, as you,
+   before the key is used, so theirs is in that same folder of its own, not the per-user temp folder; four tests that
+   run nothing from it still use the per-user one.
+
+   Trusted, not checked: the script files themselves, read from the checkout before anything is verified, which is why
+   the checkout must not be inside any folder an isolated pane has had, nor in a temp folder, which every isolated pane
+   may write; your own git configuration (`~/.gitconfig`, `~/.config/git`, the system's git config), which every git
+   call reads, `url.*.insteadOf` included; `$CARGO_HOME/config.toml`; `$CARGO_HOME/registry` and `$CARGO_HOME/git`,
+   the unpacked sources of the dependencies that go into the release; rustup's settings and toolchains; and your
+   environment: the `git`, `gh` and `cargo` first on your PATH, and variables such as `CARGO_*`, `RUSTUP_TOOLCHAIN`,
+   `RUSTFLAGS` and `RUSTC_WRAPPER`.
 
 6. Check it: `false`, then the archive, its `.sha256` and its `.sha256.sig`:
 
@@ -77,8 +103,9 @@ pull request, `chore(master): release X.Y.Z`. Replace `N` and `X.Y.Z` below with
 A change to the formula template that an older nerd's rendering would install wrongly must come with a change to the
 archive that the member check in the older nerd refuses (an archive holding more than `nerd`).
 
-If the formula step failed, run it alone: it reads the published checksum and checks its signature against this
-checkout's install.sh, so running it again is safe once `git status --porcelain` prints nothing.
+If the formula step failed, run it alone from the checkout step 5 ran from: it reads the published checksum and checks
+its signature against the install.sh beside the script (found by the script's own path, not through git), so running
+it again is safe.
 `scripts/publish-formula.sh --dry-run vX.Y.Z` prints the formula without writing it.
 
 ```sh

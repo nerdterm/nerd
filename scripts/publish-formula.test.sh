@@ -2,7 +2,9 @@
 # Renders the formula through a stub gh that answers only `release download`: nothing reaches GitHub.
 # The release's checksum is signed with a test key that a copy of install.sh carries.
 here=$(cd "$(dirname "$0")" && pwd)
-stub=$(mktemp -d)
+# In the checkout, not the per-user temp folder every isolated pane may write: the stand-ins here are run.
+mkdir -p "$here/../target"
+stub=$(cd "$here/../target" && mktemp -d "$PWD/.nerd-test.XXXXXX")
 trap 'rm -rf "$stub"' EXIT
 ssl=/usr/bin/openssl
 cat >"$stub/gh" <<'EOF'
@@ -22,6 +24,8 @@ awk -v m="$stub/main.pub" '
     /^# release keys end/ { skip = 0 }
     !skip' "$here/../install.sh" >"$stub/install.sh"
 name=nerd-v1.2.3-macos-arm64.tar.gz
+# What it downloads and checks belongs under ~/.local/bin, not in a temp folder every isolated pane may write.
+export HOME="$stub/home"
 mkdir -p "$stub/served"
 # Serves `line` as the checksum, signed with `key` (none for no signature).
 serve() {
@@ -46,7 +50,7 @@ check '    assert_match version.to_s, shell_output("#{bin}/nerd --version")'
 # Homebrew reads the version from the url; a version line is one more place to forget.
 ! grep -q '^ *version ' "$stub/out" || { echo "publish-formula: a version line" >&2; fail=1; }
 ruby -W0 -c "$stub/out" >/dev/null || fail=1
-calls=$(grep -c "^release download v1.2.3 --repo nerdterm/nerd -p $name.sha256\(\.sig\)\? -O " "$stub/calls")
+calls=$(grep -c "^release download v1.2.3 --repo nerdterm/nerd -p $name.sha256\(\.sig\)\? -O $HOME/.local/bin/.nerd-formula\.[^/]*/$name" "$stub/calls")
 [ "$calls" = 2 ] && [ "$(wc -l <"$stub/calls" | tr -d ' ')" = 2 ] || { echo "publish-formula: a dry run called $(cat "$stub/calls")" >&2; fail=1; }
 for bad in "1.2.3" "v1.2" "v1.2.3;x" "v1.2.3
 x"; do
@@ -63,6 +67,22 @@ serve "not-a-sum  $name" main
 render v1.2.3 >/dev/null 2>&1 && { echo "publish-formula: took a bad checksum" >&2; fail=1; }
 serve "$sha  nerd-v1.2.0-macos-arm64.tar.gz" main
 render v1.2.3 >/dev/null 2>&1 && { echo "publish-formula: took a checksum for another archive" >&2; fail=1; }
+# Run alone, it takes the keys of the install.sh beside it, not of the folder the checkout's .git calls its top.
+c="$stub/checkout"
+mkdir -p "$c/scripts" "$stub/elsewhere"
+cp "$here/publish-formula.sh" "$c/scripts/"
+cp "$stub/install.sh" "$c/install.sh"
+sed "s|$(sed -n 2p "$stub/main.pub")|$(sed -n 2p "$stub/other.pub")|" "$stub/install.sh" >"$stub/elsewhere/install.sh"
+GIT_CONFIG_GLOBAL=/dev/null git init -q "$c" && GIT_CONFIG_GLOBAL=/dev/null git -C "$c" config core.worktree "$stub/elsewhere"
+serve "$sha  $name" main
+(cd "$c" && PATH="$stub:$PATH" STUB=$stub sh scripts/publish-formula.sh --dry-run v1.2.3) >"$stub/out" 2>&1 \
+    || { echo "publish-formula: run alone, it did not take the keys beside it: $(cat "$stub/out")" >&2; fail=1; }
+# Nor of a folder an exported CDPATH offers for the script's relative cd.
+mkdir -p "$stub/cdpath/scripts"
+cp "$stub/elsewhere/install.sh" "$stub/cdpath/install.sh"
+(cd "$c" && CDPATH="$stub/cdpath" PATH="$stub:$PATH" STUB=$stub sh scripts/publish-formula.sh --dry-run v1.2.3) >"$stub/out" 2>&1 \
+    || { echo "publish-formula: with CDPATH set, it did not take the keys beside it: $(cat "$stub/out")" >&2; fail=1; }
+[ -z "$(ls -A "$HOME/.local/bin")" ] || { echo "publish-formula: left $(ls -A "$HOME/.local/bin") in ~/.local/bin" >&2; fail=1; }
 if [ "$fail" -eq 0 ]; then
     echo "publish-formula: the formula renders only for a release signed with install.sh's keys"
 else

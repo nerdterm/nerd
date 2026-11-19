@@ -3,7 +3,7 @@
 //! and puts the tap's formula back ("What leaves nerd", `egress:release-check`).
 
 use std::io::{Read as _, Write as _};
-use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
+use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _, PermissionsExt as _};
 use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -46,16 +46,16 @@ impl Brew {
     }
 
     /// Every brew nerd runs: under the profile, with only `brew_env` and no stdin.
-    fn cmd(&self, args: &[&str]) -> Command {
+    fn cmd(&self, args: &[&str], temp: &Path) -> Command {
         let mut cmd = crate::spawn::cmd(&self.run);
         cmd.arg("-p").arg(PROFILE).arg(self.prefix.join("bin/brew")).args(args);
-        cmd.env_clear().envs(brew_env(&self.prefix)).stdin(Stdio::null());
+        cmd.env_clear().envs(brew_env(&self.prefix, temp)).stdin(Stdio::null());
         cmd
     }
 
     /// One brew run's output, or brew's own last line when it failed.
     fn step(&self, args: &[&str], limit: Duration, dir: &Path) -> Result<String, String> {
-        match run(self.cmd(args), limit, dir)? {
+        match run(self.cmd(args, &dir.join("tmp")), limit, dir)? {
             (true, out, _) => Ok(out),
             (false, out, err) => Err(last_line(&err).or_else(|| last_line(&out)).map_or_else(|| "Homebrew gave no reason".into(), |l| format!("Homebrew said \"{l}\""))),
         }
@@ -71,16 +71,40 @@ impl Brew {
         let _lock = lock(&self.state).map_err(at("the lock"))?;
         let tap = tap_of(&self.prefix);
         recover(&tap, &self.state, tag, dir).map_err(at("recovery"))?;
+        // Where Homebrew unpacks the archive: inside nerd's own release folder, which no pane may write.
+        let temp = dir.join("tmp");
+        std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&temp).and_then(|_| std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o700))).map_err(|e| ("Homebrew's temp folder", format!("{}: {e}; try again", temp.display())))?;
         let version = self.step(&["--version"], STEP_LIMIT, dir).map_err(at("brew --version"))?;
         crate::log::info(&format!("release {tag}: {}", crate::render::unspoofed(version.lines().next().unwrap_or("").trim())));
         check_tap(&tap, dir).map_err(at("tap check"))?;
         crate::log::info(&format!("release {tag}: tap checked"));
-        let formula = formula(tag, name, &checked_sha(dir, name).map_err(at("checksum"))?);
-        let root = PathBuf::from(self.step(&["--cache"], STEP_LIMIT, dir).map_err(at("brew --cache"))?.lines().next().unwrap_or("").trim());
-        if !root.is_absolute() {
-            return Err(("brew --cache", format!("not a folder: {}", crate::render::unspoofed(&root.to_string_lossy()))));
+        let sha = checked_sha(dir, name).map_err(at("checksum"))?;
+        let formula = formula(tag, name, &sha);
+        let real = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        let config = self.step(&["config"], STEP_LIMIT, dir).map_err(|e| ("brew config", format!("{e}; try again")))?;
+        // brew config names HOMEBREW_TEMP only when it is not the default, which brew.sh also falls back to unasked.
+        let staged = PathBuf::from(config.lines().find_map(|l| l.strip_prefix("HOMEBREW_TEMP: ")).unwrap_or("/private/tmp").trim());
+        let staged_shown = crate::render::unspoofed(&staged.to_string_lossy());
+        crate::log::info(&format!("release {tag}: Homebrew stages in {staged_shown}"));
+        if real(&staged) != real(&temp) {
+            return Err(("Homebrew's temp folder", format!("Homebrew stages in {staged_shown}, not in nerd's own folder (HOMEBREW_TEMP in a brew.env, or the folder not writable); remove HOMEBREW_TEMP from your brew.env, or run brew update && brew upgrade nerd")));
         }
-        let primed = prime(&root, &super::asset_url(tag, name), &dir.join(name)).map_err(at("Homebrew's cache"))?;
+        let root = PathBuf::from(self.step(&["--cache"], STEP_LIMIT, dir).map_err(at("brew --cache"))?.lines().next().unwrap_or("").trim());
+        let root_shown = crate::render::unspoofed(&root.to_string_lossy());
+        if !root.is_absolute() {
+            return Err(("brew --cache", format!("not a folder: {root_shown}")));
+        }
+        crate::log::info(&format!("release {tag}: Homebrew's cache is {root_shown}"));
+        if real(&root) != real(&crate::paths::home().unwrap_or_default().join("Library/Caches/Homebrew")) {
+            return Err(("Homebrew's cache", format!("Homebrew's cache is {root_shown}, not ~/Library/Caches/Homebrew; remove HOMEBREW_CACHE from your brew.env, or run brew update && brew upgrade nerd")));
+        }
+        // Checked, hashed and primed from one read: what install.sh checked is what Homebrew gets and nerd compares.
+        let bytes = std::fs::read(dir.join(name)).map_err(|e| ("checksum", format!("{}: {e}; try again", dir.join(name).display())))?;
+        if sha256_hex(&bytes) != sha {
+            return Err(("checksum", "the archive changed after install.sh checked it; try again".into()));
+        }
+        let want = sha256_hex(&archived_nerd(&bytes).map_err(|e| ("the archive", format!("{e}; try again")))?);
+        let primed = prime(&root, &super::asset_url(tag, name), &bytes).map_err(at("Homebrew's cache"))?;
         let orig = put(&tap, &self.state, &formula).inspect_err(|_| drop(std::fs::remove_file(&primed))).map_err(at("formula"))?;
         crate::log::info(&format!("release {tag}: formula written"));
         let done = self.step(&["upgrade", "nerdterm/tap/nerd"], limit, dir);
@@ -88,11 +112,65 @@ impl Brew {
         match done {
             Ok(_) => {
                 crate::log::info(&format!("release {tag}: brew upgrade done"));
+                self.installed(tag, &want).map_err(at("brew upgrade"))?;
                 Ok(format!("nerd {}", tag.trim_start_matches('v')))
             }
+            // ceiling: matches Homebrew's English wording; another wording gets the advice below, which a pinned nerd cannot follow.
+            Err(why) if why.contains("pinned") => Err(("brew upgrade", format!("{why}; run brew unpin nerd, then brew update && brew upgrade nerd"))),
             Err(why) if self.prefix.join("bin/nerd").exists() => Err(("brew upgrade", format!("{why}; run brew update && brew upgrade nerd"))),
             Err(why) => Err(("brew upgrade", format!("{why}; nerd is no longer linked into {}: run brew link nerd, then brew update && brew upgrade nerd", self.prefix.join("bin").display()))),
         }
+    }
+
+    /// With nothing run: Homebrew's linked nerd is this release's keg, and its `nerd` hashes to `want`, the checked
+    /// archive's.
+    fn installed(&self, tag: &str, want: &str) -> Result<(), String> {
+        let version = tag.trim_start_matches('v');
+        let (opt, keg) = (self.prefix.join("opt/nerd"), self.prefix.join("Cellar/nerd").join(version));
+        let exe = keg.join("bin/nerd");
+        let linked = std::fs::canonicalize(&opt).ok();
+        if linked.as_deref() != Some(keg.as_path()) {
+            let to = linked.map_or_else(|| "nothing".into(), |p| crate::render::unspoofed(&p.to_string_lossy()));
+            return Err(format!("Homebrew did not install nerd {version}: {} leads to {to}; run brew update && brew upgrade nerd", opt.display()));
+        }
+        if !std::fs::symlink_metadata(&exe).is_ok_and(|m| m.file_type().is_file()) {
+            // Not a plain file (a link may lead anywhere): the keg's bin loses its search bit, so nothing runs through it.
+            let bin = keg.join("bin");
+            std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o644)).map_err(|e| format!("Homebrew's nerd {version} has no plain file at {}, and nerd could not stop it running ({}: {e}): run brew reinstall nerd", exe.display(), bin.display()))?;
+            return Err(format!("Homebrew's nerd {version} has no plain file at {}; it will not run: run chmod 755 {}, then brew reinstall nerd", exe.display(), bin.display()));
+        }
+        // A keg nerd cannot read counts as not the release: it is disabled too.
+        let got = read_nofollow(&exe).map_or_else(|e| format!("unreadable ({e})"), |b| sha256_hex(&b));
+        crate::log::info(&format!("release {tag}: nerd in the checked archive {want}, in Homebrew's keg {got}"));
+        if want == got {
+            return Ok(());
+        }
+        // ceiling: Homebrew links the keg before this check, so what starts <prefix>/bin/nerd meanwhile could run a swapped binary before nerd disables it; the way past is an install without linking, and nerd linking only after the comparison.
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o644)).map_err(|e| format!("the nerd Homebrew installed is not the release nerd checked, and nerd could not stop it running ({}: {e}): run brew reinstall nerd", exe.display()))?;
+        Err("the nerd Homebrew installed is not the release nerd checked; it will not run: run brew reinstall nerd".into())
+    }
+}
+
+/// `nerd` from the checked archive's bytes, through tar's stdin and stdout, written nowhere.
+fn archived_nerd(archive: &[u8]) -> Result<Vec<u8>, String> {
+    let mut child = crate::spawn::cmd("/usr/bin/tar").arg("-xOzf").arg("-").arg("nerd").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| format!("tar: {e}"))?;
+    let mut input = child.stdin.take().ok_or("tar: no stdin")?;
+    // macOS <sys/fcntl.h>; the libc version this crate locks does not name it.
+    const F_SETNOSIGPIPE: nix::libc::c_int = 73;
+    // SAFETY: fcntl on the pipe's own descriptor, open in `input` for this call; a tar that exits early then gives EPIPE, not a SIGPIPE that would end `--check-update`.
+    if unsafe { nix::libc::fcntl(std::os::fd::AsRawFd::as_raw_fd(&input), F_SETNOSIGPIPE, 1) } == -1 {
+        return Err(format!("tar: {}", std::io::Error::last_os_error()));
+    }
+    // Fed from a thread: tar's output fills its pipe before all of the input is read.
+    let out = std::thread::scope(|s| {
+        s.spawn(move || drop(input.write_all(archive)));
+        child.wait_with_output()
+    })
+    .map_err(|e| format!("tar: {e}"))?;
+    match out.status.success() && !out.stdout.is_empty() {
+        true => Ok(out.stdout),
+        // tar's first line names the cause; its last says only that it exited late.
+        false => Err(String::from_utf8_lossy(&out.stderr).lines().map(str::trim).find(|l| !l.is_empty()).map_or_else(|| "tar found no nerd in the archive".into(), crate::render::unspoofed)),
     }
 }
 
@@ -109,10 +187,14 @@ fn sandbox_exe() -> PathBuf {
     PathBuf::from("/usr/bin/sandbox-exec")
 }
 
-/// The home folder, the user, this Homebrew first on PATH, and Homebrew told to update, report and remove nothing.
-fn brew_env(prefix: &Path) -> Vec<(String, std::ffi::OsString)> {
-    let mut env: Vec<(String, std::ffi::OsString)> = ["USER", "LOGNAME", "TMPDIR"].iter().filter_map(|k| std::env::var_os(k).map(|v| (k.to_string(), v))).collect();
+/// The home folder, the user, this Homebrew first on PATH, `temp` to stage in, and Homebrew told to update, report and
+/// remove nothing. A `brew.env` file can still override these: what Homebrew used is asked afterwards.
+fn brew_env(prefix: &Path, temp: &Path) -> Vec<(String, std::ffi::OsString)> {
+    let mut env: Vec<(String, std::ffi::OsString)> = ["USER", "LOGNAME"].iter().filter_map(|k| std::env::var_os(k).map(|v| (k.to_string(), v))).collect();
     env.push(("HOME".into(), crate::paths::home().unwrap_or_default().into()));
+    env.push(("HOMEBREW_TEMP".into(), temp.into()));
+    // For bin/brew's own shell: Homebrew stages under HOMEBREW_TEMP, not TMPDIR.
+    env.push(("TMPDIR".into(), temp.into()));
     env.push(("PATH".into(), format!("{}/bin:/usr/bin:/bin:/usr/sbin:/sbin", prefix.display()).into()));
     env.push(("LANG".into(), "en_US.UTF-8".into()));
     for k in ["HOMEBREW_NO_AUTO_UPDATE", "HOMEBREW_NO_ANALYTICS", "HOMEBREW_NO_INSTALL_CLEANUP", "HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK", "HOMEBREW_NO_ENV_HINTS", "HOMEBREW_NO_AUTOREMOVE"] {
@@ -170,9 +252,14 @@ fn last_line(s: &str) -> Option<String> {
     s.lines().map(str::trim).rfind(|l| !l.is_empty()).map(crate::render::unspoofed)
 }
 
-/// git on the tap, local only: git's own cleaned environment, no hooks, no fsmonitor, no optional locks.
+/// git on the tap, local only: the prefix's or the system's git, git's own cleaned environment, no hooks, no fsmonitor,
+/// no optional locks.
 fn tap_git(tap: &Path, dir: &Path, args: &[&str]) -> Result<String, String> {
-    let mut cmd = crate::spawn::cmd(crate::install::git_exe()?);
+    // The tap is `tap_of(prefix)`, four folders below the prefix.
+    let prefix = tap.ancestors().nth(4).unwrap_or(tap);
+    let old_system_git = |e: &String| e.contains(" is older than git ") && !prefix.join("bin/git").is_file();
+    let git = crate::install::git_in(&[prefix.join("bin"), PathBuf::from("/usr/bin")]).map_err(|e| if old_system_git(&e) { format!("{e}; run brew install git") } else { e })?;
+    let mut cmd = crate::spawn::cmd(git);
     crate::install::git_env(&mut cmd);
     cmd.args(["--no-pager", "--no-optional-locks", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "protocol.allow=never", "-C"]);
     cmd.arg(tap).args(args).stdin(Stdio::null());
@@ -235,7 +322,7 @@ fn sha256_hex(b: &[u8]) -> String {
         fn CC_SHA256(data: *const std::ffi::c_void, len: u32, md: *mut u8) -> *mut u8;
     }
     let mut md = [0u8; 32];
-    // SAFETY: CommonCrypto, in libSystem, reads `len` bytes of `data` and writes 32 into `md`; inputs here are a few KB.
+    // SAFETY: CommonCrypto, in libSystem, reads `len` bytes of `data` and writes 32 into `md`; `len as u32` holds only for inputs under 4 GB.
     unsafe { CC_SHA256(b.as_ptr().cast(), b.len() as u32, md.as_mut_ptr()) };
     md.iter().map(|x| format!("{x:02x}")).collect()
 }
@@ -243,7 +330,7 @@ fn sha256_hex(b: &[u8]) -> String {
 /// The checked archive where Homebrew looks for its download of `url` before fetching one.
 /// ceiling: Homebrew's naming rule (`cached_location` in abstract_file_download_strategy.rb) copied, not asked; a Homebrew
 /// that changes it fetches instead, which the profile refuses, so the upgrade fails closed until this rule follows.
-fn prime(root: &Path, url: &str, archive: &Path) -> Result<PathBuf, String> {
+fn prime(root: &Path, url: &str, bytes: &[u8]) -> Result<PathBuf, String> {
     let err = |e: std::io::Error| e.to_string();
     let downloads = root.join("downloads");
     std::fs::create_dir_all(&downloads).map_err(err)?;
@@ -270,7 +357,7 @@ fn prime(root: &Path, url: &str, archive: &Path) -> Result<PathBuf, String> {
     let _ = std::fs::remove_file(&tmp);
     let copied = (|| -> std::io::Result<()> {
         let mut out = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o644).custom_flags(nix::libc::O_NOFOLLOW).open(&tmp)?;
-        std::io::copy(&mut std::fs::File::open(archive)?, &mut out)?;
+        out.write_all(bytes)?;
         out.set_permissions(std::fs::Permissions::from_mode(0o644))?;
         std::fs::rename(&tmp, &target)
     })();
@@ -382,6 +469,16 @@ mod tests {
     struct Fake {
         root: PathBuf,
         brew: Brew,
+        /// The archive's checksum, as install.sh checked it.
+        sha: String,
+        /// The thread's TEST_HOME before this fake's, back when it drops.
+        was: Option<PathBuf>,
+    }
+
+    impl Drop for Fake {
+        fn drop(&mut self) {
+            crate::paths::TEST_HOME.with(|h| h.replace(self.was.take()));
+        }
     }
 
     impl Fake {
@@ -392,19 +489,40 @@ mod tests {
         fn does(&self, sh: &str) {
             std::fs::write(self.root.join("does"), sh).unwrap();
         }
+        /// What the stand-in brew does first on `config` or `--cache`, as sh.
+        fn at(&self, cmd: &str, sh: &str) {
+            std::fs::write(self.root.join(format!("at-{cmd}")), sh).unwrap();
+        }
+        /// sh for `upgrade`: a keg of 0.99.0 holding `nerd`, linked as Homebrew links it.
+        fn keg(&self, nerd: &Path) -> String {
+            let (p, k) = (self.brew.prefix.display(), self.brew.prefix.join("Cellar/nerd/0.99.0"));
+            format!("mkdir -p '{k}/bin' && cp '{n}' '{k}/bin/nerd' && chmod 755 '{k}/bin/nerd' && ln -sfn '{k}' '{p}/opt/nerd'", k = k.display(), n = nerd.display())
+        }
+        /// sh for `upgrade`: the release's own nerd installed.
+        fn installs(&self) -> String {
+            self.keg(&self.root.join("build/nerd"))
+        }
+        fn cache(&self) -> PathBuf {
+            self.root.join("home/Library/Caches/Homebrew")
+        }
         fn formula_now(&self) -> String {
             std::fs::read_to_string(self.tap().join("Formula/nerd.rb")).unwrap()
         }
         fn saved(&self) -> PathBuf {
             saved_path(&self.brew.state)
         }
+        fn rendered(&self) -> String {
+            formula(TAG, NAME, &self.sha)
+        }
     }
 
-    /// A Homebrew prefix in a test folder holding nerd from nerdterm/tap, its tap a git repository; a stand-in for
-    /// sandbox-exec that runs the stand-in brew; a state folder of its own; a checked release in `run/`.
+    /// A Homebrew prefix in a test folder holding nerd 0.21.0 from nerdterm/tap, its tap a git repository; a stand-in
+    /// for sandbox-exec that runs the stand-in brew; a state folder and a HOME of its own; a checked release in `run/`.
     fn fake(tag: &str) -> Fake {
         let root = crate::paths::test_dir(tag).canonicalize().unwrap();
         std::fs::create_dir_all(root.join("state")).unwrap();
+        std::fs::create_dir_all(root.join("home")).unwrap();
+        let was = crate::paths::TEST_HOME.with(|h| h.replace(Some(root.join("home"))));
         let prefix = root.join("prefix");
         let keg = prefix.join("Cellar/nerd/0.21.0");
         write(&keg.join("bin/nerd"), "", 0o755);
@@ -412,29 +530,34 @@ mod tests {
         let tap = tap_of(&prefix);
         let r = root.display();
         let brew = format!(
-            "#!/bin/sh\ncase $1 in\n--version) echo 'Homebrew 7.0.11'; echo 'Homebrew/homebrew-core' ;;\n--cache) if [ -f '{r}/cache-fails' ]; then echo 'Error: no cache' >&2; exit 1; fi; echo '{r}/cache' ;;\n\
+            "#!/bin/sh\ncase $1 in\n--version) if [ ! -d \"$HOMEBREW_TEMP\" ]; then echo 'Error: no HOMEBREW_TEMP folder' >&2; exit 1; fi; echo 'Homebrew 7.0.11'; echo 'Homebrew/homebrew-core' ;;\n\
+             config) if [ -f '{r}/at-config' ]; then . '{r}/at-config'; fi; echo 'HOMEBREW_PREFIX: {p}'; echo \"HOMEBREW_TEMP: $HOMEBREW_TEMP\" ;;\n\
+             --cache) if [ -f '{r}/at-cache' ]; then . '{r}/at-cache'; fi; echo \"$HOME/Library/Caches/Homebrew\" ;;\n\
              upgrade) cp '{t}/Formula/nerd.rb' '{r}/seen.rb'; echo \"$*\" > '{r}/upgraded'; if [ -f '{r}/does' ]; then . '{r}/does'; fi ;;\n*) exit 9 ;;\nesac\n",
+            p = prefix.display(),
             t = tap.display()
         );
         write(&prefix.join("bin/brew"), &brew, 0o755);
         std::os::unix::fs::symlink(keg.join("bin/nerd"), prefix.join("bin/nerd")).unwrap();
+        std::fs::create_dir_all(prefix.join("opt")).unwrap();
+        std::os::unix::fs::symlink(&keg, prefix.join("opt/nerd")).unwrap();
         write(&root.join("sandbox-exec"), &format!("#!/bin/sh\n[ \"$1\" = -p ] || exit 97\nprintf '%s' \"$2\" > '{r}/profile'\nshift 2\nexec \"$@\"\n"), 0o755);
         write(&tap.join("README.md"), "# tap\n", 0o644);
         write(&tap.join("Formula/nerd.rb"), TAPS_OWN, 0o644);
         git(&tap, &["init", "-q"]);
         git(&tap, &["add", "-A"]);
         git(&tap, &["commit", "-qm", "tap"]);
-        write(&root.join(format!("run/{NAME}")), "the archive", 0o600);
-        write(&root.join(format!("run/{NAME}.sha256")), &format!("{SHA}  {NAME}\n"), 0o600);
-        Fake { brew: Brew { prefix, run: root.join("sandbox-exec"), state: root.join("state") }, root }
+        write(&root.join("build/nerd"), "#!/bin/sh\necho 'nerd 0.99.0'\n", 0o755);
+        std::fs::create_dir_all(root.join("run")).unwrap();
+        let archive = root.join(format!("run/{NAME}"));
+        assert!(Command::new("/usr/bin/tar").env("COPYFILE_DISABLE", "1").arg("-czf").arg(&archive).arg("-C").arg(root.join("build")).arg("nerd").status().unwrap().success());
+        let sha = sha256_hex(&std::fs::read(&archive).unwrap());
+        write(&root.join(format!("run/{NAME}.sha256")), &format!("{sha}  {NAME}\n"), 0o600);
+        Fake { brew: Brew { prefix, run: root.join("sandbox-exec"), state: root.join("state") }, root, sha, was }
     }
 
     fn upgrade(f: &Fake, limit: Duration) -> Result<String, String> {
         f.brew.upgrade(TAG, NAME, &f.root.join("run"), limit)
-    }
-
-    fn rendered() -> String {
-        formula(TAG, NAME, SHA)
     }
 
     #[test]
@@ -477,8 +600,8 @@ mod tests {
         let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/publish-formula.sh");
         let out = Command::new("/bin/sh").arg(script).args(["--dry-run", TAG]).env("PATH", format!("{}:/usr/bin:/bin", t.join("bin").display())).env("STUB", &t).env("NERD_INSTALL_SH", t.join("install.sh")).output().unwrap();
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-        assert_eq!(rendered(), String::from_utf8(out.stdout).unwrap());
-        assert!(rendered().contains(&format!("  url \"{}\"\n", super::super::asset_url(TAG, NAME))), "the url Homebrew's cache is named after");
+        assert_eq!(formula(TAG, NAME, SHA), String::from_utf8(out.stdout).unwrap());
+        assert!(formula(TAG, NAME, SHA).contains(&format!("  url \"{}\"\n", super::super::asset_url(TAG, NAME))), "the url Homebrew's cache is named after");
     }
 
     #[test]
@@ -516,8 +639,6 @@ mod tests {
     #[test]
     fn the_archive_goes_where_homebrew_looks_for_its_download() {
         let root = crate::paths::test_dir("brew-cache");
-        let archive = root.join("a.tar.gz");
-        write(&archive, "verified", 0o600);
         let url = super::super::asset_url(TAG, NAME);
         let key = sha256_hex(url.as_bytes());
         assert_eq!(sha256_hex(b"abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
@@ -528,7 +649,7 @@ mod tests {
             l
         };
 
-        let p = prime(&root.join("cache"), &url, &archive).unwrap();
+        let p = prime(&root.join("cache"), &url, b"verified").unwrap();
         assert_eq!(p, downloads.join(format!("{key}--{NAME}")), "none yet: the url's own name");
         assert_eq!(std::fs::read(&p).unwrap(), b"verified");
         assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o644);
@@ -536,23 +657,23 @@ mod tests {
         std::fs::remove_file(&p).unwrap();
         write(&downloads.join(format!("{key}--older-name.tar.gz")), "old", 0o644);
         write(&downloads.join(format!("{key}--{NAME}.incomplete")), "half", 0o644);
-        let p = prime(&root.join("cache"), &url, &archive).unwrap();
+        let p = prime(&root.join("cache"), &url, b"verified").unwrap();
         assert_eq!(p, downloads.join(format!("{key}--older-name.tar.gz")), "the one there is the one Homebrew takes");
         assert_eq!(std::fs::read(&p).unwrap(), b"verified");
         assert_eq!(listed(), [format!("{key}--{NAME}.incomplete"), format!("{key}--older-name.tar.gz")], "an .incomplete is not a download; nothing else left");
 
         write(&downloads.join(format!("{key}--second.tar.gz")), "old", 0o644);
-        let p = prime(&root.join("cache"), &url, &archive).unwrap();
+        let p = prime(&root.join("cache"), &url, b"verified").unwrap();
         assert_eq!(p, downloads.join(format!("{key}--{NAME}")), "two: both gone, the url's own name");
         assert_eq!(listed(), [format!("{key}--{NAME}"), format!("{key}--{NAME}.incomplete")]);
     }
 
     #[test]
-    fn brew_runs_with_no_network_and_only_nerd_s_variables() {
+    fn nerd_starts_brew_with_no_network_and_a_fixed_environment() {
         assert_eq!(PROFILE, r#"(version 1)(allow default)(deny network*)(allow network-bind network-inbound (local unix-socket))(allow process-exec (literal "/usr/bin/sandbox-exec") (with no-sandbox))"#);
         let b = Brew { prefix: "/opt/homebrew".into(), run: "/usr/bin/sandbox-exec".into(), state: "/x".into() };
-        for args in [&["--cache"][..], &["--version"], &["upgrade", "nerdterm/tap/nerd"]] {
-            let cmd = b.cmd(args);
+        for args in [&["--cache"][..], &["--version"], &["config"], &["upgrade", "nerdterm/tap/nerd"]] {
+            let cmd = b.cmd(args, Path::new("/x/release-1/tmp"));
             assert_eq!(cmd.get_program(), "/usr/bin/sandbox-exec");
             let mut want: Vec<&str> = vec!["-p", PROFILE, "/opt/homebrew/bin/brew"];
             want.extend(args);
@@ -568,12 +689,14 @@ mod tests {
                 ("HOMEBREW_NO_ENV_HINTS", "1"),
                 ("HOMEBREW_NO_AUTOREMOVE", "1"),
                 ("HOMEBREW_CURL_RETRIES", "0"),
+                ("HOMEBREW_TEMP", "/x/release-1/tmp"),
+                ("TMPDIR", "/x/release-1/tmp"),
             ];
             for (k, v) in fixed {
                 assert_eq!(env.get(k), Some(&Some(v.to_string())), "{k}");
             }
             assert_eq!(env.get("HOME"), Some(&crate::paths::home().map(|h| h.to_string_lossy().into_owned())));
-            let others: Vec<&String> = env.keys().filter(|k| !fixed.iter().any(|(f, _)| f == k) && !["HOME", "USER", "LOGNAME", "TMPDIR"].contains(&k.as_str())).collect();
+            let others: Vec<&String> = env.keys().filter(|k| !fixed.iter().any(|(f, _)| f == k) && !["HOME", "USER", "LOGNAME"].contains(&k.as_str())).collect();
             assert!(others.is_empty(), "nothing else: {others:?}");
             assert!(env.values().all(Option::is_some), "a clean slate, not removals from nerd's own");
         }
@@ -583,13 +706,22 @@ mod tests {
     fn a_run_past_its_limit_is_stopped_with_everything_it_started() {
         let root = crate::paths::test_dir("brew-stop");
         let kid = root.join("kid");
-        let sh = format!("#!/bin/sh\ntrap '' TERM\n/usr/bin/perl -e '$SIG{{TERM}}=\"IGNORE\"; setpgrp(0,0); open(F, \">\", $ARGV[0]); print F $$; close F; sleep 60' '{}' &\nsleep 60\n", kid.display());
+        // Renamed into place: a kid file is a whole pid of a process that already left the group and ignores TERM.
+        let sh = format!("#!/bin/sh\ntrap '' TERM\n/usr/bin/perl -e '$SIG{{TERM}}=\"IGNORE\"; setpgrp(0,0); open(F, \">\", \"$ARGV[0].t\"); print F $$; close F; rename(\"$ARGV[0].t\", $ARGV[0]); sleep 60' '{}' &\nsleep 60\n", kid.display());
         write(&root.join("hang"), &sh, 0o755);
-        let start = Instant::now();
-        let r = run(Command::new(root.join("hang")), Duration::from_secs(1), &root);
-        assert!(r.as_ref().is_err_and(|e| e.starts_with("did not finish in 1 s")), "{r:?}");
-        assert!(start.elapsed() < GRACE + Duration::from_secs(3));
-        let pid = nix::unistd::Pid::from_raw(std::fs::read_to_string(&kid).unwrap().trim().parse().unwrap());
+        // A busy machine can stop the run before perl got there, and then the case never happened: again, with twice the limit.
+        let mut limit = 1;
+        loop {
+            let start = Instant::now();
+            let r = run(Command::new(root.join("hang")), Duration::from_secs(limit), &root);
+            assert!(r.as_ref().is_err_and(|e| e.starts_with(&format!("did not finish in {limit} s"))), "{r:?}");
+            assert!(start.elapsed() < Duration::from_secs(limit) + GRACE + Duration::from_secs(2));
+            if kid.exists() || limit == 16 {
+                break;
+            }
+            limit *= 2;
+        }
+        let pid = nix::unistd::Pid::from_raw(std::fs::read_to_string(&kid).expect("perl did not leave the group before a 16 s limit").trim().parse().unwrap());
         let t = Instant::now();
         while nix::sys::signal::kill(pid, None).is_ok() && t.elapsed() < Duration::from_secs(3) {
             std::thread::sleep(Duration::from_millis(50));
@@ -609,14 +741,110 @@ mod tests {
     #[test]
     fn brew_installs_nerd_s_formula_from_the_primed_cache_and_the_tap_gets_its_own_back() {
         let f = fake("brew-ok");
+        f.does(&f.installs());
         assert_eq!(upgrade(&f, BREW_LIMIT), Ok("nerd 0.99.0".into()));
-        assert_eq!(std::fs::read_to_string(f.root.join("seen.rb")).unwrap(), rendered(), "brew ran with nerd's formula");
+        assert_eq!(std::fs::read_to_string(f.root.join("seen.rb")).unwrap(), f.rendered(), "brew ran with nerd's formula");
         assert_eq!(std::fs::read_to_string(f.root.join("upgraded")).unwrap(), "upgrade nerdterm/tap/nerd\n");
         assert_eq!(std::fs::read_to_string(f.root.join("profile")).unwrap(), PROFILE);
         assert_eq!(f.formula_now(), TAPS_OWN, "the tap's own formula back");
         let key = sha256_hex(super::super::asset_url(TAG, NAME).as_bytes());
-        assert_eq!(std::fs::read(f.root.join(format!("cache/downloads/{key}--{NAME}"))).unwrap(), b"the archive");
+        assert_eq!(std::fs::read(f.cache().join(format!("downloads/{key}--{NAME}"))).unwrap(), std::fs::read(f.root.join(format!("run/{NAME}"))).unwrap());
         assert!(!f.saved().exists(), "the saved copy is gone");
+        assert_eq!(std::fs::metadata(f.root.join("run/tmp")).unwrap().permissions().mode() & 0o777, 0o700, "Homebrew staged in nerd's own folder");
+    }
+
+    #[test]
+    fn a_brew_that_would_stage_or_cache_elsewhere_is_refused_before_the_tap_is_touched() {
+        let untouched = |f: &Fake| {
+            assert_eq!(f.formula_now(), TAPS_OWN);
+            assert!(!f.root.join("upgraded").exists() && !f.saved().exists() && !f.cache().exists(), "no brew upgrade, nothing primed");
+        };
+        let staged = "failed at Homebrew's temp folder: Homebrew stages in /private/tmp, not in nerd's own folder (HOMEBREW_TEMP in a brew.env, or the folder not writable); remove HOMEBREW_TEMP from your brew.env, or run brew update && brew upgrade nerd";
+        let f = fake("brew-temp");
+        f.at("config", "echo 'HOMEBREW_TEMP: /private/tmp'; exit 0");
+        assert_eq!(upgrade(&f, BREW_LIMIT), Err(staged.into()), "a brew.env's HOMEBREW_TEMP");
+        untouched(&f);
+        f.at("config", "echo 'HOMEBREW_PREFIX: /opt/homebrew'; exit 0");
+        assert_eq!(upgrade(&f, BREW_LIMIT), Err(staged.into()), "none shown: Homebrew's default");
+        untouched(&f);
+
+        let f = fake("brew-cache-elsewhere");
+        f.at("cache", "echo /Users/someone/Homebrew; exit 0");
+        assert_eq!(upgrade(&f, BREW_LIMIT), Err("failed at Homebrew's cache: Homebrew's cache is /Users/someone/Homebrew, not ~/Library/Caches/Homebrew; remove HOMEBREW_CACHE from your brew.env, or run brew update && brew upgrade nerd".into()));
+        untouched(&f);
+    }
+
+    #[test]
+    fn an_archive_that_changed_since_its_check_never_reaches_homebrew_s_cache() {
+        let f = fake("brew-swapped");
+        f.at("cache", &format!("printf 'swapped' > '{}'", f.root.join(format!("run/{NAME}")).display()));
+        assert_eq!(upgrade(&f, BREW_LIMIT), Err("failed at checksum: the archive changed after install.sh checked it; try again".into()));
+        assert!(!f.cache().exists(), "nothing in the cache");
+        assert_eq!(f.formula_now(), TAPS_OWN);
+        assert!(!f.root.join("upgraded").exists());
+    }
+
+    #[test]
+    fn an_archive_tar_cannot_read_nerd_from_stops_the_run_before_the_tap_is_touched() {
+        let f = fake("brew-no-nerd");
+        std::fs::rename(f.root.join("build/nerd"), f.root.join("build/other")).unwrap();
+        let archive = f.root.join(format!("run/{NAME}"));
+        assert!(Command::new("/usr/bin/tar").env("COPYFILE_DISABLE", "1").arg("-czf").arg(&archive).arg("-C").arg(f.root.join("build")).arg("other").status().unwrap().success());
+        std::fs::write(f.root.join(format!("run/{NAME}.sha256")), format!("{}  {NAME}\n", sha256_hex(&std::fs::read(&archive).unwrap()))).unwrap();
+        assert_eq!(upgrade(&f, BREW_LIMIT), Err("failed at the archive: tar: nerd: Not found in archive; try again".into()));
+        assert!(!f.cache().exists() && !f.root.join("upgraded").exists() && !f.saved().exists(), "nothing primed, no brew upgrade");
+        assert_eq!(f.formula_now(), TAPS_OWN);
+    }
+
+    #[test]
+    fn homebrew_s_temp_folder_that_cannot_be_made_stops_the_run_before_brew() {
+        let f = fake("brew-temp-file");
+        write(&f.root.join("run/tmp"), "", 0o600);
+        let e = upgrade(&f, BREW_LIMIT).unwrap_err();
+        assert!(e.starts_with(&format!("failed at Homebrew's temp folder: {}: ", f.root.join("run/tmp").display())) && e.ends_with("; try again"), "{e}");
+        assert!(!f.root.join("profile").exists(), "no brew ran");
+    }
+
+    #[test]
+    fn after_the_upgrade_homebrew_s_nerd_must_be_the_checked_release_and_is_never_run() {
+        let f = fake("brew-nothing");
+        assert_eq!(upgrade(&f, BREW_LIMIT), Err(format!("failed at brew upgrade: Homebrew did not install nerd 0.99.0: {} leads to {}; run brew update && brew upgrade nerd", f.brew.prefix.join("opt/nerd").display(), f.brew.prefix.join("Cellar/nerd/0.21.0").display())), "brew did nothing and said nothing");
+        assert_eq!(f.formula_now(), TAPS_OWN);
+
+        let f = fake("brew-other-bytes");
+        let ran = f.root.join("ran");
+        write(&f.root.join("other"), &format!("#!/bin/sh\ntouch '{}'\necho 'nerd 0.99.0'\n", ran.display()), 0o755);
+        f.does(&f.keg(&f.root.join("other")));
+        assert_eq!(upgrade(&f, BREW_LIMIT), Err("failed at brew upgrade: the nerd Homebrew installed is not the release nerd checked; it will not run: run brew reinstall nerd".into()));
+        let exe = f.brew.prefix.join("Cellar/nerd/0.99.0/bin/nerd");
+        assert_eq!(std::fs::metadata(&exe).unwrap().permissions().mode() & 0o777, 0o644, "kept, not runnable");
+        assert!(!ran.exists(), "nerd ran nothing Homebrew installed");
+        assert_eq!(f.formula_now(), TAPS_OWN);
+
+        // A link Homebrew moved into the keg as it was staged: whatever it leads to must not run through <prefix>/bin/nerd.
+        let f = fake("brew-link");
+        let (k, p) = (f.brew.prefix.join("Cellar/nerd/0.99.0"), f.brew.prefix.clone());
+        let planted = f.root.join("planted");
+        write(&planted, &format!("#!/bin/sh\ntouch '{}'\n", f.root.join("ran").display()), 0o755);
+        f.does(&format!("mkdir -p '{k}/bin' && ln -s '{}' '{k}/bin/nerd' && ln -sfn '{k}' '{p}/opt/nerd' && ln -sfn '{k}/bin/nerd' '{p}/bin/nerd'", planted.display(), k = k.display(), p = p.display()));
+        let bin = k.join("bin");
+        assert_eq!(upgrade(&f, BREW_LIMIT), Err(format!("failed at brew upgrade: Homebrew's nerd 0.99.0 has no plain file at {}; it will not run: run chmod 755 {}, then brew reinstall nerd", bin.join("nerd").display(), bin.display())));
+        assert_eq!(std::fs::metadata(&bin).unwrap().permissions().mode() & 0o777, 0o644, "the keg's bin cannot be searched");
+        assert!(Command::new(p.join("bin/nerd")).status().is_err(), "nothing runs through Homebrew's link");
+        assert!(!f.root.join("ran").exists(), "the planted program never ran");
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let f = fake("brew-unreadable");
+        f.does(&format!("{} && chmod 311 '{}'", f.installs(), f.brew.prefix.join("Cellar/nerd/0.99.0/bin/nerd").display()));
+        assert_eq!(upgrade(&f, BREW_LIMIT), Err("failed at brew upgrade: the nerd Homebrew installed is not the release nerd checked; it will not run: run brew reinstall nerd".into()), "a keg nerd cannot read");
+        assert_eq!(std::fs::metadata(f.brew.prefix.join("Cellar/nerd/0.99.0/bin/nerd")).unwrap().permissions().mode() & 0o777, 0o644);
+    }
+
+    #[test]
+    fn a_pinned_nerd_is_told_to_unpin() {
+        let f = fake("brew-pinned");
+        f.does("echo 'Error: Not upgrading 1 pinned package:' >&2; echo 'nerd 0.21.0' ; exit 1");
+        assert_eq!(upgrade(&f, BREW_LIMIT), Err("failed at brew upgrade: Homebrew said \"Error: Not upgrading 1 pinned package:\"; run brew unpin nerd, then brew update && brew upgrade nerd".into()));
     }
 
     #[test]
@@ -644,14 +872,14 @@ mod tests {
         let f = fake("brew-refused");
         write(&f.tap().join("cmd/brew-x.rb"), "", 0o644);
         assert_eq!(upgrade(&f, BREW_LIMIT), Err(format!("failed at tap check: {REFUSED}")));
-        assert!(!f.root.join("upgraded").exists() && !f.root.join("cache").exists(), "no brew upgrade, nothing primed");
+        assert!(!f.root.join("upgraded").exists() && !f.cache().exists(), "no brew upgrade, nothing primed");
         assert_eq!(f.formula_now(), TAPS_OWN);
     }
 
     #[test]
     fn a_change_to_the_tap_during_the_upgrade_wins() {
         let f = fake("brew-race");
-        f.does(&format!("printf 'upstream\\n' > '{}'", f.tap().join("Formula/nerd.rb").display()));
+        f.does(&format!("{}; printf 'upstream\\n' > '{}'", f.installs(), f.tap().join("Formula/nerd.rb").display()));
         assert!(upgrade(&f, BREW_LIMIT).is_ok());
         assert_eq!(f.formula_now(), "upstream\n", "not overwritten");
         assert!(!f.saved().exists());
@@ -660,8 +888,9 @@ mod tests {
     #[test]
     fn a_killed_run_s_formula_is_put_back_by_the_next_run() {
         let f = fake("brew-killed");
-        let saved = [sha256_hex(rendered().as_bytes()).as_bytes(), b"\n", TAPS_OWN.as_bytes()].concat();
-        std::fs::write(f.tap().join("Formula/nerd.rb"), rendered()).unwrap();
+        f.does(&f.installs());
+        let saved = [sha256_hex(f.rendered().as_bytes()).as_bytes(), b"\n", TAPS_OWN.as_bytes()].concat();
+        std::fs::write(f.tap().join("Formula/nerd.rb"), f.rendered()).unwrap();
         crate::paths::write_private(&f.saved(), "tmp", &saved).unwrap();
         assert!(upgrade(&f, BREW_LIMIT).is_ok(), "put back first, so the tap checks clean");
         assert_eq!(f.formula_now(), TAPS_OWN);
@@ -676,12 +905,13 @@ mod tests {
     #[test]
     fn a_killed_run_then_brew_update_bringing_the_same_formula_leaves_upstream_s_commit() {
         let f = fake("brew-killed-updated");
-        let saved = [sha256_hex(rendered().as_bytes()).as_bytes(), b"\n", TAPS_OWN.as_bytes()].concat();
-        std::fs::write(f.tap().join("Formula/nerd.rb"), rendered()).unwrap();
+        f.does(&f.installs());
+        let saved = [sha256_hex(f.rendered().as_bytes()).as_bytes(), b"\n", TAPS_OWN.as_bytes()].concat();
+        std::fs::write(f.tap().join("Formula/nerd.rb"), f.rendered()).unwrap();
         crate::paths::write_private(&f.saved(), "tmp", &saved).unwrap();
         git(&f.tap(), &["commit", "-qam", "nerd 0.99.0"]);
         assert_eq!(upgrade(&f, BREW_LIMIT), Ok("nerd 0.99.0".into()));
-        assert_eq!(f.formula_now(), rendered(), "upstream's commit, not the older bytes");
+        assert_eq!(f.formula_now(), f.rendered(), "upstream's commit, not the older bytes");
         let status = Command::new("git").arg("-C").arg(f.tap()).args(["status", "--porcelain", "--untracked-files=all", "--ignored"]).output().unwrap();
         assert!(status.status.success() && status.stdout.is_empty(), "{}", String::from_utf8_lossy(&status.stdout));
         assert!(!f.saved().exists());
@@ -693,23 +923,35 @@ mod tests {
             assert_eq!(f.formula_now(), TAPS_OWN);
             assert!(!f.root.join("upgraded").exists() && !f.saved().exists());
         };
+        let f = fake("brew-config-fails");
+        f.at("config", "echo 'Error: no config' >&2; exit 1");
+        assert_eq!(upgrade(&f, BREW_LIMIT), Err("failed at brew config: Homebrew said \"Error: no config\"; try again".into()));
+        assert!(!f.cache().exists());
+        untouched(&f);
+
+        let f = fake("brew-archive-gone");
+        std::fs::remove_file(f.root.join(format!("run/{NAME}"))).unwrap();
+        assert_eq!(upgrade(&f, BREW_LIMIT), Err(format!("failed at checksum: {}: No such file or directory (os error 2); try again", f.root.join(format!("run/{NAME}")).display())));
+        assert!(!f.cache().exists());
+        untouched(&f);
+
         let f = fake("brew-sum");
         std::fs::write(f.root.join(format!("run/{NAME}.sha256")), format!("{SHA}  other.tar.gz\n")).unwrap();
         assert_eq!(upgrade(&f, BREW_LIMIT), Err("failed at checksum: the checksum file is not one line of shasum".into()));
-        assert!(!f.root.join("cache").exists());
+        assert!(!f.cache().exists());
         untouched(&f);
 
-        let f = fake("brew-cache");
-        std::fs::write(f.root.join("cache-fails"), "").unwrap();
+        let f = fake("brew-cache-fails");
+        f.at("cache", "echo 'Error: no cache' >&2; exit 1");
         assert_eq!(upgrade(&f, BREW_LIMIT), Err("failed at brew --cache: Homebrew said \"Error: no cache\"".into()));
-        assert!(!f.root.join("cache").exists());
+        assert!(!f.cache().exists());
         untouched(&f);
 
         let f = fake("brew-put");
         std::fs::set_permissions(f.tap().join("Formula/nerd.rb"), std::fs::Permissions::from_mode(0o444)).unwrap();
         let e = upgrade(&f, BREW_LIMIT).unwrap_err();
         assert!(e.starts_with("failed at formula: "), "{e}");
-        assert_eq!(std::fs::read_dir(f.root.join("cache/downloads")).unwrap().count(), 0, "the primed archive removed");
+        assert_eq!(std::fs::read_dir(f.cache().join("downloads")).unwrap().count(), 0, "the primed archive removed");
         untouched(&f);
     }
 }
