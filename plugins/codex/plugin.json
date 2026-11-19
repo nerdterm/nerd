@@ -19,7 +19,7 @@
       { "on": "SubagentStop", "do": "sub-stop" }
     ],
     "session": { "field": "session_id", "kind": "word" },
-    "resume": ["codex", "resume", "{id}"],
+    "resume": ["codex", "--no-daemon", "resume", "{id}"],
     "strip": {
       "value": ["resume"],
       "flag": ["--last"]

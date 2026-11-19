@@ -1839,6 +1839,7 @@ mod tests {
         assert_eq!(by("claude").strip_resume(&v(&["claude", "--resume=abc", "--continue"])), v(&["claude"]));
         assert_eq!(by("claude").strip_resume(&v(&["zsh", "-f"])), v(&["zsh", "-f"]));
         assert_eq!(by("codex").strip_resume(&v(&["codex", "resume", "abc", "--model", "o"])), v(&["codex", "--model", "o"]));
+        assert_eq!(by("codex").strip_resume(&v(&["codex", "--no-daemon", "resume", "X"])), v(&["codex", "--no-daemon"]), "a fresh Codex keeps running without the shared server");
         assert_eq!(by("opencode").strip_resume(&v(&["opencode", "-s", "ses_1", "-c"])), v(&["opencode"]));
         assert_eq!(by("pi").strip_resume(&v(&["pi", "--session", "019a", "--model", "m", "-c"])), v(&["pi", "--model", "m"]));
     }
@@ -1849,9 +1850,9 @@ mod tests {
         let uuid = "0b5e7c3a-1d2f-4e6a-9b8c-7d6e5f4a3b2c";
         let argv = |n: &str, id: &str| b.iter().find(|m| m.name == n).unwrap().resume_argv(id).map(|v| v.join(" "));
         assert_eq!(argv("claude", uuid), Some(format!("claude --resume={uuid}")));
-        assert_eq!(argv("codex", uuid), Some(format!("codex resume {uuid}")));
+        assert_eq!(argv("codex", uuid), Some(format!("codex --no-daemon resume {uuid}")));
         let recorded = "01a0e00a-52ae-7ef0-a6ff-7e16d3f63eeb";
-        assert_eq!(argv("codex", recorded), Some(format!("codex resume {recorded}")), "a Codex id as recorded: uuid-shaped, taken as a word");
+        assert_eq!(argv("codex", recorded), Some(format!("codex --no-daemon resume {recorded}")), "a Codex id as recorded: uuid-shaped, taken as a word");
         assert_eq!(argv("copilot", uuid), Some(format!("copilot --resume {uuid}")));
         assert_eq!(argv("gemini", uuid), Some(format!("gemini --resume {uuid}")));
         assert_eq!(argv("qwen", uuid), Some(format!("qwen --resume {uuid}")));

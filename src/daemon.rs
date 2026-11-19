@@ -277,6 +277,7 @@ fn serve(started: &mut bool) -> std::io::Result<()> {
             }
         }
     }
+    app.tell_changed_resume();
     app.mail = crate::app::MailState::open(&crate::mail::path());
 
     let sink = Sink::new(bell.clone());

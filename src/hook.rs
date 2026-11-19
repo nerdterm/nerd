@@ -884,6 +884,15 @@ impl Ask {
         std::iter::once(["Agent", "Settings file", "Resumes with"].map(String::from)).chain(self.rows.iter().cloned()).map(Vec::from).collect()
     }
 
+    /// What the first window after a server start says while a confirmed resume line has changed.
+    pub fn notice(&self) -> Option<String> {
+        match self.rows.as_slice() {
+            _ if !self.changed => None,
+            [one] => Some(format!("{}'s resume line changed; confirm it in Settings to keep resuming its sessions", one[0])),
+            _ => Some("Resume lines changed; confirm them in Settings to keep resuming those sessions".into()),
+        }
+    }
+
     /// The whole question on one line, for the log.
     pub fn summary(&self) -> String {
         self.rows.iter().map(|r| r.join(" ")).collect::<Vec<_>>().join("; ")
@@ -932,6 +941,11 @@ pub fn install() -> std::io::Result<Vec<Installed>> {
     let done = install_in(&home())?;
     record_seen(&home(), &seen_path());
     Ok(done)
+}
+
+/// The person confirmed the changed resume lines `first_installs` showed: recorded as an install records them, nothing installed.
+pub fn confirm_resume() {
+    record_seen(&home(), &seen_path());
 }
 
 /// Each agent's resume line as the human last confirmed it, by manifest name.
@@ -3320,6 +3334,8 @@ console.log("{}")
              Cursor     ~/.cursor/hooks.json   no resume\n\
              \nInstall? [y/N] "
         );
+        assert_eq!(ask.notice(), None, "a first install is not a changed line");
+        assert_eq!(Ask { changed: true, rows: ask.rows.clone() }.notice().as_deref(), Some("Resume lines changed; confirm them in Settings to keep resuming those sessions"));
         assert!(Ask { changed: true, ..ask }.prompt().starts_with("The resume line of these agents changed since you confirmed it;"));
     }
 
@@ -3331,13 +3347,14 @@ console.log("{}")
         assert!(!first_installs_in(&home, &seen).changed);
         install_in(&home).unwrap();
         assert!(first_installs_in(&home, &seen).is_empty(), "hooks an older nerd installed count as confirmed");
-        assert_eq!(read_seen(&seen)["codex"], "codex resume <id>", "and their lines are recorded");
+        assert_eq!(read_seen(&seen)["codex"], "codex --no-daemon resume <id>", "and their lines are recorded");
         let mut changed = read_seen(&seen);
         changed.insert("codex".into(), json!("codex resume --yolo <id>"));
         write_seen(&seen, &changed);
         let ask = first_installs_in(&home, &seen);
-        assert_eq!(ask.rows, vec![["Codex", "~/.codex/hooks.json", "codex resume <id>"].map(String::from)]);
+        assert_eq!(ask.rows, vec![["Codex", "~/.codex/hooks.json", "codex --no-daemon resume <id>"].map(String::from)]);
         assert!(ask.changed && ask.intro().starts_with("The resume line of these agents changed"), "the re-ask says why");
+        assert_eq!(ask.notice().as_deref(), Some("Codex's resume line changed; confirm it in Settings to keep resuming its sessions"));
         assert!(!resume_seen(&builtin("codex"), &home, &seen), "not typed until confirmed");
         record_seen(&home, &seen);
         assert!(first_installs_in(&home, &seen).is_empty() && resume_seen(&builtin("codex"), &home, &seen), "confirming records it");

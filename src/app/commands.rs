@@ -216,7 +216,7 @@ impl App {
             Pending::ServerUpdate(_) => "Update server",
             Pending::ServerRemove(_) => "Remove server",
             Pending::ShowInFinder(_) => "Logs exported",
-            Pending::InstallHook(_) => "Install the hook",
+            Pending::InstallHook(_) | Pending::ConfirmResume(_) => "Install the hook",
             Pending::RemoveHook => "Remove agent hooks",
             Pending::StopServer => "Stop this server",
             Pending::PluginReady(..) => "Install a plugin",
@@ -285,7 +285,7 @@ impl App {
             Pending::DeletePath(_) => 0,
             // Detach never reaches here: its dialog is built on its own.
             Pending::Detach | Pending::DisconnectAll | Pending::Update | Pending::LeaveTmux | Pending::CopyResumeCommand => 0,
-            Pending::OpenRemote(_) | Pending::OpenServer(..) | Pending::CopyCommand(_) | Pending::Dismiss | Pending::ShowInFinder(_) | Pending::InstallHook(_) | Pending::RemoveHook | Pending::StopServer | Pending::PluginReady(..) | Pending::RemovePlugin(_) | Pending::Rename(..) | Pending::Topology(..) | Pending::Preset(..) => 0,
+            Pending::OpenRemote(_) | Pending::OpenServer(..) | Pending::CopyCommand(_) | Pending::Dismiss | Pending::ShowInFinder(_) | Pending::InstallHook(_) | Pending::ConfirmResume(_) | Pending::RemoveHook | Pending::StopServer | Pending::PluginReady(..) | Pending::RemovePlugin(_) | Pending::Rename(..) | Pending::Topology(..) | Pending::Preset(..) => 0,
             Pending::ServerStop(_) | Pending::ServerUpdate(_) | Pending::ServerRemove(_) | Pending::StrayStop(..) => 0,
             Pending::ReleaseInstall(_) | Pending::ReleaseDaily => 0,
             Pending::CloseGroup(key) => self
@@ -420,7 +420,8 @@ impl App {
     pub(super) fn install_hook_overlay(&mut self) -> Overlay {
         self.dirty = true;
         let ask = crate::hook::first_installs();
-        Overlay::Confirm(crate::menu::Confirm::new("Install the hook", ask.intro()).table(ask.table()).does("install hooks"), Pending::InstallHook(ask.summary()))
+        let (does, what) = if ask.changed { ("confirm", Pending::ConfirmResume(ask.summary())) } else { ("install hooks", Pending::InstallHook(ask.summary())) };
+        Overlay::Confirm(crate::menu::Confirm::new("Install the hook", ask.intro()).table(ask.table()).does(does), what)
     }
 
     pub(super) fn remove_hook_overlay(&mut self) -> Overlay {
@@ -521,6 +522,9 @@ impl App {
         if let Pending::InstallHook(first) = what {
             crate::log::info(&format!("first hook install declined: {first}"));
         }
+        if let Pending::ConfirmResume(lines) = what {
+            crate::log::info(&format!("changed resume lines declined: {lines}"));
+        }
         if let Pending::PluginReady(id, _) = what {
             crate::log::info(&format!("staged plugin {id} declined"));
             crate::install::discard(id);
@@ -571,7 +575,7 @@ impl App {
     pub(super) fn perform(&mut self, what: Pending) {
         self.dirty = true;
         match what {
-            Pending::Preset(..) | Pending::ServerStop(_) | Pending::ServerUpdate(_) | Pending::ServerRemove(_) | Pending::StrayStop(..) | Pending::RemovePlugin(_) | Pending::PluginReady(..) | Pending::InstallHook(_) | Pending::RemoveHook
+            Pending::Preset(..) | Pending::ServerStop(_) | Pending::ServerUpdate(_) | Pending::ServerRemove(_) | Pending::StrayStop(..) | Pending::RemovePlugin(_) | Pending::PluginReady(..) | Pending::InstallHook(_) | Pending::ConfirmResume(_) | Pending::RemoveHook
                 if self.client_inside =>
             {
                 self.notice = Some(super::mail::INSIDE_REFUSED.into())
@@ -663,6 +667,10 @@ impl App {
                     }
                     Err(e) => self.notice = Some(format!("couldn't install the hook: {e}")),
                 }
+            }
+            Pending::ConfirmResume(lines) => {
+                crate::log::info(&format!("changed resume lines confirmed: {lines}"));
+                crate::hook::confirm_resume();
             }
             Pending::RemoveHook => match crate::hook::uninstall() {
                 Ok(done) => self.toast = Some(format!("hooks removed from {}", done.join(", "))),
@@ -2306,6 +2314,8 @@ pub enum Pending {
     ShowInFinder(PathBuf),
     /// Hook into agents not hooked before; what the dialog said.
     InstallHook(String),
+    /// Record the hooked agents' changed resume lines as confirmed; what the dialog said.
+    ConfirmResume(String),
     /// Take nerd's entries out of every hooked agent.
     RemoveHook,
     /// Remove a plugin, by name; the third button takes its data too.

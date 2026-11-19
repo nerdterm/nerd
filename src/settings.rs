@@ -90,7 +90,7 @@ pub enum SettingsOutcome {
     None,
     Changed,
     Close,
-    /// Agents not hooked before: the caller asks first.
+    /// Agents not hooked before, or a hooked agent's changed resume line: the caller asks first.
     InstallHook,
     /// Agents already hooked: the caller asks before taking the hook out.
     RemoveHook,
@@ -110,6 +110,8 @@ pub struct Settings {
     /// `draw()` only receives the theme, so the screen keeps its own copy of the values.
     cfg: Config,
     hook_installed: bool,
+    /// A hooked agent's resume line changed since the person confirmed it.
+    resume_changed: bool,
     /// An install error, red, under the list; without one the selected row's hint shows there.
     message: Option<(bool, String)>,
     /// The window is attached from inside a pane: agent hooks are not changed from it.
@@ -150,6 +152,7 @@ impl Settings {
             selected: 0,
             cfg: cfg.clone(),
             hook_installed: crate::hook::is_installed(),
+            resume_changed: crate::hook::first_installs().changed,
             message: None,
             inside: false,
             scroll: Default::default(),
@@ -360,6 +363,7 @@ impl Settings {
             Item::Scrollback => c.scrollback.to_string(),
             Item::PaneGap => c.pane_gap.to_string(),
             Item::EditConfig => String::new(),
+            Item::Hook if self.hook_installed && self.resume_changed => "a resume line changed, confirm".into(),
             Item::Hook => if self.hook_installed { "installed" } else { "not installed" }.into(),
             Item::Messaging => on_off(crate::policy::current().on),
             Item::PanesStop => if crate::policy::current().allow_from_panes { "yes" } else { "no" }.into(),
@@ -429,11 +433,14 @@ impl Settings {
         SettingsOutcome::Changed
     }
 
-    /// Both ways ask first when a person has not yet read what changes; a hooked agent is removed even if its resume line changed.
+    /// Both ways ask first when a person has not yet read what changes; a changed resume line is confirmed before hooks can be removed here.
     fn toggle_hook(&mut self) -> SettingsOutcome {
         if self.inside {
             self.message = Some((true, crate::app::INSIDE_REFUSED.into()));
             return SettingsOutcome::None;
+        }
+        if self.hook_installed && self.resume_changed {
+            return SettingsOutcome::InstallHook;
         }
         if self.hook_installed {
             return SettingsOutcome::RemoveHook;
@@ -1025,6 +1032,21 @@ mod tests {
         assert_eq!(s.key(key(KeyCode::Enter), &mut cfg), SettingsOutcome::RemoveHook);
         let mut s = at(Item::EditConfig, &cfg);
         assert_eq!(s.key(key(KeyCode::Enter), &mut cfg), SettingsOutcome::EditConfig);
+    }
+
+    #[test]
+    fn a_changed_resume_line_turns_the_hook_item_into_its_confirmation() {
+        let mut cfg = Config::default();
+        let mut s = at(Item::Hook, &cfg);
+        (s.hook_installed, s.resume_changed) = (true, true);
+        assert_eq!(s.hook_row_value(), "a resume line changed, confirm");
+        assert_eq!(s.key(key(KeyCode::Enter), &mut cfg), SettingsOutcome::InstallHook, "the window that asks to confirm");
+        s.resume_changed = false;
+        assert_eq!(s.hook_row_value(), "installed");
+        assert_eq!(s.key(key(KeyCode::Enter), &mut cfg), SettingsOutcome::RemoveHook, "confirmed: the ordinary item");
+        (s.resume_changed, s.inside) = (true, true);
+        assert_eq!(s.key(key(KeyCode::Enter), &mut cfg), SettingsOutcome::None);
+        assert_eq!(s.message, Some((true, crate::app::INSIDE_REFUSED.into())), "not from a window inside a pane");
     }
 
     #[test]

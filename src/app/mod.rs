@@ -772,6 +772,79 @@ mod tests {
     }
 
     #[test]
+    fn a_changed_resume_line_is_confirmed_from_the_hook_item_and_nothing_else_changes() {
+        use crossterm::event::{MouseButton, MouseEventKind};
+        crate::config::tests::with_temp_home(|| {
+            crate::session::tests::with_temp_state_dir("confirm-resume", || {
+                let home = crate::paths::home().unwrap();
+                std::fs::create_dir_all(home.join(".codex")).unwrap();
+                crate::hook::install().unwrap();
+                let hooks = std::fs::read(home.join(".codex/hooks.json")).unwrap();
+                let seen = crate::paths::state_root().join("hook-confirmed.json");
+                std::fs::write(&seen, r#"{"codex": "codex resume <id>"}"#).unwrap();
+                let codex = crate::agents::get("codex").unwrap();
+                let mut app = with_one_space();
+                app.screen = Rect::new(0, 0, 100, 40);
+                let open = |app: &mut App| {
+                    let mut s = crate::settings::Settings::new(&app.cfg);
+                    s.choose("Agent hooks");
+                    app.overlay = Overlay::Settings(s);
+                    let shown = screen(app);
+                    let y = shown.lines().position(|l| l.contains("Agent hooks")).expect("the row drawn") as u16;
+                    (shown.lines().nth(y as usize).unwrap_or_default().to_string(), app.view.dialog.rows.iter().find(|(r, _)| r.y == y).expect("a row there").0)
+                };
+                let (line, r) = open(&mut app);
+                assert!(line.contains("a resume line changed, confirm"), "{line}");
+                assert_eq!(app.pointer_at(app.screen, r.x + 2, r.y), crate::pointer::POINTER, "the item shows the hand");
+
+                app.client_inside = true;
+                mouse_at(&mut app, MouseEventKind::Down(MouseButton::Left), (r.x + 2, r.y));
+                assert!(matches!(app.overlay, Overlay::Settings(_)) && screen(&mut app).contains("Not from a window inside a pane"), "not from a window inside a pane");
+                app.client_inside = false;
+
+                let (_, r) = open(&mut app);
+                mouse_at(&mut app, MouseEventKind::Down(MouseButton::Left), (r.x + 2, r.y));
+                let Overlay::Confirm(c, _) = &app.overlay else { panic!("a click opens the confirmation") };
+                assert!(c.body_lines(80).iter().any(|l| l.contains("Codex") && l.contains("codex --no-daemon resume <id>")), "{:?}", c.body_lines(80));
+                let shown = screen(&mut app);
+                assert!(shown.contains("The resume line of these agents changed since you confirmed it") && shown.contains("[Enter] confirm") && !shown.contains("install hooks"), "{shown}");
+                app.key(crossterm::event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+                assert!(!crate::hook::resume_confirmed(&codex), "a no records nothing");
+
+                let (_, r) = open(&mut app);
+                mouse_at(&mut app, MouseEventKind::Down(MouseButton::Left), (r.x + 2, r.y));
+                click_yes(&mut app);
+                assert!(crate::hook::resume_confirmed(&codex), "a yes records the line as it is now");
+                assert_eq!(std::fs::read(home.join(".codex/hooks.json")).unwrap(), hooks, "and does nothing else");
+                assert!(app.notice.is_none() && app.toast.is_none(), "{:?} {:?}", app.notice, app.toast);
+                assert!(open(&mut app).0.contains("installed") && !open(&mut app).0.contains("confirm"), "the ordinary item again");
+            });
+        });
+    }
+
+    #[test]
+    fn a_changed_resume_line_is_told_once_at_the_first_window() {
+        crate::config::tests::with_temp_home(|| {
+            crate::session::tests::with_temp_state_dir("tell-resume", || {
+                let home = crate::paths::home().unwrap();
+                std::fs::create_dir_all(home.join(".codex")).unwrap();
+                crate::hook::install().unwrap();
+                let mut app = with_one_space();
+                app.tell_changed_resume();
+                assert_eq!(app.notice, None, "nothing changed: nothing said");
+                std::fs::write(crate::paths::state_root().join("hook-confirmed.json"), r#"{"codex": "codex resume <id>"}"#).unwrap();
+                app.tell_changed_resume();
+                assert_eq!(app.notice.as_deref(), Some("Codex's resume line changed; confirm it in Settings to keep resuming its sessions"));
+                app.notice = None;
+                for _ in 0..3 {
+                    let _ = screen(&mut app);
+                }
+                assert_eq!(app.notice, None, "a redraw does not say it again");
+            });
+        });
+    }
+
+    #[test]
     fn edit_config_opens_the_file_with_the_system_and_types_nothing_into_a_pane() {
         // A missing file, so the test never launches an editor.
         crate::config::tests::with_temp_home(|| {
@@ -1008,8 +1081,8 @@ mod tests {
             assert!(log.lines().any(|l| l.contains(" WARN ") && l.ends_with(&format!("pane 4: codex session {id} not resumed: its resume line changed since it was confirmed; typed: codex"))), "{log}");
             assert_eq!(super::program_only(&["codex".into(), "--api-key=sk-secret".into()]), "codex with 1 argument", "a key in the arguments stays out of the log");
             assert_eq!(super::program_only(&["codex".into(), "-m".into(), "o3".into()]), "codex with 2 arguments");
-            std::fs::write(&seen, r#"{"codex": "codex resume <id>"}"#).unwrap();
-            assert_eq!(super::restore_launch(&ps(&["/bin/zsh"])), Some(vec!["codex".into(), "resume".into(), id.to_string()]), "confirmed as it is: resumed");
+            std::fs::write(&seen, r#"{"codex": "codex --no-daemon resume <id>"}"#).unwrap();
+            assert_eq!(super::restore_launch(&ps(&["/bin/zsh"])), Some(vec!["codex".into(), "--no-daemon".into(), "resume".into(), id.to_string()]), "confirmed as it is: resumed");
         });
     }
 
@@ -5285,7 +5358,7 @@ mod tests {
             Some(vec!["claude".into()]),
             "an old snapshot's agent starts fresh, not on a session that moved on"
         );
-        assert_eq!(super::restored_command(&zsh, Some(("codex", id)), false), Some(vec!["codex".into(), "resume".into(), id.into()]), "each agent by its own line");
+        assert_eq!(super::restored_command(&zsh, Some(("codex", id)), false), Some(vec!["codex".into(), "--no-daemon".into(), "resume".into(), id.into()]), "each agent by its own line");
         assert_eq!(super::restored_command(&zsh, Some(("opencode", "ses_1")), false), Some(vec!["opencode".into(), "--session".into(), "ses_1".into()]));
         assert_eq!(super::restored_command(&zsh, Some(("cursor", id)), false), Some(vec!["cursor-agent".into()]), "Cursor does not resume: it starts fresh");
         assert_eq!(super::restored_command(&zsh, Some(("gone", id)), false), None, "an agent with no manifest now: the shell only");

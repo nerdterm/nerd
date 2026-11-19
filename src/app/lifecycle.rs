@@ -641,6 +641,13 @@ impl App {
         self.notice = Some(CFG_BROKEN.into());
     }
 
+    /// Once per server start, for its first window: a confirmed resume line that changed stops resume until confirmed again.
+    pub fn tell_changed_resume(&mut self) {
+        if let Some(n) = crate::hook::first_installs().notice() {
+            self.notice.get_or_insert(n);
+        }
+    }
+
     /// The one writer of config.json; a file that does not parse is never overwritten with defaults.
     pub(super) fn save_cfg(&mut self) {
         if self.cfg_broken {
