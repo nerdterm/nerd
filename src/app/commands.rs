@@ -420,8 +420,12 @@ impl App {
     pub(super) fn install_hook_overlay(&mut self) -> Overlay {
         self.dirty = true;
         let ask = crate::hook::first_installs();
-        let (does, what) = if ask.changed { ("confirm", Pending::ConfirmResume(ask.summary())) } else { ("install hooks", Pending::InstallHook(ask.summary())) };
-        Overlay::Confirm(crate::menu::Confirm::new("Install the hook", ask.intro()).table(ask.table()).does(does), what)
+        let (does, what) = match (ask.changed(), ask.relined().is_empty()) {
+            (true, _) => ("confirm", Pending::ConfirmResume(ask.summary())),
+            (false, false) => ("install hooks and confirm", Pending::InstallHook(ask.summary())),
+            (false, true) => ("install hooks", Pending::InstallHook(ask.summary())),
+        };
+        Overlay::Confirm(crate::menu::Confirm::new(ask.title(), ask.intro()).table(ask.table()).does(does), what)
     }
 
     pub(super) fn remove_hook_overlay(&mut self) -> Overlay {

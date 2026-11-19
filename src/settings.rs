@@ -152,19 +152,25 @@ impl Settings {
             selected: 0,
             cfg: cfg.clone(),
             hook_installed: crate::hook::is_installed(),
-            resume_changed: crate::hook::first_installs().changed,
+            resume_changed: !crate::hook::first_installs().relined().is_empty(),
             message: None,
             inside: false,
             scroll: Default::default(),
         }
     }
 
-    /// The message line under the list is cut rather than wrapped; the key strip under it wraps.
+    /// The window grows by the rows a long message wraps onto; the list keeps every row.
     pub fn rect(&self, screen: Rect) -> Rect {
         let w = crate::chrome::WINDOW_W;
-        let strip = hint_strip(crate::chrome::fit(screen, w, 0).width.saturating_sub(4) as usize).len();
-        // the list, the message line, the key strip
-        crate::chrome::fit(screen, w, (lines().len() + 1 + strip) as u16)
+        let width = crate::chrome::fit(screen, w, 0).width.saturating_sub(4) as usize;
+        let note = self.note().map_or(1, |(_, t)| crate::menu::wrap(t, width).len().max(1));
+        // the list, the message lines, the key strip
+        crate::chrome::fit(screen, w, (lines().len() + note + hint_strip(width).len()) as u16)
+    }
+
+    /// The error under the list, else the selected row's hint.
+    fn note(&self) -> Option<(bool, &str)> {
+        self.message.as_ref().map(|(bad, t)| (*bad, t.as_str())).or(hint(ROWS[self.selected].2).map(|t| (false, t)))
     }
 
     /// Draws the panel; returns each setting's row and its index into `ROWS`.
@@ -184,13 +190,15 @@ impl Settings {
 
         // Carve off the bottom before the list, or a long list overwrites the hint.
         let mut bottom = crate::chrome::draw_hint(buf, inner, &hint_strip(width), theme).max(y);
-        let note = self.message.as_ref().map(|(bad, t)| (*bad, t.as_str())).or(hint(ROWS[self.selected].2).map(|t| (false, t)));
-        if let Some((is_error, text)) = note
-            && bottom > y
-        {
-            bottom -= 1;
+        if let Some((is_error, text)) = self.note() {
             let color = if is_error { theme.bad } else { theme.faint };
-            buf.set_stringn(inner.x, bottom, text, width, Style::default().fg(color));
+            for line in crate::menu::wrap(text, width).iter().rev() {
+                if bottom <= y {
+                    break;
+                }
+                bottom -= 1;
+                buf.set_stringn(inner.x, bottom, line, width, Style::default().fg(color));
+            }
         }
 
         // A screen shorter than the list scrolls so the selected row stays in view.
@@ -1032,6 +1040,29 @@ mod tests {
         assert_eq!(s.key(key(KeyCode::Enter), &mut cfg), SettingsOutcome::RemoveHook);
         let mut s = at(Item::EditConfig, &cfg);
         assert_eq!(s.key(key(KeyCode::Enter), &mut cfg), SettingsOutcome::EditConfig);
+    }
+
+    #[test]
+    fn a_refusal_wider_than_the_window_is_shown_whole_and_every_row_still_answers_its_click() {
+        let screen = Rect::new(0, 0, 100, 60);
+        let mut cfg = Config::default();
+        let mut s = at(Item::Hook, &cfg);
+        s.inside = true;
+        assert_eq!(s.key(key(KeyCode::Enter), &mut cfg), SettingsOutcome::None);
+        assert!(crate::app::INSIDE_REFUSED.chars().count() > crate::chrome::WINDOW_W as usize, "the case this test is for");
+        let mut buf = Buffer::empty(screen);
+        let rows = s.draw(&mut buf, screen, &theme());
+        let text: Vec<String> = (0..screen.height).map(|y| text_of(&buf, Rect::new(0, y, screen.width, 1))).collect();
+        let words = text.iter().map(|l| l.trim_matches(|c| c == '│' || c == ' ')).filter(|l| !l.is_empty()).collect::<Vec<_>>().join(" ");
+        assert!(words.contains(crate::app::INSIDE_REFUSED), "{text:#?}");
+        assert_eq!(rows.len(), ROWS.len(), "no row lost to the second line");
+        for (r, i) in &rows {
+            assert!(text_of(&buf, *r).contains(ROWS[*i].1), "row {i} is drawn where a click finds it");
+        }
+        let theme_row = rows.iter().find(|(_, i)| ROWS[*i].2 == Item::Theme).unwrap().0;
+        let click = crossterm::event::MouseEvent { kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left), column: theme_row.x + 2, row: theme_row.y, modifiers: crossterm::event::KeyModifiers::NONE };
+        assert_eq!(s.mouse(click, screen, &mut cfg, &rows), SettingsOutcome::Changed);
+        assert_eq!(cfg.theme, ThemeMode::Dark, "the click on Theme changed the theme");
     }
 
     #[test]

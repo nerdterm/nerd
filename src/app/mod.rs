@@ -806,6 +806,7 @@ mod tests {
                 mouse_at(&mut app, MouseEventKind::Down(MouseButton::Left), (r.x + 2, r.y));
                 let Overlay::Confirm(c, _) = &app.overlay else { panic!("a click opens the confirmation") };
                 assert!(c.body_lines(80).iter().any(|l| l.contains("Codex") && l.contains("codex --no-daemon resume <id>")), "{:?}", c.body_lines(80));
+                assert_eq!(c.title, "Confirm the resume line", "nothing is installed: the title says what it is");
                 let shown = screen(&mut app);
                 assert!(shown.contains("The resume line of these agents changed since you confirmed it") && shown.contains("[Enter] confirm") && !shown.contains("install hooks"), "{shown}");
                 app.key(crossterm::event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
@@ -818,6 +819,48 @@ mod tests {
                 assert_eq!(std::fs::read(home.join(".codex/hooks.json")).unwrap(), hooks, "and does nothing else");
                 assert!(app.notice.is_none() && app.toast.is_none(), "{:?} {:?}", app.notice, app.toast);
                 assert!(open(&mut app).0.contains("installed") && !open(&mut app).0.contains("confirm"), "the ordinary item again");
+            });
+        });
+    }
+
+    #[test]
+    fn a_changed_resume_line_beside_a_new_agent_is_confirmed_and_the_new_agent_hooked_in_one_window() {
+        use crossterm::event::{MouseButton, MouseEventKind};
+        crate::config::tests::with_temp_home(|| {
+            crate::session::tests::with_temp_state_dir("mixed-resume", || {
+                let home = crate::paths::home().unwrap();
+                std::fs::create_dir_all(home.join(".codex")).unwrap();
+                crate::hook::install().unwrap();
+                std::fs::write(crate::paths::state_root().join("hook-confirmed.json"), r#"{"codex": "codex resume <id>"}"#).unwrap();
+                std::fs::create_dir_all(home.join(".gemini")).unwrap();
+                let codex_hooks = std::fs::read(home.join(".codex/hooks.json")).unwrap();
+                let mut app = with_one_space();
+                app.screen = Rect::new(0, 0, 120, 40);
+                app.tell_changed_resume();
+                assert_eq!(app.notice.take().as_deref(), Some("Codex's resume line changed; confirm it in Settings to keep resuming its sessions"), "a new agent beside it does not hide the change");
+                let mut s = crate::settings::Settings::new(&app.cfg);
+                s.choose("Agent hooks");
+                assert_eq!(s.hook_row_value(), "a resume line changed, confirm");
+                app.overlay = Overlay::Settings(s);
+                let y = screen(&mut app).lines().position(|l| l.contains("Agent hooks")).expect("the row drawn") as u16;
+                let r = app.view.dialog.rows.iter().find(|(r, _)| r.y == y).expect("a row there").0;
+                mouse_at(&mut app, MouseEventKind::Down(MouseButton::Left), (r.x + 2, r.y));
+                let Overlay::Confirm(c, Pending::InstallHook(_)) = &app.overlay else { panic!("a click opens the window that installs and confirms") };
+                assert_eq!(c.title, "Install the hook", "it installs, so it says so");
+                let body = c.body_lines(110);
+                assert!(body.iter().any(|l| l.contains("Codex") && l.contains("codex --no-daemon resume <id>")) && body.iter().any(|l| l.contains("Gemini CLI") && l.contains("gemini --resume <id>")), "{body:?}");
+                assert_eq!(body.iter().filter(|l| l.contains("<id>")).count(), 2, "exactly the two agents: {body:?}");
+                assert_eq!(c.body, "nerd adds its hook to Gemini CLI, so it sees when they work and when they wait for you, and confirms the changed resume line of Codex; nerd types a resume line into a restored pane only once you confirm it.");
+                let shown = screen(&mut app);
+                assert!(shown.contains("[Enter] install hooks and confirm"), "{shown}");
+                click_yes(&mut app);
+                let codex = crate::agents::get("codex").unwrap();
+                let gemini = crate::agents::get("gemini").unwrap();
+                assert!(std::fs::read_to_string(home.join(".gemini/settings.json")).unwrap().contains("nerd-agent-state.sh' idle gemini"), "the new agent is hooked");
+                assert!(crate::hook::resume_confirmed(&codex) && crate::hook::resume_confirmed(&gemini), "both lines it showed are recorded");
+                assert!(crate::hook::first_installs().is_empty(), "nothing left to ask");
+                assert_eq!(std::fs::read(home.join(".codex/hooks.json")).unwrap(), codex_hooks, "Codex's hook is left as it was");
+                assert_eq!(crate::settings::Settings::new(&app.cfg).hook_row_value(), "installed");
             });
         });
     }
