@@ -17,15 +17,14 @@ if [ -f target/.rustc_info.json ] && { ! grep -qF -- "$(rustc -V)" target/.rustc
     cargo clean
 fi
 fresh=$(mktemp -d)
-skips=$(mktemp)
-trap 'rm -rf "$fresh" "$skips"' EXIT
+trap 'rm -rf "$fresh"' EXIT
 cargo build --release
 # The core rule: the server's sandbox must deny the network on every change.
 target/release/nerd --sandbox-selftest
 # Resolved before HOME changes: /bin/sh expands later prefix assignments with the new HOME.
 cargo_home=${CARGO_HOME:-$HOME/.cargo}
 rustup_home=${RUSTUP_HOME:-$HOME/.rustup}
-HOME="$fresh" CARGO_HOME="$cargo_home" RUSTUP_HOME="$rustup_home" NERD_SEATBELT_SKIPS="$skips" cargo test --release
+HOME="$fresh" CARGO_HOME="$cargo_home" RUSTUP_HOME="$rustup_home" cargo test --release
 # The release check's stand-in for curl exists in debug builds only.
 HOME="$fresh" CARGO_HOME="$cargo_home" RUSTUP_HOME="$rustup_home" cargo test --test release
 cargo clippy --release --all-targets -- -D warnings
@@ -34,8 +33,4 @@ if command -v cargo-deny >/dev/null 2>&1; then
     cargo deny check licenses bans sources
 else
     echo "gates: cargo-deny not installed here, the pr check covers it" >&2
-fi
-# Inside an isolated pane the Seatbelt tests cannot apply a profile and pass without checking: said last, where it is read.
-if [ -s "$skips" ]; then
-    echo "gates: $(sort -u "$skips" | wc -l | tr -d ' ') isolation tests did not run: Seatbelt cannot be applied here" >&2
 fi

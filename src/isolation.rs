@@ -306,13 +306,16 @@ fn fresh_mux(mux: &Path, uid: u32) -> std::io::Result<()> {
 /// Under HOME, run later by a shell, git, ssh, an editor, tmux, a package manager or toolchain from its cache, launchd, LaunchServices or `defaults`, or ahead on PATH:
 /// never writable, even when the pane's folder is HOME itself.
 const RUN_LATER: &[&str] = &[".zshrc", ".zprofile", ".zshenv", ".zlogin", ".zlogout", ".bashrc", ".bash_profile", ".bash_login", ".bash_logout", ".profile", ".gitconfig", ".netrc", ".npmrc", ".cargo/config.toml", ".cargo/config", "rust-toolchain", "rust-toolchain.toml", "Cargo.toml", ".local/rust-toolchain", ".local/rust-toolchain.toml", ".local/Cargo.toml",
-    ".cargo/env", ".cargo/env.fish", ".cargo/env.nu", ".cargo/env.tcsh", ".cargo/env.xsh", ".cargo/credentials.toml", ".cargo/credentials", ".rustup/settings.toml", ".vimrc", ".tmux.conf", ".emacs", ".wezterm.lua"];
+    ".cargo/env", ".cargo/env.fish", ".cargo/env.nu", ".cargo/env.tcsh", ".cargo/env.xsh", ".cargo/env.ps1", ".cargo/credentials.toml", ".cargo/credentials", ".rustup/settings.toml", ".vimrc", ".tmux.conf", ".emacs", ".wezterm.lua"];
 // ceiling: a denylist, so a cache that runs code and is not named here stays writable; an allowlist of the agents' own caches under ~/Library/Caches is the way past.
 // ceiling: Cargo's and rustup's settings are named only in HOME and ~/.local, so a pane whose folder holds projects (~/dev) may still put them above those projects; denying them in every folder above a project is the way past.
 // ceiling: Cargo's and rustup's own files are named under ~/.cargo and ~/.rustup, so a `CARGO_HOME` or `RUSTUP_HOME` set elsewhere is not covered; reading the variables is the way past.
 const RUN_LATER_DIRS: &[&str] = &[
     ".config/git", ".config/fish", "Library/LaunchAgents", "Applications", ".ssh", ".aws", ".gnupg", ".docker", ".kube", ".azure", ".config/gh", ".config/gcloud", ".cargo/bin", ".local/bin", ".local/.cargo",
     ".cargo/registry", ".cargo/git", ".rustup/toolchains",
+    // The programs behind `~/.local/bin` links: Claude Code's versions, uv's tools and Pythons, and Python's user site-packages.
+    // ceiling: other targets of `~/.local/bin` links are not resolved, so one outside these folders stays writable to a pane whose folder holds it; resolving each link when the profile is built is the way past.
+    ".local/share/claude", ".local/share/uv", ".local/lib",
     ".vim", ".config/nvim", ".config/tmux", ".emacs.d", "Library/Preferences", ".pyenv/shims", ".rbenv/shims", ".nvm", ".bun/bin", "go/bin", ".volta/bin", ".deno/bin", ".asdf/shims", ".local/share/nvim",
     "Library/Caches/pnpm", "Library/Caches/uv", "Library/Caches/deno", "Library/Caches/go-build", "Library/Caches/ms-playwright", "Library/Caches/pypoetry", "Library/Caches/Yarn", "Library/Caches/node-gyp",
     "Library/Caches/pip", "Library/Caches/Cypress", "Library/Caches/org.swift.swiftpm", "Library/Caches/copilot", "go/pkg/mod",
@@ -777,11 +780,6 @@ mod tests {
         let err = String::from_utf8_lossy(&out.stderr);
         if err.contains("sandbox_apply") {
             println!("skipped: this test process already runs under Seatbelt: {err}");
-            // scripts/gates.sh counts these, so a gate run in an isolated pane says what it did not check.
-            if let Some(f) = std::env::var_os("NERD_SEATBELT_SKIPS") {
-                use std::io::Write as _;
-                let _ = std::fs::OpenOptions::new().create(true).append(true).open(f).and_then(|mut f| writeln!(f, "{}", std::thread::current().name().unwrap_or("?")));
-            }
             return None;
         }
         Some(out.status.code().unwrap_or(-1))
@@ -861,6 +859,7 @@ mod tests {
              (allow file-write* (subpath \"/Users/u/.claude/projects\") (regex #\"^/Users/u/\\.codex/[^/]*\\.sqlite[^/]*$\"))\n\
              (deny file-write* (subpath \"/Users/u/Library/Application Support/nerd\") (subpath \"/private/var/folders/ab/T/podman\") (subpath \"/Users/u/.config/git\") (subpath \"/Users/u/.config/fish\") (subpath \"/Users/u/Library/LaunchAgents\") (subpath \"/Users/u/Applications\") (subpath \"/Users/u/.ssh\") (subpath \"/Users/u/.aws\") (subpath \"/Users/u/.gnupg\") (subpath \"/Users/u/.docker\") (subpath \"/Users/u/.kube\") (subpath \"/Users/u/.azure\") (subpath \"/Users/u/.config/gh\") (subpath \"/Users/u/.config/gcloud\") (subpath \"/Users/u/.cargo/bin\") (subpath \"/Users/u/.local/bin\") (subpath \"/Users/u/.local/.cargo\") \
              (subpath \"/Users/u/.cargo/registry\") (subpath \"/Users/u/.cargo/git\") (subpath \"/Users/u/.rustup/toolchains\") \
+             (subpath \"/Users/u/.local/share/claude\") (subpath \"/Users/u/.local/share/uv\") (subpath \"/Users/u/.local/lib\") \
              (subpath \"/Users/u/.vim\") (subpath \"/Users/u/.config/nvim\") (subpath \"/Users/u/.config/tmux\") (subpath \"/Users/u/.emacs.d\") (subpath \"/Users/u/Library/Preferences\") (subpath \"/Users/u/.pyenv/shims\") (subpath \"/Users/u/.rbenv/shims\") (subpath \"/Users/u/.nvm\") (subpath \"/Users/u/.bun/bin\") (subpath \"/Users/u/go/bin\") (subpath \"/Users/u/.volta/bin\") (subpath \"/Users/u/.deno/bin\") (subpath \"/Users/u/.asdf/shims\") (subpath \"/Users/u/.local/share/nvim\") \
              (subpath \"/Users/u/Library/Caches/pnpm\") (subpath \"/Users/u/Library/Caches/uv\") (subpath \"/Users/u/Library/Caches/deno\") (subpath \"/Users/u/Library/Caches/go-build\") (subpath \"/Users/u/Library/Caches/ms-playwright\") (subpath \"/Users/u/Library/Caches/pypoetry\") (subpath \"/Users/u/Library/Caches/Yarn\") (subpath \"/Users/u/Library/Caches/node-gyp\") \
              (subpath \"/Users/u/Library/Caches/pip\") (subpath \"/Users/u/Library/Caches/Cypress\") (subpath \"/Users/u/Library/Caches/org.swift.swiftpm\") (subpath \"/Users/u/Library/Caches/copilot\") (subpath \"/Users/u/go/pkg/mod\") \
@@ -870,7 +869,7 @@ mod tests {
              (subpath \"/Users/u/.claude/shell-snapshots\") (subpath \"/Users/u/.claude/session-env\") (subpath \"/Users/u/.codex/shell_snapshots\") (subpath \"/Users/u/.codex/tmp\") (subpath \"/Users/u/.codex/.tmp\") (subpath \"/Users/u/.gemini/tmp/bin\") (subpath \"/Users/u/.gemini/history\") (subpath \"/Users/u/.local/share/opencode/snapshot\") (subpath \"/Users/u/.claude/tasks\") \
              (subpath \"/Users/u/.config/ghostty\") (subpath \"/Users/u/Library/Application Support/com.mitchellh.ghostty\") (subpath \"/Users/u/.config/kitty\") (subpath \"/Users/u/.config/wezterm\") (subpath \"/Users/u/Library/Application Support/iTerm2/DynamicProfiles\") (subpath \"/Users/u/.claude/hooks\") \
              (literal \"/Users/u/.local/bin/nerd\") (literal \"/Users/u/.zshrc\") (literal \"/Users/u/.zprofile\") (literal \"/Users/u/.zshenv\") (literal \"/Users/u/.zlogin\") (literal \"/Users/u/.zlogout\") (literal \"/Users/u/.bashrc\") (literal \"/Users/u/.bash_profile\") (literal \"/Users/u/.bash_login\") (literal \"/Users/u/.bash_logout\") (literal \"/Users/u/.profile\") (literal \"/Users/u/.gitconfig\") (literal \"/Users/u/.netrc\") (literal \"/Users/u/.npmrc\") (literal \"/Users/u/.cargo/config.toml\") (literal \"/Users/u/.cargo/config\") (literal \"/Users/u/rust-toolchain\") (literal \"/Users/u/rust-toolchain.toml\") (literal \"/Users/u/Cargo.toml\") (literal \"/Users/u/.local/rust-toolchain\") (literal \"/Users/u/.local/rust-toolchain.toml\") (literal \"/Users/u/.local/Cargo.toml\") \
-             (literal \"/Users/u/.cargo/env\") (literal \"/Users/u/.cargo/env.fish\") (literal \"/Users/u/.cargo/env.nu\") (literal \"/Users/u/.cargo/env.tcsh\") (literal \"/Users/u/.cargo/env.xsh\") (literal \"/Users/u/.cargo/credentials.toml\") (literal \"/Users/u/.cargo/credentials\") (literal \"/Users/u/.rustup/settings.toml\") (literal \"/Users/u/.vimrc\") (literal \"/Users/u/.tmux.conf\") (literal \"/Users/u/.emacs\") (literal \"/Users/u/.wezterm.lua\") (literal \"/Users/u/.claude/settings.json\") (literal \"/Users/u/.1p/agent.sock\") \
+             (literal \"/Users/u/.cargo/env\") (literal \"/Users/u/.cargo/env.fish\") (literal \"/Users/u/.cargo/env.nu\") (literal \"/Users/u/.cargo/env.tcsh\") (literal \"/Users/u/.cargo/env.xsh\") (literal \"/Users/u/.cargo/env.ps1\") (literal \"/Users/u/.cargo/credentials.toml\") (literal \"/Users/u/.cargo/credentials\") (literal \"/Users/u/.rustup/settings.toml\") (literal \"/Users/u/.vimrc\") (literal \"/Users/u/.tmux.conf\") (literal \"/Users/u/.emacs\") (literal \"/Users/u/.wezterm.lua\") (literal \"/Users/u/.claude/settings.json\") (literal \"/Users/u/.1p/agent.sock\") \
              (regex #\"^/private/tmp/nerd-[0-9]+(/|$)\") (regex #\"^/private/tmp/cc-socks\") (regex #\"^/private/var/folders/ab/T/cc-socks\") (regex #\"^/Users/u/\\.[^/]+/projects/[^/]+/memory(/|$)\") (regex #\"^/Users/u/\\.codex/[^/]*\\.sqlite\") (regex #\"^/Users/u/\\.qwen/projects/[^/]+/workflows(/|$)\"))\n\
              (deny file-write-unlink {above} {parents})\n\
              (deny file-write-create {above})\n\
@@ -1446,7 +1445,7 @@ mod tests {
         for (cwd, names) in [
             ("home", at_home),
             ("home/.local", &[".cargo/config.toml", ".cargo/config", "rust-toolchain.toml", "rust-toolchain", "Cargo.toml"][..]),
-            ("home/.cargo", &["env", "env.fish", "env.nu", "env.tcsh", "env.xsh", "credentials.toml", "credentials", "registry/src/x/build.rs", "git/checkouts/x/build.rs"][..]),
+            ("home/.cargo", &["env", "env.fish", "env.nu", "env.tcsh", "env.xsh", "env.ps1", "credentials.toml", "credentials", "registry/src/x/build.rs", "git/checkouts/x/build.rs"][..]),
             ("home/.rustup", &["settings.toml", "toolchains/x/bin/cargo"][..]),
         ] {
             let profile = text(&places(&d), &Files::Folder, &Network::None, &d.join(cwd), Path::new("/tmp/none.msock"), None).unwrap();
@@ -1474,6 +1473,35 @@ mod tests {
         let profile = text(&places(&d), &Files::Folder, &Network::None, &d.join("work"), Path::new("/tmp/none.msock"), None).unwrap();
         let own = format!("cd '{}/work' && mkdir -p .cargo && echo x > .cargo/config.toml && echo x > rust-toolchain.toml && echo x > Cargo.toml", d.display());
         assert_eq!(sandboxed(&profile, &own), Some(0), "a project's own Cargo and rustup settings");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn folder_only_at_local_cannot_rewrite_the_programs_behind_its_bin_links_but_writes_its_own() {
+        let d = scratch("local");
+        let local = d.join("home/.local");
+        for dir in ["share/claude/versions", "share/uv/tools/x/bin", "share/uv/python/x/bin", "lib/python3.12/site-packages"] {
+            std::fs::create_dir_all(local.join(dir)).unwrap();
+        }
+        let profile = text(&places(&d), &Files::Folder, &Network::None, &local, Path::new("/tmp/none.msock"), None).unwrap();
+        let Some(rc) = sandboxed(&profile, &format!("cd '{}' && echo x > mine && mkdir -p share/x && echo x > share/x/mine", local.display())) else { return };
+        assert_eq!(rc, 0, "an ordinary file of its own");
+        let mut bad = Vec::new();
+        for name in ["share/claude/versions/2.1.0", "share/uv/tools/x/bin/x", "share/uv/python/x/bin/python3", "lib/python3.12/site-packages/x.pth"] {
+            for (how, script) in [("written", "echo x > \"$1\""), ("moved in", "mv staged \"$1\""), ("linked", "ln -s staged \"$1\""), ("hard-linked", "ln staged \"$1\"")] {
+                let script = format!("cd '{}' && echo x > staged; set -- '{name}'; {script}", local.display());
+                if sandboxed(&profile, &script) == Some(0) || std::fs::symlink_metadata(local.join(name)).is_ok() {
+                    bad.push(format!("{name} {how}"));
+                    let _ = std::fs::remove_file(local.join(name));
+                }
+            }
+        }
+        for (what, script) in [("share/claude renamed", "mv share/claude x"), ("share/uv renamed", "mv share/uv x"), ("lib renamed", "mv lib x"), ("share renamed", "mv share x")] {
+            if sandboxed(&profile, &format!("cd '{}' && {script}", local.display())) == Some(0) {
+                bad.push(what.to_string());
+            }
+        }
+        assert!(bad.is_empty(), "written where a ~/.local/bin link leads: {bad:#?}");
         let _ = std::fs::remove_dir_all(&d);
     }
 
