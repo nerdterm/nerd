@@ -648,8 +648,11 @@ impl App {
 
     /// Each frame: the resume line's message waits until no error, toast or card shows, then shows as a toast.
     pub fn tell_when_free(&mut self) {
-        if self.notice.is_none() && self.toast.is_none() {
-            self.toast = self.resume_told.take();
+        // Said once it is still the toast a frame later: a copy's toast can replace it right after the frame that drew it.
+        if self.toast.is_some() && self.toast == self.resume_told {
+            self.resume_told = None;
+        } else if self.notice.is_none() && self.toast.is_none() {
+            self.toast = self.resume_told.clone();
         }
     }
 

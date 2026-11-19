@@ -906,6 +906,7 @@ mod tests {
                 app.notice = None;
                 let _ = screen(&mut app);
                 assert_eq!((app.notice.as_deref(), app.toast.as_deref()), (None, Some(TOLD)), "then it is told, as a neutral message");
+                let _ = screen(&mut app);
                 let Overlay::Confirm(c, _) = app.notice_window() else { panic!("its card opens a window") };
                 assert_eq!(c.title, "Message", "not under What went wrong");
                 for _ in 0..2 {
@@ -913,6 +914,30 @@ mod tests {
                     let _ = screen(&mut app);
                     assert_eq!(app.toast, None, "a second window of the same server start is not told again");
                 }
+            });
+        });
+    }
+
+    #[test]
+    fn a_copy_in_the_frame_that_tells_the_resume_line_does_not_lose_it() {
+        crate::config::tests::with_temp_home(|| {
+            crate::session::tests::with_temp_state_dir("copy-resume", || {
+                codex_line_changed();
+                let mut app = with_one_space();
+                app.tell_changed_resume();
+                let _ = screen(&mut app);
+                assert_eq!(app.toast.as_deref(), Some(TOLD));
+                // what the server does with a frame's copy: its toast replaces the one the frame drew
+                app.toast = Some("copied".into());
+                let _ = screen(&mut app);
+                assert_eq!(app.toast.as_deref(), Some("copied"), "the copy is said");
+                app.toast = None;
+                let _ = screen(&mut app);
+                assert_eq!(app.toast.as_deref(), Some(TOLD), "then the resume line, again");
+                let _ = screen(&mut app);
+                app.toast = None;
+                let _ = screen(&mut app);
+                assert_eq!(app.toast, None, "once it stayed on screen, it is not said again");
             });
         });
     }

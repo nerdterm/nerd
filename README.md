@@ -78,7 +78,7 @@ nerd
 
 ### Supported agents
 
-For exact states, install nerd's hook from **Settings… → Agent hooks**, or run `nerd --install-hook`. It goes into every supported agent whose config folder exists. Before it writes into an agent for the first time, it shows the agent, its settings file and the command it resumes with, and asks. When an agent's resume command changes, a restored pane stops typing it until you confirm it again: **Settings… → Agent hooks** then reads "a resume line changed, confirm", or run `nerd --install-hook`. When nerd starts, it brings a hook an older nerd installed up to date; it never adds one to an agent you did not hook.
+For exact states, install nerd's hook from **Settings… → Agent hooks**, or run `nerd --install-hook`. It goes into every supported agent whose config folder exists when it asks. Before it writes into an agent for the first time, it shows the agent, its settings file and the command it resumes with, and asks. When an agent's resume command changes, a restored pane stops typing it until you confirm it again: **Settings… → Agent hooks** then reads "a resume line changed, confirm", or run `nerd --install-hook`. When nerd starts, it brings a hook an older nerd installed up to date; it never adds one to an agent you did not hook.
 
 | Agent | Config | States and needs you | Subagents | Resumes after a restart with |
 |---|---|---|---|---|

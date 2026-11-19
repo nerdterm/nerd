@@ -165,21 +165,39 @@ fn run() -> std::io::Result<()> {
         Some("--preset") => return presets::main(&args[1..]),
         Some("--install-hook") => {
             let first = hook::first_installs();
-            if !first.is_empty() {
-                print!("{}", first.prompt());
-                std::io::Write::flush(&mut std::io::stdout())?;
-                let yes = install::answered_yes(std::io::stdin().lock())?;
-                log::info(&format!("first hook install from the command line {}: {}", if yes { "confirmed" } else { "declined" }, first.summary()));
-                if !yes {
-                    println!("Nothing installed");
-                    return Ok(());
+            if first.is_empty() {
+                for (agent, done) in hook::install()? {
+                    match done {
+                        Ok(file) => println!("{agent}: {}", file.display()),
+                        Err(e) => println!("{agent}: not installed, {e}"),
+                    }
                 }
+                return Ok(());
             }
-            for (agent, done) in hook::install()? {
-                match done {
+            print!("{}", first.prompt());
+            std::io::Write::flush(&mut std::io::stdout())?;
+            let yes = install::answered_yes(std::io::stdin().lock())?;
+            log::info(&format!("first hook install from the command line {}: {}", if yes { "confirmed" } else { "declined" }, first.summary()));
+            if !yes {
+                println!("Nothing installed");
+                return Ok(());
+            }
+            // A yes does what the table showed, and nothing for an agent that changed or appeared while it waited.
+            let (done, moved) = hook::apply(&first);
+            for (agent, r) in &done {
+                match r {
                     Ok(file) => println!("{agent}: {}", file.display()),
                     Err(e) => println!("{agent}: not installed, {e}"),
                 }
+            }
+            for (row, _) in first.rows.iter().zip(&first.hooked).filter(|(r, hooked)| **hooked && !moved.contains(&r[0])) {
+                println!("{}: resume line confirmed", row[0]);
+            }
+            for agent in &moved {
+                println!("{agent}: its resume line changed while you were asked; nothing was done for it");
+            }
+            if !moved.is_empty() || done.iter().any(|(_, r)| r.is_err()) {
+                std::process::exit(1);
             }
             return Ok(());
         }
