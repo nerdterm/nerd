@@ -3,7 +3,7 @@
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use serde::Deserialize;
 
@@ -416,15 +416,22 @@ pub fn builtins() -> Vec<Manifest> {
 }
 
 static LOADED: RwLock<Option<Arc<Vec<Manifest>>>> = RwLock::new(None);
+/// Held from reading the manifests to storing them, so a first read started before a Reload cannot store over it.
+static LOADING: Mutex<()> = Mutex::new(());
 
 /// Built-ins first, then the user's let in; read once, then again on `reload`.
 pub fn all() -> Arc<Vec<Manifest>> {
     if let Some(ms) = LOADED.read().unwrap_or_else(|e| e.into_inner()).as_ref() {
         return ms.clone();
     }
+    let _one = LOADING.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(ms) = LOADED.read().unwrap_or_else(|e| e.into_inner()).as_ref() {
+        return ms.clone();
+    }
     // The first start that keeps the file: every folder loaded before stays let in.
     admit(if crate::paths::state_root().join(ADMITTED).exists() { BTreeSet::new() } else { admitted() }, false);
-    reload_admitted()
+    let a = admitted();
+    store(&|n| a.contains(n))
 }
 
 /// The owner's Reload, from a window outside a pane: every folder there is let in.
@@ -497,6 +504,11 @@ fn folders(dir: &Path) -> BTreeSet<String> {
 
 /// Reads the manifests again, loading only the folders `admit` names.
 pub fn reload_admitting(admit: &dyn Fn(&str) -> bool) -> Arc<Vec<Manifest>> {
+    let _one = LOADING.lock().unwrap_or_else(|e| e.into_inner());
+    store(admit)
+}
+
+fn store(admit: &dyn Fn(&str) -> bool) -> Arc<Vec<Manifest>> {
     let root = crate::paths::state_root();
     let ms = Arc::new(load_admitting(&root.join("plugins"), admit));
     let path = root.join(crate::hook::SESSIONS_FILE);
