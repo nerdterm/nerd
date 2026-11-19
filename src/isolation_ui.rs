@@ -183,7 +183,6 @@ impl IsolationWin {
             if network == Some(&Network::Open) {
                 costs.extend([NO_AGENT, NO_MUX].map(|c| format!("  {c}")));
             }
-            costs.push(format!("  {FOLDER_LATER}"));
         }
         let shown = self.pick.as_ref().unwrap_or(&self.inherited);
         let profiled = Isolation::profiled(&shown.files, &shown.network);
@@ -197,6 +196,10 @@ impl IsolationWin {
             out.push(Vec::new());
             out.push(vec![(head.to_string(), g.fg(theme.muted), None)]);
             out.extend(rows.into_iter().map(|t| vec![(t, g.fg(theme.faint), None)]));
+            if head == FOLDER_HEAD {
+                out.push(Vec::new());
+                out.push(vec![(FOLDER_LATER.into(), g.fg(theme.warn), None)]);
+            }
         }
         if folder && self.home {
             out.push(Vec::new());
@@ -698,7 +701,10 @@ pub(crate) mod tests {
     }
 
     fn click_on(w: &mut IsolationWin, label: &str) -> Out {
-        let screen = Rect::new(0, 0, 100, 40);
+        click_in(w, label, Rect::new(0, 0, 100, 40))
+    }
+
+    fn click_in(w: &mut IsolationWin, label: &str, screen: Rect) -> Out {
         let mut buf = Buffer::empty(screen);
         let d = w.draw(&mut buf, screen, &Theme::dark());
         let (x, y) = (0..screen.height)
@@ -755,11 +761,16 @@ pub(crate) mod tests {
         click_on(&mut w, " codex ");
         assert_eq!(w.pick.as_ref().map(|i| &i.network), Some(&Network::Providers(vec!["codex".into()])), "the last one stays");
         click_on(&mut w, " claude ");
-        let shown = {
-            let mut buf = Buffer::empty(Rect::new(0, 0, 100, 40));
-            w.draw(&mut buf, Rect::new(0, 0, 100, 40), &Theme::dark());
-            crate::app::snapshots::dump(&buf, Rect::new(0, 0, 100, 40))
-        };
+        // The window scrolls at 100x40: drawn at the top and scrolled to the end.
+        let shown = [0, usize::MAX]
+            .map(|from| {
+                w.scroll.set(from);
+                let mut buf = Buffer::empty(Rect::new(0, 0, 100, 40));
+                w.draw(&mut buf, Rect::new(0, 0, 100, 40), &Theme::dark());
+                crate::app::snapshots::dump(&buf, Rect::new(0, 0, 100, 40))
+            })
+            .concat();
+        w.scroll.set(0);
         let has = |w: &IsolationWin, t: &str| rows(w, 76).iter().any(|s| s.contains(t));
         // Drawn: each line's first 40 cells, which come before any wrap; whole: in the window's rows.
         assert!(FOLDER_COSTS.iter().chain([&FOLDER_LATER]).all(|c| shown.contains(&c[..40]) && has(&w, c)) && shown.contains("danger-full-access") && shown.contains("ps, top, sudo"), "{shown}");
@@ -779,6 +790,56 @@ pub(crate) mod tests {
         assert_eq!(click_on(&mut w, "[r] save and restart"), Out::Save(Some(want.clone()), true));
         assert_eq!(w.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)), Out::Save(Some(want), false));
         assert_eq!(click_on(&mut w, "[Esc] cancel"), Out::Close);
+    }
+
+    #[test]
+    fn this_folder_only_warns_once_that_what_it_writes_can_run_later_and_every_click_still_lands() {
+        let warn = Theme::dark().warn;
+        for (wide, high) in [(100, 40), (80, 24)] {
+            let screen = Rect::new(0, 0, wide, high);
+            for (network, home) in [(Network::None, false), (Network::Open, false), (Network::Open, true)] {
+                let w = IsolationWin { pick: Some(Isolation { files: Files::Folder, network: network.clone() }), home, ..pane() };
+                let (mut seen, mut d) = (0, None);
+                // A 24-row screen scrolls the notes: the line is looked for at every place the window scrolls to.
+                for from in 0..w.lines(&Theme::dark(), 76).len() {
+                    w.scroll.set(from);
+                    let mut buf = Buffer::empty(screen);
+                    let drawn = w.draw(&mut buf, screen, &Theme::dark());
+                    let rows: Vec<String> = (0..high).map(|y| (0..wide).map(|x| buf[(x, y)].symbol()).collect()).collect();
+                    let at: Vec<usize> = rows.iter().enumerate().filter(|(_, r)| r.contains(FOLDER_LATER)).map(|(y, _)| y).collect();
+                    assert!(at.len() <= 1, "{wide}x{high} {network:?} home {home}: {rows:#?}");
+                    if let Some(&y) = at.first() {
+                        let x = rows[y].find(FOLDER_LATER).map(|b| rows[y][..b].chars().count() as u16).unwrap();
+                        assert!((x..x + FOLDER_LATER.len() as u16).all(|x| buf[(x, y as u16)].fg == warn), "in warn: {wide}x{high}");
+                        seen += 1;
+                    }
+                    if from == 0 {
+                        d = Some((drawn, rows));
+                    }
+                }
+                assert!(seen > 0, "{wide}x{high} {network:?} home {home}: never drawn");
+                w.scroll.set(0);
+                let (d, rows) = d.unwrap();
+                if high == 40 {
+                    assert!(rows.iter().any(|r| r.contains(FOLDER_LATER)), "shown without scrolling at {wide}x{high} {network:?} home {home}");
+                }
+                for (r, h) in &d.hits {
+                    let text: String = rows[r.y as usize].chars().skip(r.x as usize).take(r.width as usize).collect();
+                    assert!(d.frame.contains(r.as_position()) && !text.trim().is_empty(), "{h:?} at {r:?}");
+                    assert_eq!(d.at(r.x, r.y).as_ref(), Some(h), "the first hit at its own place");
+                }
+                for label in ["Everything", "This folder only", "Open", "None", "[r] save and restart", "[Enter] save"] {
+                    assert!(rows.iter().any(|r| r.contains(label)), "{label} drawn at {wide}x{high}");
+                }
+                let mut c = w.clone();
+                assert_eq!(click_in(&mut c, "Everything", screen), Out::None);
+                assert_eq!(c.pick.as_ref().map(|i| &i.files), Some(&Files::Everything), "{wide}x{high}");
+                let want = Isolation { files: Files::Folder, network: network.clone() };
+                assert_eq!(click_in(&mut w.clone(), "[r] save and restart", screen), Out::Save(Some(want.clone()), true));
+                assert_eq!(click_in(&mut w.clone(), "[Enter] save", screen), Out::Save(Some(want), false));
+                assert_eq!(click_in(&mut w.clone(), "[Esc] cancel", screen), Out::Close);
+            }
+        }
     }
 
     #[test]
