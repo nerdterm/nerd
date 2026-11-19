@@ -670,12 +670,17 @@ impl App {
             Pending::InstallHook(ask) | Pending::ConfirmResume(ask) => {
                 let what = if ask.changed() { "changed resume lines" } else { "first hook install" };
                 crate::log::info(&format!("{what} confirmed: {}", ask.summary()));
-                let (done, moved) = crate::hook::apply(&ask);
+                let (done, moved, unrecorded) = crate::hook::apply(&ask);
                 let failed: Vec<String> = done
                     .iter()
                     .filter_map(|(n, r)| r.as_ref().err().map(|e| format!("{n}: {e}")))
-                    .chain(moved.iter().map(|n| format!("{n}: its resume line changed while the window was open; nothing was done for it")))
+                    .chain(ask.rows.iter().zip(&ask.names).filter(|(_, n)| moved.contains(n)).map(|(r, _)| format!("{}: changed while the window was open; nothing was done for it", r[0])))
+                    .chain(unrecorded)
                     .collect();
+                // a line confirmed here is not announced as changed later
+                if self.resume_told.is_some() {
+                    self.tell_changed_resume();
+                }
                 if !failed.is_empty() {
                     self.notice = Some(failed.join("; "));
                 } else if !done.is_empty() {

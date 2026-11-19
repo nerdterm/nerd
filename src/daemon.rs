@@ -715,8 +715,8 @@ fn serve(started: &mut bool) -> std::io::Result<()> {
                     if !out.is_empty() && sink.attached() {
                         let _ = sink.clone().write_all(&out).and_then(|_| sink.clone().flush());
                     }
-                    if fx.toast.is_some() {
-                        app.toast = fx.toast;
+                    if let Some(t) = fx.toast {
+                        app.toast_after_frame(t);
                         owed = true;
                     }
                 }
@@ -1094,7 +1094,7 @@ mod tests {
             crate::session::tests::with_temp_state_dir("sandbox-resume", || {
                 let home = crate::paths::home().unwrap();
                 std::fs::create_dir_all(home.join(".codex")).unwrap();
-                crate::hook::install().unwrap();
+                crate::hook::install_all().unwrap();
                 std::fs::write(crate::paths::state_root().join("hook-confirmed.json"), r#"{"codex": "codex resume <id>"}"#).unwrap();
                 let mut app = crate::app::App::new(crate::config::Config::default());
                 app.tell_changed_resume();

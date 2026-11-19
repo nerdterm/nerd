@@ -212,6 +212,8 @@ pub struct App {
     pub toast_more: Option<(String, More)>,
     /// Said once per server start, when no other message shows: a confirmed resume line changed.
     resume_told: Option<String>,
+    /// The resume message was put up by the frame being drawn.
+    resume_fresh: bool,
     /// Clients attached since the server started, newest first.
     pub clients: Vec<crate::clients::ClientRecord>,
     /// The attached client's id: a takeover reads the caps of the one it replaces.
@@ -412,6 +414,7 @@ impl App {
             updated_changes: None,
             toast_more: None,
             resume_told: None,
+            resume_fresh: false,
             clients: Vec::new(),
             client: 0,
             caps: Default::default(),
@@ -744,7 +747,7 @@ mod tests {
             crate::session::tests::with_temp_state_dir("unhook", || {
                 let home = crate::paths::home().unwrap();
                 std::fs::create_dir_all(home.join(".gemini")).unwrap();
-                crate::hook::install().unwrap();
+                crate::hook::install_all().unwrap();
                 assert!(crate::hook::is_installed());
                 let press = |app: &mut App, code| app.key(crossterm::event::KeyEvent::new(code, KeyModifiers::NONE));
                 let mut app = with_one_space();
@@ -781,7 +784,7 @@ mod tests {
             crate::session::tests::with_temp_state_dir("confirm-resume", || {
                 let home = crate::paths::home().unwrap();
                 std::fs::create_dir_all(home.join(".codex")).unwrap();
-                crate::hook::install().unwrap();
+                crate::hook::install_all().unwrap();
                 let hooks = std::fs::read(home.join(".codex/hooks.json")).unwrap();
                 let seen = crate::paths::state_root().join("hook-confirmed.json");
                 std::fs::write(&seen, r#"{"codex": "codex resume <id>"}"#).unwrap();
@@ -833,7 +836,7 @@ mod tests {
             crate::session::tests::with_temp_state_dir("mixed-resume", || {
                 let home = crate::paths::home().unwrap();
                 std::fs::create_dir_all(home.join(".codex")).unwrap();
-                crate::hook::install().unwrap();
+                crate::hook::install_all().unwrap();
                 std::fs::write(crate::paths::state_root().join("hook-confirmed.json"), r#"{"codex": "codex resume <id>"}"#).unwrap();
                 std::fs::create_dir_all(home.join(".gemini")).unwrap();
                 let _ = std::fs::remove_file(home.join(".codex/hooks.json.bak-nerd"));
@@ -879,7 +882,7 @@ mod tests {
     fn codex_line_changed() -> std::path::PathBuf {
         let home = crate::paths::home().unwrap();
         std::fs::create_dir_all(home.join(".codex")).unwrap();
-        crate::hook::install().unwrap();
+        crate::hook::install_all().unwrap();
         std::fs::write(crate::paths::state_root().join("hook-confirmed.json"), r#"{"codex": "codex resume <id>"}"#).unwrap();
         home
     }
@@ -892,7 +895,7 @@ mod tests {
             crate::session::tests::with_temp_state_dir("tell-resume", || {
                 let home = crate::paths::home().unwrap();
                 std::fs::create_dir_all(home.join(".codex")).unwrap();
-                crate::hook::install().unwrap();
+                crate::hook::install_all().unwrap();
                 let mut app = with_one_space();
                 app.tell_changed_resume();
                 let _ = screen(&mut app);
@@ -906,7 +909,6 @@ mod tests {
                 app.notice = None;
                 let _ = screen(&mut app);
                 assert_eq!((app.notice.as_deref(), app.toast.as_deref()), (None, Some(TOLD)), "then it is told, as a neutral message");
-                let _ = screen(&mut app);
                 let Overlay::Confirm(c, _) = app.notice_window() else { panic!("its card opens a window") };
                 assert_eq!(c.title, "Message", "not under What went wrong");
                 for _ in 0..2 {
@@ -928,16 +930,82 @@ mod tests {
                 let _ = screen(&mut app);
                 assert_eq!(app.toast.as_deref(), Some(TOLD));
                 // what the server does with a frame's copy: its toast replaces the one the frame drew
-                app.toast = Some("copied".into());
+                app.toast_after_frame("copied".into());
                 let _ = screen(&mut app);
                 assert_eq!(app.toast.as_deref(), Some("copied"), "the copy is said");
                 app.toast = None;
                 let _ = screen(&mut app);
                 assert_eq!(app.toast.as_deref(), Some(TOLD), "then the resume line, again");
-                let _ = screen(&mut app);
                 app.toast = None;
                 let _ = screen(&mut app);
-                assert_eq!(app.toast, None, "once it stayed on screen, it is not said again");
+                let _ = screen(&mut app);
+                assert_eq!(app.toast, None, "once it was drawn and left, it is not said again");
+            });
+        });
+    }
+
+    #[test]
+    fn the_resume_notice_dismissed_by_a_key_or_by_time_is_not_said_again() {
+        crate::config::tests::with_temp_home(|| {
+            crate::session::tests::with_temp_state_dir("gone-resume", || {
+                codex_line_changed();
+                let mut app = with_one_space();
+                app.tell_changed_resume();
+                let _ = screen(&mut app);
+                assert_eq!(app.toast.as_deref(), Some(TOLD));
+                app.key(crossterm::event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+                assert_eq!(app.toast, None, "a key clears it");
+                for _ in 0..2 {
+                    let _ = screen(&mut app);
+                    assert_eq!(app.toast, None, "and it does not come back");
+                }
+                app.tell_changed_resume();
+                let _ = screen(&mut app);
+                assert_eq!(app.toast.as_deref(), Some(TOLD));
+                app.toast_since = Some((TOLD.into(), std::time::Instant::now() - std::time::Duration::from_secs(5)));
+                app.tick_cfg();
+                assert_eq!(app.toast, None, "its time ran out with no frame in between");
+                for _ in 0..2 {
+                    let _ = screen(&mut app);
+                    assert_eq!(app.toast, None, "and it does not come back");
+                }
+            });
+        });
+    }
+
+    #[test]
+    fn a_resume_line_confirmed_before_its_notice_showed_is_not_announced() {
+        crate::config::tests::with_temp_home(|| {
+            crate::session::tests::with_temp_state_dir("confirmed-resume", || {
+                codex_line_changed();
+                let mut app = with_one_space();
+                app.notice = Some("1 pane not restored: x".into());
+                app.tell_changed_resume();
+                let _ = screen(&mut app);
+                let Overlay::Confirm(_, what) = app.install_hook_overlay() else { panic!("the confirmation") };
+                app.perform(what);
+                app.notice = None;
+                let _ = screen(&mut app);
+                assert_eq!(app.toast, None, "the line is confirmed: nothing to announce");
+            });
+        });
+    }
+
+    #[test]
+    fn a_confirmation_that_could_not_be_recorded_is_an_error() {
+        use std::os::unix::fs::PermissionsExt;
+        crate::config::tests::with_temp_home(|| {
+            crate::session::tests::with_temp_state_dir("readonly-resume", || {
+                codex_line_changed();
+                let mut app = with_one_space();
+                let Overlay::Confirm(_, what) = app.install_hook_overlay() else { panic!("the confirmation") };
+                let state = crate::paths::state_root();
+                std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o555)).unwrap();
+                app.perform(what);
+                std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o755)).unwrap();
+                let file = state.join("hook-confirmed.json").display().to_string();
+                assert!(app.notice.as_deref().is_some_and(|n| n.contains(&file)), "{:?}", app.notice);
+                assert!(!crate::hook::resume_confirmed(&crate::agents::get("codex").unwrap()), "nothing recorded");
             });
         });
     }
@@ -984,7 +1052,7 @@ mod tests {
                 let mut s = crate::settings::Settings::new(&app.cfg);
                 s.choose("Agent hooks");
                 assert_eq!(s.hook_row_value(), "a resume line changed, confirm");
-                crate::hook::install().unwrap();
+                crate::hook::install_all().unwrap();
                 app.overlay = Overlay::Settings(s);
                 app.key(crossterm::event::KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
                 assert!(matches!(app.overlay, Overlay::Confirm(_, Pending::RemoveHook)), "what the ordinary item does, not an empty install");
@@ -1004,7 +1072,7 @@ mod tests {
                 assert_eq!(routed.title, "Confirm the resume line", "the routed title says the same");
                 ask.rows[0][2] = "codex resume <id>".into();
                 app.perform(Pending::ConfirmResume(ask));
-                assert_eq!(app.notice.as_deref(), Some("Codex: its resume line changed while the window was open; nothing was done for it"));
+                assert_eq!(app.notice.as_deref(), Some("Codex: changed while the window was open; nothing was done for it"));
                 assert!(!crate::hook::resume_confirmed(&crate::agents::get("codex").unwrap()), "nothing recorded");
             });
         });

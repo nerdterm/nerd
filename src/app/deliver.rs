@@ -539,7 +539,7 @@ mod tests {
 
     fn install_hook(home: &Path, dir: &str, agent: &str) {
         std::fs::create_dir_all(home.join(dir)).unwrap();
-        crate::hook::install().unwrap();
+        crate::hook::install_all().unwrap();
         assert!(crate::hook::hook_current(agent), "{agent}'s hook is current");
     }
 

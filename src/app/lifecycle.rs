@@ -646,14 +646,20 @@ impl App {
         self.resume_told = crate::hook::first_installs().notice();
     }
 
-    /// Each frame: the resume line's message waits until no error, toast or card shows, then shows as a toast.
+    /// Each frame: the resume line's message waits until no error, toast or card shows, then shows as a toast, said once drawn.
     pub fn tell_when_free(&mut self) {
-        // Said once it is still the toast a frame later: a copy's toast can replace it right after the frame that drew it.
-        if self.toast.is_some() && self.toast == self.resume_told {
-            self.resume_told = None;
-        } else if self.notice.is_none() && self.toast.is_none() {
-            self.toast = self.resume_told.clone();
+        self.resume_fresh = self.notice.is_none() && self.toast.is_none() && self.resume_told.is_some();
+        if self.resume_fresh {
+            self.toast = self.resume_told.take();
         }
+    }
+
+    /// A toast the frame's copy sets; a resume message that frame drew was not read yet and waits for the next free frame.
+    pub fn toast_after_frame(&mut self, t: String) {
+        if std::mem::take(&mut self.resume_fresh) {
+            self.resume_told = self.toast.take();
+        }
+        self.toast = Some(t);
     }
 
     /// The one writer of config.json; a file that does not parse is never overwritten with defaults.

@@ -764,7 +764,7 @@ pub(crate) fn unhook(a: &Manifest) -> std::io::Result<()> {
 /// Puts nerd's hooks back into one agent's config when its plugin is turned on, if the human once hooked it.
 pub(crate) fn rehook(a: &Manifest) {
     if a.agent.config.is_some()
-        && read_seen(&seen_path()).contains_key(&a.name)
+        && read_seen(&seen_path()).is_some_and(|s| s.contains_key(&a.name))
         && let Err(e) = install_one(a, &home())
     {
         crate::log::warn(&format!("{}: hook not put back: {e}", a.name));
@@ -932,10 +932,11 @@ impl Ask {
         self.rows.iter().map(|r| r.join(" ")).collect::<Vec<_>>().join("; ")
     }
 
-    /// What `nerd --install-hook` prints before its y/N.
+    /// What `nerd --install-hook` prints before its y/N; manifest text goes to the terminal as the app draws it.
     pub fn prompt(&self) -> String {
-        let table: String = crate::menu::table_lines(&self.table(), usize::MAX).iter().map(|l| format!("{l}\n")).collect();
-        format!("{}\n\n{table}\nInstall? [y/N] ", self.intro())
+        let cells: Vec<Vec<String>> = self.table().iter().map(|r| r.iter().map(|c| crate::render::unspoofed(c)).collect()).collect();
+        let table: String = crate::menu::table_lines(&cells, usize::MAX).iter().map(|l| format!("{l}\n")).collect();
+        format!("{}\n\n{table}\n{}? [y/N] ", crate::render::unspoofed(&self.intro()), if self.changed() { "Confirm" } else { "Install" })
     }
 }
 
@@ -959,27 +960,29 @@ fn first_installs_in(home: &Path, seen: &Path) -> Ask {
     Ask {
         hooked: asked.iter().map(|a| installed(a, home)).collect(),
         names: asked.iter().map(|a| a.name.clone()).collect(),
-        rows: asked.iter().map(|a| [a.title.clone(), a.agent.config.as_ref().map_or("", |c| c.path.as_str()).to_string(), shown_line(a)]).collect(),
+        rows: asked.iter().map(|a| row(a)).collect(),
     }
 }
 
-/// The resume line as the window shows it.
-fn shown_line(a: &Manifest) -> String {
-    if a.agent.resume.is_empty() { "no resume".to_string() } else { a.resume_line() }
+/// The agent's row as the window shows it.
+fn row(a: &Manifest) -> [String; 3] {
+    let line = if a.agent.resume.is_empty() { "no resume".to_string() } else { a.resume_line() };
+    [a.title.clone(), a.agent.config.as_ref().map_or("", |c| c.path.as_str()).to_string(), line]
 }
 
 /// A yes to the window: hooks only the agents it showed as not hooked and records only the lines it showed.
-/// Returns what was installed, and each agent left alone because its line is no longer the one shown.
-pub fn apply(ask: &Ask) -> (Vec<Installed>, Vec<String>) {
+/// Returns what was installed, the name of each agent left alone because its row is no longer the one shown,
+/// and why the confirmed lines could not be recorded.
+pub fn apply(ask: &Ask) -> (Vec<Installed>, Vec<String>, Option<String>) {
     apply_in(ask, &home(), &seen_path())
 }
 
-fn apply_in(ask: &Ask, home: &Path, seen_at: &Path) -> (Vec<Installed>, Vec<String>) {
-    let mut seen = read_seen(seen_at);
+fn apply_in(ask: &Ask, home: &Path, seen_at: &Path) -> (Vec<Installed>, Vec<String>, Option<String>) {
+    let mut seen = read_seen(seen_at).unwrap_or_default();
     let (mut done, mut moved, mut recorded) = (Vec::new(), Vec::new(), false);
     for ((row, hooked), name) in ask.rows.iter().zip(&ask.hooked).zip(&ask.names) {
-        let Some(a) = crate::agents::get(name).filter(|a| shown_line(a) == row[2]) else {
-            moved.push(row[0].clone());
+        let Some(a) = crate::agents::get(name).filter(|a| self::row(a) == *row) else {
+            moved.push(name.clone());
             continue;
         };
         if !hooked {
@@ -993,16 +996,19 @@ fn apply_in(ask: &Ask, home: &Path, seen_at: &Path) -> (Vec<Installed>, Vec<Stri
         seen.insert(a.name.clone(), json!(a.resume_line()));
         recorded = true;
     }
-    if recorded {
-        write_seen(seen_at, &seen);
-    }
-    (done, moved)
+    let failed = if recorded { write_seen(seen_at, &seen).err().map(|e| format!("confirmed resume lines not written to {}: {e}", seen_at.display())) } else { None };
+    (done, moved, failed)
 }
 
-/// Every agent whose config directory exists; one that fails does not stop the others.
-/// Called once the human has confirmed what `first_installs` showed, so their resume lines count as seen.
+/// With nothing to ask every agent found is hooked already: this renews those, and hooks no folder that appeared since.
 pub fn install() -> std::io::Result<Vec<Installed>> {
-    let done = install_in(&home())?;
+    install_in(&home(), false)
+}
+
+/// Every agent whose config directory exists, its resume line recorded as confirmed.
+#[cfg(test)]
+pub fn install_all() -> std::io::Result<Vec<Installed>> {
+    let done = install_in(&home(), true)?;
     record_seen(&home(), &seen_path());
     Ok(done)
 }
@@ -1012,33 +1018,38 @@ fn seen_path() -> PathBuf {
     crate::paths::state_root().join("hook-confirmed.json")
 }
 
-fn read_seen(path: &Path) -> serde_json::Map<String, Value> {
-    std::fs::read_to_string(path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
-}
-
-fn write_seen(path: &Path, seen: &serde_json::Map<String, Value>) {
-    if crate::paths::write_private(path, "tmp", &serde_json::to_vec_pretty(seen).unwrap_or_default()).is_err() {
-        crate::log::warn(&format!("confirmed resume lines not written to {}", path.display()));
+/// None when the file is there but cannot be read or parsed: then nothing counts as confirmed.
+fn read_seen(path: &Path) -> Option<serde_json::Map<String, Value>> {
+    match std::fs::read_to_string(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(serde_json::Map::new()),
+        r => serde_json::from_str(&r.ok()?).ok(),
     }
 }
 
+fn write_seen(path: &Path, seen: &serde_json::Map<String, Value>) -> std::io::Result<()> {
+    crate::paths::write_private(path, "tmp", &serde_json::to_vec_pretty(seen).unwrap_or_default())
+}
+
+#[cfg(test)]
 fn record_seen(home: &Path, path: &Path) {
-    let mut seen = read_seen(path);
+    let mut seen = read_seen(path).unwrap_or_default();
     for a in crate::agents::all().iter().filter(|a| installed(a, home)) {
         seen.insert(a.name.clone(), json!(a.resume_line()));
     }
-    write_seen(path, &seen);
+    write_seen(path, &seen).unwrap();
 }
 
 /// Whether the human confirmed this agent's resume line as it is now. A hook an older nerd installed,
 /// before lines were recorded, counts as confirmed and is recorded.
 fn resume_seen(a: &Manifest, home: &Path, path: &Path) -> bool {
-    let mut seen = read_seen(path);
+    let Some(mut seen) = read_seen(path) else { return false };
     match seen.get(&a.name) {
         Some(line) => line.as_str() == Some(a.resume_line().as_str()),
         None if installed(a, home) => {
             seen.insert(a.name.clone(), json!(a.resume_line()));
-            write_seen(path, &seen);
+            if let Err(e) = write_seen(path, &seen) {
+                crate::log::warn(&format!("confirmed resume lines not written to {}: {e}", path.display()));
+            }
             true
         }
         None => false,
@@ -1050,10 +1061,11 @@ pub fn resume_confirmed(a: &Manifest) -> bool {
     resume_seen(a, &home(), &seen_path())
 }
 
-fn install_in(home: &Path) -> std::io::Result<Vec<Installed>> {
+/// `every`: each agent whose folder exists; otherwise only those hooked already.
+fn install_in(home: &Path, every: bool) -> std::io::Result<Vec<Installed>> {
     let all = crate::agents::all();
     let mut done = Vec::new();
-    for a in all.iter().filter(|a| a.dir(home).is_some_and(|d| d.is_dir())) {
+    for a in all.iter().filter(|a| a.dir(home).is_some_and(|d| d.is_dir()) && (every || installed(a, home))) {
         done.push((a.title.clone(), install_one(a, home).map(|()| config(a, home)).map_err(|e| e.to_string())));
     }
     if done.is_empty() {
@@ -2210,7 +2222,7 @@ if (mode === "backoff") {{
         let read = |p: &str| serde_json::from_str::<Value>(&std::fs::read_to_string(home.join(p)).unwrap()).unwrap();
         let foreign: Vec<Value> = [".claude/settings.json", ".codex/hooks.json", ".qwen/settings.json", ".gemini/settings.json", ".cursor/hooks.json"].iter().map(|p| read(p)).collect();
 
-        let done = install_in(&home).unwrap();
+        let done = install_in(&home, true).unwrap();
         let agents = crate::agents::builtins();
         assert_eq!(done.iter().map(|(n, r)| (n.clone(), r.is_ok())).collect::<Vec<_>>(), agents.iter().map(|a| (a.title.clone(), true)).collect::<Vec<_>>());
         for a in &agents {
@@ -2234,7 +2246,7 @@ if (mode === "backoff") {{
         assert!(std::fs::read_to_string(script(&builtin("claude"), &home)).unwrap().contains(&format!("root='{}/Library/Application Support/nerd/'", home.display())));
 
         let once = snapshot(&home);
-        install_in(&home).unwrap();
+        install_in(&home, true).unwrap();
         refresh_in(&home).unwrap();
         assert_eq!(snapshot(&home), once, "a repeat install and a refresh change nothing");
 
@@ -2256,9 +2268,9 @@ if (mode === "backoff") {{
     fn only_agents_that_are_there_get_a_hook() {
         let home = std::env::temp_dir().join(format!("nerd-home-some-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
-        assert!(install_in(&home).is_err(), "nothing to install into");
+        assert!(install_in(&home, true).is_err(), "nothing to install into");
         std::fs::create_dir_all(home.join(".cursor")).unwrap();
-        let done = install_in(&home).unwrap();
+        let done = install_in(&home, true).unwrap();
         assert_eq!(done.iter().map(|(n, r)| (n.as_str(), r.is_ok())).collect::<Vec<_>>(), vec![("Cursor", true)]);
         assert!(!home.join(".claude").exists(), "no config directory is made for an agent that is not there");
         let v: Value = serde_json::from_str(&std::fs::read_to_string(home.join(".cursor/hooks.json")).unwrap()).unwrap();
@@ -2517,7 +2529,7 @@ console.log(process.title)
     #[test]
     fn an_older_install_gains_the_note_on_refresh() {
         let home = scratch_home("notegain");
-        install_in(&home).unwrap();
+        install_in(&home, true).unwrap();
         let codex = builtin("codex");
         let path = config(&codex, &home);
         let mut v = read_settings(&path).unwrap();
@@ -2633,7 +2645,7 @@ console.log(JSON.stringify({ before, main: await sys("m"), child: await sys("ses
     fn an_agent_whose_config_does_not_parse_is_skipped_and_said() {
         let home = scratch_home("broken");
         std::fs::write(home.join(".codex/hooks.json"), "{ not json").unwrap();
-        let done = install_in(&home).unwrap();
+        let done = install_in(&home, true).unwrap();
         let codex = done.iter().find(|(n, _)| *n == "Codex").unwrap();
         assert!(codex.1.as_ref().is_err_and(|e| e.contains("does not parse")), "{codex:?}");
         assert!(!script(&builtin("codex"), &home).exists(), "nothing of ours is left beside a file we could not read");
@@ -3355,7 +3367,7 @@ console.log("{}")
         let extension = home.join(".pi/agent/extensions/nerd.js");
         std::fs::create_dir_all(extension.parent().unwrap()).unwrap();
         std::fs::write(&extension, "export default function () {}\n").unwrap();
-        let done = install_in(&home).unwrap();
+        let done = install_in(&home, true).unwrap();
         for (title, name) in [("Copilot CLI", "copilot"), ("OpenCode", "opencode"), ("pi", "pi")] {
             let r = &done.iter().find(|(n, _)| n == title).unwrap().1;
             assert!(r.as_ref().is_err_and(|e| e.contains("not nerd's")), "{title}: {r:?}");
@@ -3421,12 +3433,12 @@ console.log("{}")
         let seen = home.join("confirmed.json");
         assert_eq!(first_installs_in(&home, &seen).rows.len(), crate::agents::builtins().len(), "every agent found is asked about");
         assert!(!first_installs_in(&home, &seen).changed());
-        install_in(&home).unwrap();
+        install_in(&home, true).unwrap();
         assert!(first_installs_in(&home, &seen).is_empty(), "hooks an older nerd installed count as confirmed");
-        assert_eq!(read_seen(&seen)["codex"], "codex --no-daemon resume <id>", "and their lines are recorded");
-        let mut changed = read_seen(&seen);
+        assert_eq!(read_seen(&seen).unwrap()["codex"], "codex --no-daemon resume <id>", "and their lines are recorded");
+        let mut changed = read_seen(&seen).unwrap();
         changed.insert("codex".into(), json!("codex resume --yolo <id>"));
-        write_seen(&seen, &changed);
+        write_seen(&seen, &changed).unwrap();
         let ask = first_installs_in(&home, &seen);
         assert_eq!(ask.rows, vec![["Codex", "~/.codex/hooks.json", "codex --no-daemon resume <id>"].map(String::from)]);
         assert!(ask.changed() && ask.intro().starts_with("The resume line of this agent changed"), "the re-ask says why");
@@ -3435,6 +3447,76 @@ console.log("{}")
         record_seen(&home, &seen);
         assert!(first_installs_in(&home, &seen).is_empty() && resume_seen(&builtin("codex"), &home, &seen), "confirming records it");
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_yes_writes_no_settings_file_the_window_did_not_show() {
+        let home = scratch_home("moved-path");
+        let seen = home.join("confirmed.json");
+        let mut ask = first_installs_in(&home, &seen);
+        let at = ask.names.iter().position(|n| n == "gemini").unwrap();
+        // what a manifest replaced while the window was open looks like: the same resume line, another settings file
+        ask.rows[at][1] = "~/.elsewhere/settings.json".into();
+        let gemini = std::fs::read(home.join(".gemini/settings.json")).unwrap();
+        let moved = apply_in(&ask, &home, &seen).1;
+        assert!(moved.contains(&"gemini".to_string()), "{moved:?}");
+        assert_eq!(std::fs::read(home.join(".gemini/settings.json")).unwrap(), gemini, "its file is not written");
+        assert!(!read_seen(&seen).unwrap_or_default().contains_key("gemini"), "nor its line recorded");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_confirmations_file_that_does_not_parse_confirms_nothing() {
+        let home = scratch_home("broken-seen");
+        let seen = home.join("confirmed.json");
+        install_in(&home, true).unwrap();
+        std::fs::write(&seen, "{not json").unwrap();
+        let ask = first_installs_in(&home, &seen);
+        assert_eq!(ask.rows.len(), crate::agents::builtins().len(), "every hooked agent is asked about again");
+        assert!(!resume_seen(&builtin("codex"), &home, &seen), "no line is typed");
+        assert_eq!(std::fs::read_to_string(&seen).unwrap(), "{not json", "and the file is left as it is");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn a_confirmation_that_cannot_be_written_says_so() {
+        use std::os::unix::fs::PermissionsExt;
+        let home = scratch_home("readonly-seen");
+        let state = home.join("state");
+        std::fs::create_dir_all(&state).unwrap();
+        install_in(&home, true).unwrap();
+        let seen = state.join("hook-confirmed.json");
+        std::fs::write(&seen, r#"{"codex": "codex resume <id>"}"#).unwrap();
+        let ask = first_installs_in(&home, &seen);
+        std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let (_, moved, failed) = apply_in(&ask, &home, &seen);
+        std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(moved.is_empty());
+        assert!(failed.as_deref().is_some_and(|f| f.contains(&seen.display().to_string())), "{failed:?}");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn with_nothing_to_ask_a_folder_that_appeared_since_is_not_hooked() {
+        let home = std::env::temp_dir().join(format!("nerd-home-appeared-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(home.join(".gemini")).unwrap();
+        install_in(&home, true).unwrap();
+        std::fs::create_dir_all(home.join(".qwen")).unwrap();
+        let done = install_in(&home, false).unwrap();
+        assert_eq!(done.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), ["Gemini CLI"]);
+        assert!(!installed(&builtin("qwen"), &home));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn the_prompt_prints_no_format_characters_and_a_confirmation_asks_to_confirm() {
+        let row = |r: [&str; 3]| r.map(String::from);
+        let ask = Ask { rows: vec![row(["Ev\u{202E}il\u{200B}", "~/.e\u{2028}/x.json", "e <id>\u{FEFF}"])], hooked: vec![false], ..Default::default() };
+        let p = ask.prompt();
+        assert!(!p.chars().any(|c| c != '\n' && crate::render::is_spoofing(c)), "{p:?}");
+        assert!(p.contains("\nEvil   ~/.e/x.json    e <id>\n") && p.ends_with("Install? [y/N] "), "{p:?}");
+        assert!(Ask { hooked: vec![true], ..ask }.prompt().ends_with("Confirm? [y/N] "));
     }
 
     #[test]
