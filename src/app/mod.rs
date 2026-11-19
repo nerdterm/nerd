@@ -4793,6 +4793,7 @@ mod tests {
         let (mut app, dir) = tree_on("tree-menu", &[("a.txt", "x")]);
         std::fs::create_dir(dir.join("sub")).unwrap();
         app.cfg.preview = true;
+        app.cfg.tree_hidden = false;
         app.toggle_tree();
         let menu = |app: &App, path: &std::path::Path| rows(app.tree_menu(path.to_path_buf(), path.is_dir(), (1, 1)));
         let file = ["Open in editor [⌥+E]", "Open in its app [⌥+J]", "Insert path into pane [⌥+I]", "Copy path [⌥+Y]"];
@@ -4818,9 +4819,34 @@ mod tests {
     }
 
     #[test]
+    fn a_tree_opens_with_hidden_files_as_tree_hidden_says() {
+        let (mut app, dir) = tree_on("tree-hidden-cfg", &[(".dot", "x"), ("a.txt", "x")]);
+        let label = |app: &App| rows(app.tree_menu(dir.join("a.txt"), false, (1, 1))).into_iter().find(|r| r.contains("hidden files")).unwrap();
+        assert!(app.cfg.tree_hidden, "the default shows them");
+        app.toggle_tree();
+        assert!(screen(&mut app).contains(".dot"));
+        assert_eq!(label(&app), "Hide hidden files [⌥+H]");
+        app.run_action(Action::TreeHidden, &MenuCtx::Tree(dir.join("a.txt")));
+        assert!(!screen(&mut app).contains(".dot"), "the switch hides them");
+        assert_eq!(label(&app), "Show hidden files [⌥+H]");
+        app.toggle_tree();
+        app.toggle_tree();
+        assert!(screen(&mut app).contains(".dot"), "a tree opened again starts from the config");
+        app.cfg.tree_hidden = false;
+        app.toggle_tree();
+        app.toggle_tree();
+        assert!(!screen(&mut app).contains(".dot"));
+        assert_eq!(label(&app), "Show hidden files [⌥+H]");
+        app.run_action(Action::TreeHidden, &MenuCtx::Tree(dir.join("a.txt")));
+        assert!(screen(&mut app).contains(".dot"), "and the switch shows them");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn the_tree_menu_reaches_hidden_reload_and_root() {
         let (mut app, dir) = tree_on("tree-menu-act", &[]);
         std::fs::create_dir(dir.join("sub")).unwrap();
+        app.cfg.tree_hidden = false;
         app.toggle_tree();
         let ctx = MenuCtx::Tree(dir.join("sub"));
         app.run_action(Action::TreeHidden, &ctx);

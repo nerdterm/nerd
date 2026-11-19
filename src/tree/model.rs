@@ -277,6 +277,12 @@ impl Tree {
         self.reload();
     }
 
+    pub fn set_hidden(&mut self, on: bool) {
+        if self.hidden != on {
+            self.toggle_hidden();
+        }
+    }
+
     pub fn toggle_hidden(&mut self) {
         self.hidden = !self.hidden;
         self.reload();
