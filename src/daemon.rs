@@ -722,6 +722,7 @@ fn serve(started: &mut bool) -> std::io::Result<()> {
                 }
                 Err(e) => {
                     warn(&format!("frame did not go out: {e}"));
+                    app.resume_unseen();
                     crate::clients::close(&mut app.clients, current, crate::clients::End::Lost, crate::clients::now());
                     sink.set(None);
                 }

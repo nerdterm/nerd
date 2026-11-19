@@ -654,11 +654,16 @@ impl App {
         }
     }
 
-    /// A toast the frame's copy sets; a resume message that frame drew was not read yet and waits for the next free frame.
-    pub fn toast_after_frame(&mut self, t: String) {
+    /// The frame that put the resume message up did not reach the window: it waits for the next free frame.
+    pub fn resume_unseen(&mut self) {
         if std::mem::take(&mut self.resume_fresh) {
             self.resume_told = self.toast.take();
         }
+    }
+
+    /// A toast the frame's copy sets; a resume message that frame drew was not read yet.
+    pub fn toast_after_frame(&mut self, t: String) {
+        self.resume_unseen();
         self.toast = Some(t);
     }
 

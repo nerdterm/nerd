@@ -866,6 +866,8 @@ pub struct Ask {
     pub hooked: Vec<bool>,
     /// Per row: the agent's manifest name.
     pub names: Vec<String>,
+    /// The record of confirmed lines is there but could not be read.
+    pub unread: bool,
 }
 
 impl Ask {
@@ -922,6 +924,7 @@ impl Ask {
     pub fn notice(&self) -> Option<String> {
         match self.relined().as_slice() {
             [] => None,
+            _ if self.unread => Some("The record of confirmed resume lines could not be read; confirm them in Settings to keep resuming those sessions".into()),
             [one] => Some(format!("{one}'s resume line changed; confirm it in Settings to keep resuming its sessions")),
             _ => Some("Resume lines changed; confirm them in Settings to keep resuming those sessions".into()),
         }
@@ -961,6 +964,7 @@ fn first_installs_in(home: &Path, seen: &Path) -> Ask {
         hooked: asked.iter().map(|a| installed(a, home)).collect(),
         names: asked.iter().map(|a| a.name.clone()).collect(),
         rows: asked.iter().map(|a| row(a)).collect(),
+        unread: read_seen(seen).is_none(),
     }
 }
 
@@ -978,7 +982,8 @@ pub fn apply(ask: &Ask) -> (Vec<Installed>, Vec<String>, Option<String>) {
 }
 
 fn apply_in(ask: &Ask, home: &Path, seen_at: &Path) -> (Vec<Installed>, Vec<String>, Option<String>) {
-    let mut seen = read_seen(seen_at).unwrap_or_default();
+    let read = read_seen(seen_at);
+    let mut seen = read.clone().unwrap_or_default();
     let (mut done, mut moved, mut recorded) = (Vec::new(), Vec::new(), false);
     for ((row, hooked), name) in ask.rows.iter().zip(&ask.hooked).zip(&ask.names) {
         let Some(a) = crate::agents::get(name).filter(|a| self::row(a) == *row) else {
@@ -996,7 +1001,12 @@ fn apply_in(ask: &Ask, home: &Path, seen_at: &Path) -> (Vec<Installed>, Vec<Stri
         seen.insert(a.name.clone(), json!(a.resume_line()));
         recorded = true;
     }
-    let failed = if recorded { write_seen(seen_at, &seen).err().map(|e| format!("confirmed resume lines not written to {}: {e}", seen_at.display())) } else { None };
+    // After a yes an unreadable record is replaced by the rows shown, all of them: a moved one left out would later count as an older hook, confirmed.
+    let failed = match (recorded, read.is_none() && !moved.is_empty()) {
+        (false, _) => None,
+        (true, true) => Some(format!("confirmed resume lines not written to {}: it could not be read, and an agent changed while you were asked", seen_at.display())),
+        (true, false) => write_seen(seen_at, &seen).err().map(|e| format!("confirmed resume lines not written to {}: {e}", seen_at.display())),
+    };
     (done, moved, failed)
 }
 
@@ -1047,10 +1057,12 @@ fn resume_seen(a: &Manifest, home: &Path, path: &Path) -> bool {
         Some(line) => line.as_str() == Some(a.resume_line().as_str()),
         None if installed(a, home) => {
             seen.insert(a.name.clone(), json!(a.resume_line()));
-            if let Err(e) = write_seen(path, &seen) {
+            // unrecorded, it would count as confirmed on every read while a confirmation says "not written"
+            let written = write_seen(path, &seen);
+            if let Err(e) = &written {
                 crate::log::warn(&format!("confirmed resume lines not written to {}: {e}", path.display()));
             }
-            true
+            written.is_ok()
         }
         None => false,
     }
@@ -3475,6 +3487,49 @@ console.log("{}")
         assert_eq!(ask.rows.len(), crate::agents::builtins().len(), "every hooked agent is asked about again");
         assert!(!resume_seen(&builtin("codex"), &home, &seen), "no line is typed");
         assert_eq!(std::fs::read_to_string(&seen).unwrap(), "{not json", "and the file is left as it is");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn an_unreadable_record_with_a_row_that_moved_is_not_replaced() {
+        let home = scratch_home("broken-moved");
+        let seen = home.join("confirmed.json");
+        install_in(&home, true).unwrap();
+        std::fs::write(&seen, "{not json").unwrap();
+        let mut ask = first_installs_in(&home, &seen);
+        let at = ask.names.iter().position(|n| n == "gemini").unwrap();
+        ask.rows[at][2] = "gemini --resume <old>".into();
+        let (_, moved, failed) = apply_in(&ask, &home, &seen);
+        assert_eq!(moved, ["gemini"]);
+        assert!(failed.as_deref().is_some_and(|f| f.contains(&seen.display().to_string())), "{failed:?}");
+        assert_eq!(std::fs::read_to_string(&seen).unwrap(), "{not json", "a record that lists every line but the moved one would confirm it unseen");
+        assert!(!resume_seen(&builtin("gemini"), &home, &seen));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn an_older_hook_whose_confirmation_cannot_be_written_is_not_confirmed() {
+        use std::os::unix::fs::PermissionsExt;
+        let home = scratch_home("readonly-migrate");
+        let state = home.join("state");
+        std::fs::create_dir_all(&state).unwrap();
+        install_in(&home, true).unwrap();
+        std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let confirmed = resume_seen(&builtin("codex"), &home, &state.join("hook-confirmed.json"));
+        std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(!confirmed);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn an_unreadable_record_is_called_that_at_start() {
+        let home = scratch_home("broken-notice");
+        let seen = home.join("confirmed.json");
+        install_in(&home, true).unwrap();
+        std::fs::write(&seen, "{not json").unwrap();
+        assert_eq!(first_installs_in(&home, &seen).notice().as_deref(), Some("The record of confirmed resume lines could not be read; confirm them in Settings to keep resuming those sessions"));
+        std::fs::write(&seen, "{}").unwrap();
+        assert_eq!(first_installs_in(&home, &seen).notice(), None, "a readable record with no entries is an older install, confirmed");
         let _ = std::fs::remove_dir_all(&home);
     }
 

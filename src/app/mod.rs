@@ -945,6 +945,24 @@ mod tests {
     }
 
     #[test]
+    fn a_resume_notice_whose_frame_did_not_go_out_is_said_again() {
+        crate::config::tests::with_temp_home(|| {
+            crate::session::tests::with_temp_state_dir("lost-resume", || {
+                codex_line_changed();
+                let mut app = with_one_space();
+                app.tell_changed_resume();
+                let _ = screen(&mut app);
+                assert_eq!(app.toast.as_deref(), Some(TOLD));
+                // what the server does when that frame fails and the window is dropped
+                app.resume_unseen();
+                assert_eq!(app.toast, None);
+                let _ = screen(&mut app);
+                assert_eq!(app.toast.as_deref(), Some(TOLD), "the next window is told");
+            });
+        });
+    }
+
+    #[test]
     fn the_resume_notice_dismissed_by_a_key_or_by_time_is_not_said_again() {
         crate::config::tests::with_temp_home(|| {
             crate::session::tests::with_temp_state_dir("gone-resume", || {
