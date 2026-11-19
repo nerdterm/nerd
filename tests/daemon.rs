@@ -2016,6 +2016,8 @@ fn a_failed_update_keeps_a_client_that_is_behind() {
         std::thread::sleep(Duration::from_millis(20));
     }
     assert!(daemon_log(&env).contains("update failed"), "{}", daemon_log(&env));
+    // The flood ends here: on a busy machine the echo would otherwise wait for every line of it to be drawn.
+    key(&mut client, KeyCode::Char('c'), KeyModifiers::CONTROL);
     type_line(&mut client, "echo DO''NE-OK");
     assert!(wait_for(&mut client, "DONE-OK", Duration::from_secs(10)), "the client was lost: {}", daemon_log(&env));
     let _ = std::fs::remove_dir_all(&env.dir);

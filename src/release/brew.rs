@@ -706,13 +706,22 @@ mod tests {
     fn a_run_past_its_limit_is_stopped_with_everything_it_started() {
         let root = crate::paths::test_dir("brew-stop");
         let kid = root.join("kid");
-        let sh = format!("#!/bin/sh\ntrap '' TERM\n/usr/bin/perl -e '$SIG{{TERM}}=\"IGNORE\"; setpgrp(0,0); open(F, \">\", $ARGV[0]); print F $$; close F; sleep 60' '{}' &\nsleep 60\n", kid.display());
+        // Renamed into place: a kid file is a whole pid of a process that already left the group and ignores TERM.
+        let sh = format!("#!/bin/sh\ntrap '' TERM\n/usr/bin/perl -e '$SIG{{TERM}}=\"IGNORE\"; setpgrp(0,0); open(F, \">\", \"$ARGV[0].t\"); print F $$; close F; rename(\"$ARGV[0].t\", $ARGV[0]); sleep 60' '{}' &\nsleep 60\n", kid.display());
         write(&root.join("hang"), &sh, 0o755);
-        let start = Instant::now();
-        let r = run(Command::new(root.join("hang")), Duration::from_secs(1), &root);
-        assert!(r.as_ref().is_err_and(|e| e.starts_with("did not finish in 1 s")), "{r:?}");
-        assert!(start.elapsed() < GRACE + Duration::from_secs(3));
-        let pid = nix::unistd::Pid::from_raw(std::fs::read_to_string(&kid).unwrap().trim().parse().unwrap());
+        // A busy machine can stop the run before perl got there, and then the case never happened: again, with twice the limit.
+        let mut limit = 1;
+        loop {
+            let start = Instant::now();
+            let r = run(Command::new(root.join("hang")), Duration::from_secs(limit), &root);
+            assert!(r.as_ref().is_err_and(|e| e.starts_with(&format!("did not finish in {limit} s"))), "{r:?}");
+            assert!(start.elapsed() < Duration::from_secs(limit) + GRACE + Duration::from_secs(2));
+            if kid.exists() || limit == 16 {
+                break;
+            }
+            limit *= 2;
+        }
+        let pid = nix::unistd::Pid::from_raw(std::fs::read_to_string(&kid).expect("perl did not leave the group before a 16 s limit").trim().parse().unwrap());
         let t = Instant::now();
         while nix::sys::signal::kill(pid, None).is_ok() && t.elapsed() < Duration::from_secs(3) {
             std::thread::sleep(Duration::from_millis(50));
