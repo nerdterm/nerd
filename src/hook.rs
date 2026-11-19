@@ -859,11 +859,13 @@ pub type Installed = (String, Result<PathBuf, String>);
 
 /// Agents to ask about before installing: found here and not hooked yet, or hooked with a resume line
 /// that changed since it was confirmed. Each row: the agent, the file it gets, the line that resumes it.
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Ask {
     pub rows: Vec<[String; 3]>,
     /// Per row: hooked already, only its resume line is new.
     pub hooked: Vec<bool>,
+    /// Per row: the agent's manifest name.
+    pub names: Vec<String>,
 }
 
 impl Ask {
@@ -896,17 +898,18 @@ impl Ask {
 
     pub fn intro(&self) -> String {
         let (relined, fresh) = (self.relined(), self.titles(false));
-        if fresh.is_empty() {
-            "The resume line of these agents changed since you confirmed it; nerd types it into a restored pane only once you confirm again.".into()
-        } else if relined.is_empty() {
-            "nerd adds its hook to these agents, so it sees when they work and when they wait for you.".into()
-        } else {
-            let lines = if relined.len() == 1 { "line" } else { "lines" };
-            format!(
-                "nerd adds its hook to {}, so it sees when they work and when they wait for you, and confirms the changed resume {lines} of {}; nerd types a resume line into a restored pane only once you confirm it.",
+        match (relined.len(), fresh.len()) {
+            (1, 0) => "The resume line of this agent changed since you confirmed it; nerd types it into a restored pane only once you confirm again.".into(),
+            (_, 0) => "The resume lines of these agents changed since you confirmed them; nerd types them into a restored pane only once you confirm again.".into(),
+            (0, 1) => "nerd adds its hook to this agent, so it sees when it works and when it waits for you.".into(),
+            (0, _) => "nerd adds its hook to these agents, so it sees when they work and when they wait for you.".into(),
+            (r, f) => format!(
+                "nerd adds its hook to {}, so it sees when {} for you, and confirms the changed resume {} of {}; nerd types a resume line into a restored pane only once you confirm it.",
                 fresh.join(", "),
+                if f == 1 { "it works and when it waits" } else { "they work and when they wait" },
+                if r == 1 { "line" } else { "lines" },
                 relined.join(", ")
-            )
+            ),
         }
     }
 
@@ -955,15 +958,45 @@ fn first_installs_in(home: &Path, seen: &Path) -> Ask {
     let asked: Vec<&Manifest> = all.iter().filter(|a| a.dir(home).is_some_and(|d| d.is_dir()) && !(installed(a, home) && resume_seen(a, home, seen))).collect();
     Ask {
         hooked: asked.iter().map(|a| installed(a, home)).collect(),
-        rows: asked
-            .iter()
-            .map(|a| {
-                let path = a.agent.config.as_ref().map_or("", |c| c.path.as_str()).to_string();
-                let resume = if a.agent.resume.is_empty() { "no resume".to_string() } else { a.resume_line() };
-                [a.title.clone(), path, resume]
-            })
-            .collect(),
+        names: asked.iter().map(|a| a.name.clone()).collect(),
+        rows: asked.iter().map(|a| [a.title.clone(), a.agent.config.as_ref().map_or("", |c| c.path.as_str()).to_string(), shown_line(a)]).collect(),
     }
+}
+
+/// The resume line as the window shows it.
+fn shown_line(a: &Manifest) -> String {
+    if a.agent.resume.is_empty() { "no resume".to_string() } else { a.resume_line() }
+}
+
+/// A yes to the window: hooks only the agents it showed as not hooked and records only the lines it showed.
+/// Returns what was installed, and each agent left alone because its line is no longer the one shown.
+pub fn apply(ask: &Ask) -> (Vec<Installed>, Vec<String>) {
+    apply_in(ask, &home(), &seen_path())
+}
+
+fn apply_in(ask: &Ask, home: &Path, seen_at: &Path) -> (Vec<Installed>, Vec<String>) {
+    let mut seen = read_seen(seen_at);
+    let (mut done, mut moved, mut recorded) = (Vec::new(), Vec::new(), false);
+    for ((row, hooked), name) in ask.rows.iter().zip(&ask.hooked).zip(&ask.names) {
+        let Some(a) = crate::agents::get(name).filter(|a| shown_line(a) == row[2]) else {
+            moved.push(row[0].clone());
+            continue;
+        };
+        if !hooked {
+            let r = install_one(&a, home).map(|()| config(&a, home)).map_err(|e| e.to_string());
+            let failed = r.is_err();
+            done.push((a.title.clone(), r));
+            if failed {
+                continue;
+            }
+        }
+        seen.insert(a.name.clone(), json!(a.resume_line()));
+        recorded = true;
+    }
+    if recorded {
+        write_seen(seen_at, &seen);
+    }
+    (done, moved)
 }
 
 /// Every agent whose config directory exists; one that fails does not stop the others.
@@ -972,11 +1005,6 @@ pub fn install() -> std::io::Result<Vec<Installed>> {
     let done = install_in(&home())?;
     record_seen(&home(), &seen_path());
     Ok(done)
-}
-
-/// The person confirmed the changed resume lines `first_installs` showed: recorded as an install records them, nothing installed.
-pub fn confirm_resume() {
-    record_seen(&home(), &seen_path());
 }
 
 /// Each agent's resume line as the human last confirmed it, by manifest name.
@@ -3356,7 +3384,7 @@ console.log("{}")
     #[test]
     fn the_command_line_asks_with_the_same_table() {
         let row = |r: [&str; 3]| r.map(String::from);
-        let ask = Ask { rows: vec![row(["Qwen Code", "~/.qwen/settings.json", "qwen --resume <id>"]), row(["Cursor", "~/.cursor/hooks.json", "no resume"])], hooked: vec![false, false] };
+        let ask = Ask { rows: vec![row(["Qwen Code", "~/.qwen/settings.json", "qwen --resume <id>"]), row(["Cursor", "~/.cursor/hooks.json", "no resume"])], hooked: vec![false, false], ..Default::default() };
         assert_eq!(
             ask.prompt(),
             "nerd adds its hook to these agents, so it sees when they work and when they wait for you.\n\n\
@@ -3367,17 +3395,24 @@ console.log("{}")
         );
         assert_eq!(ask.notice(), None, "a first install is not a changed line");
         assert_eq!(ask.title(), "Install the hook");
-        let both = Ask { hooked: vec![true, true], rows: ask.rows.clone() };
+        let both = Ask { hooked: vec![true, true], rows: ask.rows.clone(), ..Default::default() };
         assert_eq!(both.notice().as_deref(), Some("Resume lines changed; confirm them in Settings to keep resuming those sessions"));
         assert_eq!(both.title(), "Confirm the resume lines");
-        assert_eq!(Ask { hooked: vec![true], rows: ask.rows[..1].to_vec() }.title(), "Confirm the resume line");
-        let mixed = Ask { hooked: vec![true, false], rows: ask.rows.clone() };
+        assert_eq!(Ask { hooked: vec![true], rows: ask.rows[..1].to_vec(), ..Default::default() }.title(), "Confirm the resume line");
+        let mixed = Ask { hooked: vec![true, false], rows: ask.rows.clone(), ..Default::default() };
         assert_eq!((mixed.title(), mixed.notice().as_deref()), ("Install the hook", Some("Qwen Code's resume line changed; confirm it in Settings to keep resuming its sessions")), "it installs too");
         assert_eq!(
             mixed.intro(),
-            "nerd adds its hook to Cursor, so it sees when they work and when they wait for you, and confirms the changed resume line of Qwen Code; nerd types a resume line into a restored pane only once you confirm it."
+            "nerd adds its hook to Cursor, so it sees when it works and when it waits for you, and confirms the changed resume line of Qwen Code; nerd types a resume line into a restored pane only once you confirm it."
         );
-        assert!(Ask { hooked: vec![true, true], ..ask }.prompt().starts_with("The resume line of these agents changed since you confirmed it;"));
+        let row = |r: [&str; 3]| r.map(String::from);
+        let three = Ask { rows: vec![row(["A", "a", "a <id>"]), row(["B", "b", "b <id>"]), row(["C", "c", "c <id>"])], hooked: vec![true, true, false], ..Default::default() };
+        assert_eq!(three.intro(), "nerd adds its hook to C, so it sees when it works and when it waits for you, and confirms the changed resume lines of A, B; nerd types a resume line into a restored pane only once you confirm it.");
+        assert_eq!(Ask { hooked: vec![false, false, true], ..three }.intro(), "nerd adds its hook to A, B, so it sees when they work and when they wait for you, and confirms the changed resume line of C; nerd types a resume line into a restored pane only once you confirm it.");
+        assert_eq!(both.intro(), "The resume lines of these agents changed since you confirmed them; nerd types them into a restored pane only once you confirm again.");
+        assert_eq!(Ask { hooked: vec![true], rows: ask.rows[..1].to_vec(), ..Default::default() }.intro(), "The resume line of this agent changed since you confirmed it; nerd types it into a restored pane only once you confirm again.");
+        assert_eq!(Ask { hooked: vec![false], rows: ask.rows[..1].to_vec(), ..Default::default() }.intro(), "nerd adds its hook to this agent, so it sees when it works and when it waits for you.");
+        assert!(Ask { hooked: vec![true, true], ..ask }.prompt().starts_with("The resume lines of these agents changed since you confirmed them;"));
     }
 
     #[test]
@@ -3394,7 +3429,7 @@ console.log("{}")
         write_seen(&seen, &changed);
         let ask = first_installs_in(&home, &seen);
         assert_eq!(ask.rows, vec![["Codex", "~/.codex/hooks.json", "codex --no-daemon resume <id>"].map(String::from)]);
-        assert!(ask.changed() && ask.intro().starts_with("The resume line of these agents changed"), "the re-ask says why");
+        assert!(ask.changed() && ask.intro().starts_with("The resume line of this agent changed"), "the re-ask says why");
         assert_eq!(ask.notice().as_deref(), Some("Codex's resume line changed; confirm it in Settings to keep resuming its sessions"));
         assert!(!resume_seen(&builtin("codex"), &home, &seen), "not typed until confirmed");
         record_seen(&home, &seen);

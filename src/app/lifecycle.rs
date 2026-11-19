@@ -641,10 +641,15 @@ impl App {
         self.notice = Some(CFG_BROKEN.into());
     }
 
-    /// Once per server start, for its first window: a confirmed resume line that changed stops resume until confirmed again.
+    /// Once per server start: a confirmed resume line that changed stops resume until confirmed again.
     pub fn tell_changed_resume(&mut self) {
-        if let Some(n) = crate::hook::first_installs().notice() {
-            self.notice.get_or_insert(n);
+        self.resume_told = crate::hook::first_installs().notice();
+    }
+
+    /// Each frame: the resume line's message waits until no error, toast or card shows, then shows as a toast.
+    pub fn tell_when_free(&mut self) {
+        if self.notice.is_none() && self.toast.is_none() {
+            self.toast = self.resume_told.take();
         }
     }
 
@@ -1237,12 +1242,12 @@ pub(super) fn restored_command(argv: &[String], session: Option<(&str, &str)>, l
         .map(|a| crate::agents::get(&a).map_or_else(|| argv.to_vec(), |m| m.strip_resume(argv)));
     let Some((agent, id)) = session else { return stored };
     let Some(m) = crate::agents::get(agent) else { return stored };
-    (!live).then(|| m.resume_argv(id)).flatten().or(stored).or_else(|| Some(vec![m.program().to_string()]))
+    (!live).then(|| m.resume_argv(id)).flatten().or(stored).or_else(|| Some(m.fresh_argv()))
 }
 
 /// What a restarted pane types: its session resumed, else the agent it ran started fresh; a plain shell types nothing.
 pub(super) fn restart_command(argv: &[String], session: Option<(&str, &str)>, agent: Option<&str>) -> Option<Vec<String>> {
-    restored_command(argv, session, false).or_else(|| agent.and_then(crate::agents::get).map(|m| vec![m.program().to_string()]))
+    restored_command(argv, session, false).or_else(|| agent.and_then(crate::agents::get).map(|m| m.fresh_argv()))
 }
 
 /// The line typed into a restored pane's shell; None when an argument holds a control character.

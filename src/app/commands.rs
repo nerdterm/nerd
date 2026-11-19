@@ -216,7 +216,7 @@ impl App {
             Pending::ServerUpdate(_) => "Update server",
             Pending::ServerRemove(_) => "Remove server",
             Pending::ShowInFinder(_) => "Logs exported",
-            Pending::InstallHook(_) | Pending::ConfirmResume(_) => "Install the hook",
+            Pending::InstallHook(ask) | Pending::ConfirmResume(ask) => ask.title(),
             Pending::RemoveHook => "Remove agent hooks",
             Pending::StopServer => "Stop this server",
             Pending::PluginReady(..) => "Install a plugin",
@@ -420,12 +420,23 @@ impl App {
     pub(super) fn install_hook_overlay(&mut self) -> Overlay {
         self.dirty = true;
         let ask = crate::hook::first_installs();
+        // Settings read an older state: nothing is left to ask, so the item does what it does now.
+        if ask.is_empty() {
+            if crate::hook::is_installed() {
+                return self.remove_hook_overlay();
+            }
+            if let Err(e) = crate::hook::install() {
+                self.notice = Some(format!("couldn't install the hook: {e}"));
+            }
+            return Overlay::None;
+        }
+        let confirm = crate::menu::Confirm::new(ask.title(), ask.intro()).table(ask.table());
         let (does, what) = match (ask.changed(), ask.relined().is_empty()) {
-            (true, _) => ("confirm", Pending::ConfirmResume(ask.summary())),
-            (false, false) => ("install hooks and confirm", Pending::InstallHook(ask.summary())),
-            (false, true) => ("install hooks", Pending::InstallHook(ask.summary())),
+            (true, _) => ("confirm", Pending::ConfirmResume(ask)),
+            (false, false) => ("install hooks and confirm", Pending::InstallHook(ask)),
+            (false, true) => ("install hooks", Pending::InstallHook(ask)),
         };
-        Overlay::Confirm(crate::menu::Confirm::new(ask.title(), ask.intro()).table(ask.table()).does(does), what)
+        Overlay::Confirm(confirm.does(does), what)
     }
 
     pub(super) fn remove_hook_overlay(&mut self) -> Overlay {
@@ -523,11 +534,9 @@ impl App {
 
     /// A dialog answered No: only the first hook install is logged.
     pub(super) fn declined(&mut self, what: &Pending) {
-        if let Pending::InstallHook(first) = what {
-            crate::log::info(&format!("first hook install declined: {first}"));
-        }
-        if let Pending::ConfirmResume(lines) = what {
-            crate::log::info(&format!("changed resume lines declined: {lines}"));
+        if let Pending::InstallHook(ask) | Pending::ConfirmResume(ask) = what {
+            let what = if ask.changed() { "changed resume lines" } else { "first hook install" };
+            crate::log::info(&format!("{what} declined: {}", ask.summary()));
         }
         if let Pending::PluginReady(id, _) = what {
             crate::log::info(&format!("staged plugin {id} declined"));
@@ -658,23 +667,20 @@ impl App {
             Pending::Topology(routes, _) => {
                 self.mail_done(MailAction::Topology(routes));
             }
-            Pending::InstallHook(first) => {
-                crate::log::info(&format!("first hook install confirmed: {first}"));
-                match crate::hook::install() {
-                    Ok(done) => {
-                        let failed: Vec<String> = done.iter().filter_map(|(n, r)| r.as_ref().err().map(|e| format!("{n}: {e}"))).collect();
-                        if failed.is_empty() {
-                            self.toast = Some(format!("hook installed: {}", done.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>().join(", ")));
-                        } else {
-                            self.notice = Some(failed.join("; "));
-                        }
-                    }
-                    Err(e) => self.notice = Some(format!("couldn't install the hook: {e}")),
+            Pending::InstallHook(ask) | Pending::ConfirmResume(ask) => {
+                let what = if ask.changed() { "changed resume lines" } else { "first hook install" };
+                crate::log::info(&format!("{what} confirmed: {}", ask.summary()));
+                let (done, moved) = crate::hook::apply(&ask);
+                let failed: Vec<String> = done
+                    .iter()
+                    .filter_map(|(n, r)| r.as_ref().err().map(|e| format!("{n}: {e}")))
+                    .chain(moved.iter().map(|n| format!("{n}: its resume line changed while the window was open; nothing was done for it")))
+                    .collect();
+                if !failed.is_empty() {
+                    self.notice = Some(failed.join("; "));
+                } else if !done.is_empty() {
+                    self.toast = Some(format!("hook installed: {}", done.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>().join(", ")));
                 }
-            }
-            Pending::ConfirmResume(lines) => {
-                crate::log::info(&format!("changed resume lines confirmed: {lines}"));
-                crate::hook::confirm_resume();
             }
             Pending::RemoveHook => match crate::hook::uninstall() {
                 Ok(done) => self.toast = Some(format!("hooks removed from {}", done.join(", "))),
@@ -2316,10 +2322,10 @@ pub enum Pending {
     Dismiss,
     /// Reveal a saved report in Finder.
     ShowInFinder(PathBuf),
-    /// Hook into agents not hooked before; what the dialog said.
-    InstallHook(String),
-    /// Record the hooked agents' changed resume lines as confirmed; what the dialog said.
-    ConfirmResume(String),
+    /// Hook into the agents the dialog showed as not hooked, and record the lines it showed.
+    InstallHook(crate::hook::Ask),
+    /// Record the changed resume lines of the hooked agents the dialog showed.
+    ConfirmResume(crate::hook::Ask),
     /// Take nerd's entries out of every hooked agent.
     RemoveHook,
     /// Remove a plugin, by name; the third button takes its data too.

@@ -1088,6 +1088,29 @@ fn sandbox_notice(status: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_sandbox_warning_at_attach_does_not_lose_the_resume_notice() {
+        crate::config::tests::with_temp_home(|| {
+            crate::session::tests::with_temp_state_dir("sandbox-resume", || {
+                let home = crate::paths::home().unwrap();
+                std::fs::create_dir_all(home.join(".codex")).unwrap();
+                crate::hook::install().unwrap();
+                std::fs::write(crate::paths::state_root().join("hook-confirmed.json"), r#"{"codex": "codex resume <id>"}"#).unwrap();
+                let mut app = crate::app::App::new(crate::config::Config::default());
+                app.tell_changed_resume();
+                std::fs::write(crate::log::sandbox_path(), "did NOT enable (test), running without it").unwrap();
+                super::warn_sandbox(&mut app);
+                let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
+                let mut frame = |app: &mut crate::app::App| term.draw(|f| { crate::ui::frame(f, app); }).map(|_| ()).unwrap();
+                frame(&mut app);
+                assert_eq!(app.notice.as_deref(), Some("network sandbox is off: test"));
+                app.notice = None;
+                frame(&mut app);
+                assert_eq!(app.toast.as_deref(), Some("Codex's resume line changed; confirm it in Settings to keep resuming its sessions"), "told once the warning is read");
+            });
+        });
+    }
+
     /// Polls the probe as the loop does, for up to `for_`.
     fn answer(p: &mut super::Probe, exe: &std::path::Path, limit: std::time::Duration, for_: std::time::Duration) -> Option<(String, Vec<Vec<String>>)> {
         let (bell, _door) = crate::bell::new();

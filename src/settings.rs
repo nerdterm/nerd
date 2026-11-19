@@ -159,11 +159,12 @@ impl Settings {
         }
     }
 
-    /// The window grows by the rows a long message wraps onto; the list keeps every row.
+    /// The window grows by the rows an error wraps onto, where the screen has them; a row's hint takes one row,
+    /// so hovering never moves the rows.
     pub fn rect(&self, screen: Rect) -> Rect {
         let w = crate::chrome::WINDOW_W;
         let width = crate::chrome::fit(screen, w, 0).width.saturating_sub(4) as usize;
-        let note = self.note().map_or(1, |(_, t)| crate::menu::wrap(t, width).len().max(1));
+        let note = self.message.as_ref().map_or(1, |(_, t)| crate::menu::wrap(t, width).len().max(1));
         // the list, the message lines, the key strip
         crate::chrome::fit(screen, w, (lines().len() + note + hint_strip(width).len()) as u16)
     }
@@ -192,7 +193,14 @@ impl Settings {
         let mut bottom = crate::chrome::draw_hint(buf, inner, &hint_strip(width), theme).max(y);
         if let Some((is_error, text)) = self.note() {
             let color = if is_error { theme.bad } else { theme.faint };
-            for line in crate::menu::wrap(text, width).iter().rev() {
+            // The list keeps its rows: the note gets what is left beside them, at least one, cut at its end.
+            let fits = (bottom.saturating_sub(y) as usize).saturating_sub(lines().len()).max(1);
+            let mut said = crate::menu::wrap(text, width);
+            if said.len() > fits {
+                let rest = said.split_off(fits - 1).join(" ");
+                said.push(crate::slots::fit(&rest, width));
+            }
+            for line in said.iter().rev() {
                 if bottom <= y {
                     break;
                 }
@@ -1063,6 +1071,49 @@ mod tests {
         let click = crossterm::event::MouseEvent { kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left), column: theme_row.x + 2, row: theme_row.y, modifiers: crossterm::event::KeyModifiers::NONE };
         assert_eq!(s.mouse(click, screen, &mut cfg, &rows), SettingsOutcome::Changed);
         assert_eq!(cfg.theme, ThemeMode::Dark, "the click on Theme changed the theme");
+    }
+
+    #[test]
+    fn a_message_never_takes_a_row_and_hovering_keeps_the_window_where_it_was_drawn() {
+        let mut cfg = Config::default();
+        let draw = |s: &Settings, screen: Rect| {
+            let mut buf = Buffer::empty(screen);
+            let rows = s.draw(&mut buf, screen, &theme());
+            (buf, rows)
+        };
+        let narrow = Rect::new(0, 0, 40, 60);
+        let mut s = at(Item::Theme, &cfg);
+        let (_, rows) = draw(&s, narrow);
+        let width = s.rect(narrow).width.saturating_sub(4) as usize;
+        assert!(CONFIG_HINT.chars().count() > width, "a hint that wraps at 40 columns");
+        let before = s.rect(narrow);
+        let edit = rows.iter().find(|(_, i)| ROWS[*i].2 == Item::EditConfig).unwrap().0;
+        let moved = crossterm::event::MouseEvent { kind: crossterm::event::MouseEventKind::Moved, column: edit.x + 2, row: edit.y, modifiers: crossterm::event::KeyModifiers::NONE };
+        s.mouse(moved, narrow, &mut cfg, &rows);
+        assert_eq!(s.chosen(), "Edit config.json…");
+        assert_eq!(s.rect(narrow), before, "hovering a row with a long hint does not move the rows under the pointer");
+        let (buf, again) = draw(&s, narrow);
+        assert_eq!(again, rows);
+        for (r, i) in &again {
+            assert!(text_of(&buf, *r).contains(&ROWS[*i].1.chars().take(12).collect::<String>()), "row {i} is drawn where a click finds it");
+        }
+
+        let short = Rect::new(0, 0, 100, 12);
+        let mut s = at(Item::Hook, &cfg);
+        s.inside = true;
+        s.key(key(KeyCode::Enter), &mut cfg);
+        let (buf, rows) = draw(&s, short);
+        let said_then = s.message.replace((true, "short".into()));
+        let (_, plain) = draw(&s, short);
+        s.message = said_then;
+        assert!(!rows.is_empty() && rows == plain, "a long message takes the one row a short one does, never a row of the list: {rows:?} {plain:?}");
+        let text: Vec<String> = (0..short.height).map(|y| text_of(&buf, Rect::new(0, y, short.width, 1))).collect();
+        let said = text.iter().find(|l| l.contains("Not from a window")).expect("the message's start is shown");
+        assert!(said.trim_matches(|c| c == '│' || c == ' ').ends_with('…'), "cut at its end: {said}");
+        let first = rows[0];
+        let click = crossterm::event::MouseEvent { kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left), column: first.0.x + 2, row: first.0.y, modifiers: crossterm::event::KeyModifiers::NONE };
+        s.mouse(click, short, &mut cfg, &rows);
+        assert_eq!(s.chosen(), ROWS[first.1].1, "a click hits the row drawn there");
     }
 
     #[test]

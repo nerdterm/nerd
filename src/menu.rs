@@ -1204,7 +1204,7 @@ mod tests {
 
     /// The hook dialog for these agents on a screen `cols` wide: its body as drawn.
     fn hook_dialog(agents: &[[&str; 3]], cols: u16) -> Vec<String> {
-        let ask = crate::hook::Ask { rows: agents.iter().map(|r| r.map(String::from)).collect(), hooked: vec![false; agents.len()] };
+        let ask = crate::hook::Ask { rows: agents.iter().map(|r| r.map(String::from)).collect(), hooked: vec![false; agents.len()], ..Default::default() };
         let c = Confirm::new("Install the hook", ask.intro()).table(ask.table());
         let inner = c.rect(Rect::new(0, 0, cols, 40)).width - 2 * crate::chrome::DIALOG_FRAME.horizontal;
         c.body_lines(inner as usize)

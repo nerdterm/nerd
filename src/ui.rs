@@ -190,6 +190,7 @@ fn machine_badge(buf: &mut Buffer, machine: Option<&str>, server: Option<&str>, 
 
 /// The loop's frame: pane geometry needs `&mut App` (history), so it is settled before the view is lifted out.
 pub fn frame(f: &mut Frame, app: &mut App) -> Effects {
+    app.tell_when_free();
     app.plugins.slots.apply();
     if let Some(t) = app.tree.as_mut() {
         t.badges = app.plugins.slots.tree.clone();

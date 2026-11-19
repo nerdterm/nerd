@@ -1106,18 +1106,37 @@ impl Manifest {
         self.agent.resume.join(" ").replace("{id}", "<id>")
     }
 
+    /// What starts the agent fresh: a built-in's resume line without the resume part, so it runs as a resumed session
+    /// does; a plugin's words are typed only once the person confirmed its line, so it starts as its program.
+    pub fn fresh_argv(&self) -> Vec<String> {
+        let line: Vec<String> = self.agent.resume.iter().filter(|w| !w.contains("{id}")).cloned().collect();
+        if line.is_empty() || !self.builtin { vec![self.program().to_string()] } else { self.strip_resume(&line) }
+    }
+
+    /// ceiling: a session name, not a uuid, after a flag is kept as that flag's value; knowing which flags take one is the way past.
     pub fn strip_resume(&self, argv: &[String]) -> Vec<String> {
         let s = &self.agent.strip;
         let mut out = Vec::new();
-        let mut skip = false;
+        // Some(next): a resume word passed and its id is still to come; `next`: this is the word right after it.
+        let mut id: Option<bool> = None;
         for a in argv {
-            if std::mem::take(&mut skip) {
-                continue;
-            }
+            let waiting = id.take();
             if s.value.contains(a) {
-                skip = true;
-            } else if !s.flag.contains(a) && !s.value.iter().any(|v| a.strip_prefix(v.as_str()).is_some_and(|r| r.starts_with('='))) {
+                id = Some(true);
+            } else if s.flag.contains(a) || s.value.iter().any(|v| a.strip_prefix(v.as_str()).is_some_and(|r| r.starts_with('='))) {
+                id = waiting.map(|_| false);
+            } else if a.starts_with('-') {
+                id = waiting.map(|_| false);
                 out.push(a.clone());
+            } else {
+                match waiting {
+                    Some(next) if next || is_uuid(a) => {}
+                    Some(_) => {
+                        id = Some(false);
+                        out.push(a.clone());
+                    }
+                    None => out.push(a.clone()),
+                }
             }
         }
         out
@@ -1840,6 +1859,20 @@ mod tests {
         assert_eq!(by("claude").strip_resume(&v(&["zsh", "-f"])), v(&["zsh", "-f"]));
         assert_eq!(by("codex").strip_resume(&v(&["codex", "resume", "abc", "--model", "o"])), v(&["codex", "--model", "o"]));
         assert_eq!(by("codex").strip_resume(&v(&["codex", "--no-daemon", "resume", "X"])), v(&["codex", "--no-daemon"]), "a fresh Codex keeps running without the shared server");
+        let uuid = "019a0e00-52ae-7ef0-a6ff-7e16d3f63eeb";
+        assert_eq!(by("codex").strip_resume(&v(&["codex", "resume", "--no-daemon", uuid])), v(&["codex", "--no-daemon"]), "a flag between resume and its id stays, the id goes");
+        assert_eq!(by("codex").strip_resume(&v(&["codex", "resume", "--model", "o3"])), v(&["codex", "--model", "o3"]), "no id: a flag's value is not taken for one");
+        assert_eq!(by("codex").strip_resume(&v(&["codex", "resume", uuid, "--model", "o3"])), v(&["codex", "--model", "o3"]));
+        assert_eq!(by("codex").strip_resume(&v(&["codex", "resume", "--model", "o3", uuid])), v(&["codex", "--model", "o3"]), "an id after a flag with a value");
+        let fresh = |n: &str| by(n).fresh_argv().join(" ");
+        assert_eq!(fresh("codex"), "codex --no-daemon", "its resume line without the resume part");
+        for m in b.iter().filter(|m| m.name != "codex") {
+            assert_eq!(m.fresh_argv(), v(&[m.program()]), "{}", m.name);
+        }
+        let mut plugin: Manifest = serde_json::from_value(serde_json::json!({ "name": "fake", "title": "Fake", "agent": { "names": ["fake"], "session": { "field": "id", "kind": "word" }, "resume": ["fake", "--yolo", "resume", "{id}"], "strip": { "value": ["resume"] } } })).unwrap();
+        assert_eq!(plugin.fresh_argv(), v(&["fake"]), "a plugin's flags are typed only on a confirmed resume");
+        plugin.builtin = true;
+        assert_eq!(plugin.fresh_argv(), v(&["fake", "--yolo"]));
         assert_eq!(by("opencode").strip_resume(&v(&["opencode", "-s", "ses_1", "-c"])), v(&["opencode"]));
         assert_eq!(by("pi").strip_resume(&v(&["pi", "--session", "019a", "--model", "m", "-c"])), v(&["pi", "--model", "m"]));
     }

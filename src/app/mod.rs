@@ -210,6 +210,8 @@ pub struct App {
     pub updated_changes: Option<Vec<Vec<String>>>,
     /// What the card's "… more" opens, while the card still shows this text.
     pub toast_more: Option<(String, More)>,
+    /// Said once per server start, when no other message shows: a confirmed resume line changed.
+    resume_told: Option<String>,
     /// Clients attached since the server started, newest first.
     pub clients: Vec<crate::clients::ClientRecord>,
     /// The attached client's id: a takeover reads the caps of the one it replaces.
@@ -409,6 +411,7 @@ impl App {
             release_ask: false,
             updated_changes: None,
             toast_more: None,
+            resume_told: None,
             clients: Vec::new(),
             client: 0,
             caps: Default::default(),
@@ -808,7 +811,7 @@ mod tests {
                 assert!(c.body_lines(80).iter().any(|l| l.contains("Codex") && l.contains("codex --no-daemon resume <id>")), "{:?}", c.body_lines(80));
                 assert_eq!(c.title, "Confirm the resume line", "nothing is installed: the title says what it is");
                 let shown = screen(&mut app);
-                assert!(shown.contains("The resume line of these agents changed since you confirmed it") && shown.contains("[Enter] confirm") && !shown.contains("install hooks"), "{shown}");
+                assert!(shown.contains("The resume line of this agent changed since you confirmed it") && shown.contains("[Enter] confirm") && !shown.contains("install hooks"), "{shown}");
                 app.key(crossterm::event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
                 assert!(!crate::hook::resume_confirmed(&codex), "a no records nothing");
 
@@ -833,11 +836,13 @@ mod tests {
                 crate::hook::install().unwrap();
                 std::fs::write(crate::paths::state_root().join("hook-confirmed.json"), r#"{"codex": "codex resume <id>"}"#).unwrap();
                 std::fs::create_dir_all(home.join(".gemini")).unwrap();
+                let _ = std::fs::remove_file(home.join(".codex/hooks.json.bak-nerd"));
                 let codex_hooks = std::fs::read(home.join(".codex/hooks.json")).unwrap();
                 let mut app = with_one_space();
                 app.screen = Rect::new(0, 0, 120, 40);
                 app.tell_changed_resume();
-                assert_eq!(app.notice.take().as_deref(), Some("Codex's resume line changed; confirm it in Settings to keep resuming its sessions"), "a new agent beside it does not hide the change");
+                let _ = screen(&mut app);
+                assert_eq!(app.toast.take().as_deref(), Some("Codex's resume line changed; confirm it in Settings to keep resuming its sessions"), "a new agent beside it does not hide the change");
                 let mut s = crate::settings::Settings::new(&app.cfg);
                 s.choose("Agent hooks");
                 assert_eq!(s.hook_row_value(), "a resume line changed, confirm");
@@ -850,23 +855,39 @@ mod tests {
                 let body = c.body_lines(110);
                 assert!(body.iter().any(|l| l.contains("Codex") && l.contains("codex --no-daemon resume <id>")) && body.iter().any(|l| l.contains("Gemini CLI") && l.contains("gemini --resume <id>")), "{body:?}");
                 assert_eq!(body.iter().filter(|l| l.contains("<id>")).count(), 2, "exactly the two agents: {body:?}");
-                assert_eq!(c.body, "nerd adds its hook to Gemini CLI, so it sees when they work and when they wait for you, and confirms the changed resume line of Codex; nerd types a resume line into a restored pane only once you confirm it.");
+                assert_eq!(c.body, "nerd adds its hook to Gemini CLI, so it sees when it works and when it waits for you, and confirms the changed resume line of Codex; nerd types a resume line into a restored pane only once you confirm it.");
                 let shown = screen(&mut app);
                 assert!(shown.contains("[Enter] install hooks and confirm"), "{shown}");
+                std::fs::create_dir_all(home.join(".qwen")).unwrap();
                 click_yes(&mut app);
                 let codex = crate::agents::get("codex").unwrap();
                 let gemini = crate::agents::get("gemini").unwrap();
                 assert!(std::fs::read_to_string(home.join(".gemini/settings.json")).unwrap().contains("nerd-agent-state.sh' idle gemini"), "the new agent is hooked");
                 assert!(crate::hook::resume_confirmed(&codex) && crate::hook::resume_confirmed(&gemini), "both lines it showed are recorded");
-                assert!(crate::hook::first_installs().is_empty(), "nothing left to ask");
-                assert_eq!(std::fs::read(home.join(".codex/hooks.json")).unwrap(), codex_hooks, "Codex's hook is left as it was");
+                assert_eq!(app.toast.as_deref(), Some("hook installed: Gemini CLI"));
+                let qwen = crate::agents::get("qwen").unwrap();
+                assert!(!home.join(".qwen/settings.json").exists() && !crate::hook::resume_confirmed(&qwen), "an agent that appeared after the window opened is neither hooked nor recorded");
+                assert_eq!(crate::hook::first_installs().rows.iter().map(|r| r[0].as_str()).collect::<Vec<_>>(), ["Qwen Code"], "it is asked about next time");
+                assert_eq!(std::fs::read(home.join(".codex/hooks.json")).unwrap(), codex_hooks, "Codex's settings file is left as it was");
+                assert!(!home.join(".codex/hooks.json.bak-nerd").exists(), "and gains no backup");
                 assert_eq!(crate::settings::Settings::new(&app.cfg).hook_row_value(), "installed");
             });
         });
     }
 
+    /// Codex hooked with this build, its resume line confirmed as an older build wrote it.
+    fn codex_line_changed() -> std::path::PathBuf {
+        let home = crate::paths::home().unwrap();
+        std::fs::create_dir_all(home.join(".codex")).unwrap();
+        crate::hook::install().unwrap();
+        std::fs::write(crate::paths::state_root().join("hook-confirmed.json"), r#"{"codex": "codex resume <id>"}"#).unwrap();
+        home
+    }
+
+    const TOLD: &str = "Codex's resume line changed; confirm it in Settings to keep resuming its sessions";
+
     #[test]
-    fn a_changed_resume_line_is_told_once_at_the_first_window() {
+    fn the_resume_notice_waits_for_an_error_is_told_neutral_and_once() {
         crate::config::tests::with_temp_home(|| {
             crate::session::tests::with_temp_state_dir("tell-resume", || {
                 let home = crate::paths::home().unwrap();
@@ -874,15 +895,92 @@ mod tests {
                 crate::hook::install().unwrap();
                 let mut app = with_one_space();
                 app.tell_changed_resume();
-                assert_eq!(app.notice, None, "nothing changed: nothing said");
-                std::fs::write(crate::paths::state_root().join("hook-confirmed.json"), r#"{"codex": "codex resume <id>"}"#).unwrap();
+                let _ = screen(&mut app);
+                assert_eq!((app.notice.as_deref(), app.toast.as_deref()), (None, None), "nothing changed: nothing said");
+                codex_line_changed();
+                app.notice = Some("1 pane not restored: x".into());
                 app.tell_changed_resume();
-                assert_eq!(app.notice.as_deref(), Some("Codex's resume line changed; confirm it in Settings to keep resuming its sessions"));
+                let _ = screen(&mut app);
+                assert_eq!(app.notice.as_deref(), Some("1 pane not restored: x"), "an error already there is not replaced");
+                assert_eq!(app.toast, None, "nor hidden");
                 app.notice = None;
-                for _ in 0..3 {
+                let _ = screen(&mut app);
+                assert_eq!((app.notice.as_deref(), app.toast.as_deref()), (None, Some(TOLD)), "then it is told, as a neutral message");
+                let Overlay::Confirm(c, _) = app.notice_window() else { panic!("its card opens a window") };
+                assert_eq!(c.title, "Message", "not under What went wrong");
+                for _ in 0..2 {
+                    app.toast = None;
                     let _ = screen(&mut app);
+                    assert_eq!(app.toast, None, "a second window of the same server start is not told again");
                 }
-                assert_eq!(app.notice, None, "a redraw does not say it again");
+            });
+        });
+    }
+
+    #[test]
+    fn after_an_update_the_updated_card_shows_first_and_the_resume_notice_follows() {
+        crate::config::tests::with_temp_home(|| {
+            crate::session::tests::with_temp_state_dir("tell-updated", || {
+                codex_line_changed();
+                let mut app = with_one_space();
+                app.tell_changed_resume();
+                app.toast_with_more("Updated to 9.9.9".into(), More::Updated);
+                let _ = screen(&mut app);
+                assert_eq!((app.card_more(), app.toast.as_deref(), app.notice.as_deref()), (Some(More::Updated), Some("Updated to 9.9.9"), None), "the card shows and still opens what is new");
+                app.toast = None;
+                let _ = screen(&mut app);
+                assert_eq!(app.toast.as_deref(), Some(TOLD), "the resume notice follows it");
+            });
+        });
+    }
+
+    #[test]
+    fn a_confirmation_from_a_window_inside_a_pane_records_nothing() {
+        crate::config::tests::with_temp_home(|| {
+            crate::session::tests::with_temp_state_dir("inside-resume", || {
+                codex_line_changed();
+                let mut app = with_one_space();
+                app.overlay = app.install_hook_overlay();
+                let Overlay::Confirm(_, what) = std::mem::replace(&mut app.overlay, Overlay::None) else { panic!("the window") };
+                app.client_inside = true;
+                app.perform(what);
+                assert_eq!(app.notice.as_deref(), Some(INSIDE_REFUSED));
+                assert!(!crate::hook::resume_confirmed(&crate::agents::get("codex").unwrap()), "nothing recorded");
+            });
+        });
+    }
+
+    #[test]
+    fn a_line_confirmed_elsewhere_while_settings_was_open_makes_the_item_the_ordinary_one() {
+        crate::config::tests::with_temp_home(|| {
+            crate::session::tests::with_temp_state_dir("stale-resume", || {
+                codex_line_changed();
+                let mut app = with_one_space();
+                let mut s = crate::settings::Settings::new(&app.cfg);
+                s.choose("Agent hooks");
+                assert_eq!(s.hook_row_value(), "a resume line changed, confirm");
+                crate::hook::install().unwrap();
+                app.overlay = Overlay::Settings(s);
+                app.key(crossterm::event::KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                assert!(matches!(app.overlay, Overlay::Confirm(_, Pending::RemoveHook)), "what the ordinary item does, not an empty install");
+            });
+        });
+    }
+
+    #[test]
+    fn a_resume_line_that_changed_after_the_window_opened_is_refused_and_not_recorded() {
+        crate::config::tests::with_temp_home(|| {
+            crate::session::tests::with_temp_state_dir("moved-resume", || {
+                codex_line_changed();
+                let mut app = with_one_space();
+                let Overlay::Confirm(c, Pending::ConfirmResume(mut ask)) = app.install_hook_overlay() else { panic!("the confirmation") };
+                assert_eq!(c.title, "Confirm the resume line");
+                let Overlay::Confirm(routed, _) = app.confirm_overlay(Pending::ConfirmResume(ask.clone())) else { panic!("a dialog") };
+                assert_eq!(routed.title, "Confirm the resume line", "the routed title says the same");
+                ask.rows[0][2] = "codex resume <id>".into();
+                app.perform(Pending::ConfirmResume(ask));
+                assert_eq!(app.notice.as_deref(), Some("Codex: its resume line changed while the window was open; nothing was done for it"));
+                assert!(!crate::hook::resume_confirmed(&crate::agents::get("codex").unwrap()), "nothing recorded");
             });
         });
     }
@@ -1118,10 +1216,10 @@ mod tests {
                 isolation: Default::default(),
             };
             std::fs::write(&seen, r#"{"codex": "codex resume --yolo <id>"}"#).unwrap();
-            assert_eq!(super::restore_launch(&ps(&["/bin/zsh"])), Some(vec!["codex".to_string()]), "the bare program");
+            assert_eq!(super::restore_launch(&ps(&["/bin/zsh"])), Some(vec!["codex".to_string(), "--no-daemon".into()]), "started fresh the way its manifest starts it");
             assert_eq!(super::restore_launch(&ps(&["codex", "resume", "old", "-m", "o3"])), Some(vec!["codex".into(), "-m".into(), "o3".into()]), "or its own command, stripped");
             let log = std::fs::read_to_string(crate::session::state_dir().join("daemon.log")).unwrap();
-            assert!(log.lines().any(|l| l.contains(" WARN ") && l.ends_with(&format!("pane 4: codex session {id} not resumed: its resume line changed since it was confirmed; typed: codex"))), "{log}");
+            assert!(log.lines().any(|l| l.contains(" WARN ") && l.ends_with(&format!("pane 4: codex session {id} not resumed: its resume line changed since it was confirmed; typed: codex with 1 argument"))), "{log}");
             assert_eq!(super::program_only(&["codex".into(), "--api-key=sk-secret".into()]), "codex with 1 argument", "a key in the arguments stays out of the log");
             assert_eq!(super::program_only(&["codex".into(), "-m".into(), "o3".into()]), "codex with 2 arguments");
             std::fs::write(&seen, r#"{"codex": "codex --no-daemon resume <id>"}"#).unwrap();
@@ -3760,6 +3858,8 @@ mod tests {
             let mut app = with_one_space();
             app.screen = Rect::new(0, 0, 160, 30);
             app.update_available = true;
+            // an agent to ask about: with none, the install window is not opened
+            std::fs::create_dir_all(crate::paths::home().unwrap().join(".gemini")).unwrap();
             let key = std::path::PathBuf::from("/tmp/x");
             let cases = vec![
                 (app.confirm_overlay(Pending::ClosePane), "[Enter] close pane"),
@@ -5402,6 +5502,13 @@ mod tests {
             "an old snapshot's agent starts fresh, not on a session that moved on"
         );
         assert_eq!(super::restored_command(&zsh, Some(("codex", id)), false), Some(vec!["codex".into(), "--no-daemon".into(), "resume".into(), id.into()]), "each agent by its own line");
+        let fresh = Some(vec!["codex".to_string(), "--no-daemon".into()]);
+        assert_eq!(super::restored_command(&zsh, Some(("codex", id)), true), fresh, "not resumed: Codex starts fresh as its line starts it, which a This-folder-only pane allows");
+        assert_eq!(super::restart_command(&zsh, None, Some("codex")), fresh, "no id, or the Isolation… restart: the same");
+        assert_eq!(super::restart_command(&zsh, Some(("codex", id)), Some("codex")), Some(vec!["codex".into(), "--no-daemon".into(), "resume".into(), id.into()]));
+        for m in crate::agents::builtins().iter().filter(|m| m.name != "codex") {
+            assert_eq!(super::restart_command(&zsh, None, Some(&m.name)), Some(vec![m.program().to_string()]), "{}: its line without the resume part is its program", m.name);
+        }
         assert_eq!(super::restored_command(&zsh, Some(("opencode", "ses_1")), false), Some(vec!["opencode".into(), "--session".into(), "ses_1".into()]));
         assert_eq!(super::restored_command(&zsh, Some(("cursor", id)), false), Some(vec!["cursor-agent".into()]), "Cursor does not resume: it starts fresh");
         assert_eq!(super::restored_command(&zsh, Some(("gone", id)), false), None, "an agent with no manifest now: the shell only");
