@@ -79,7 +79,7 @@ impl App {
         if f.wants_files() {
             // ceiling: one snapshot per window; a file made after it is not found until the window reopens.
             f.files = true;
-            // The tree's own folder and hidden files; with the tree closed, what opening it would show.
+            // The open tree's folder and its hidden switch; with the tree closed, the folder opening it would show and hidden files off.
             let (root, hidden) = match &self.tree {
                 Some(t) => (t.root().to_path_buf(), t.hidden()),
                 None => (self.space().map(|s| std::fs::canonicalize(&s.cwd).unwrap_or_else(|_| s.cwd.clone())).unwrap_or_default(), false),

@@ -11,6 +11,7 @@ Settings live in `~/Library/Application Support/nerd/config.json`. **Settings…
 | `sidebar_visible` | `true` | Sidebar expanded; `false` collapses it to a rail of state marks. `«` and `»` at its bottom switch it, and nerd remembers the choice |
 | `sidebar_width` | `34` | Sidebar width in columns, 20 to 48 |
 | `tree_width` | `34` | File tree width, 20 to 80 |
+| `tree_hidden` | `true` | A file tree opens with hidden files (names starting with a dot) shown; `false` hides them. The tree's own switch flips it for that tree, and **Search…** lists files by what the open tree shows; with no tree open it skips hidden files. The tree's filter, **Search…** and Search contents never enter a folder whose name starts with a dot below the folder they start in. A change here reaches an open tree once, when the file is read again |
 | `preview_width` | `60` | File preview width, 30 to 120 |
 | `scrollback` | `10000` | History lines per pane, 100 to 100000; panes opened after a change get it |
 | `pane_border` | `"always"` | `always`, `multiple` or `never` |

@@ -350,7 +350,7 @@ mod tests {
 
     /// A tree of the temp directory: a new tree is already rooted at the directory it is given.
     fn at(d: &Path) -> T {
-        let t = Tree::new(d.to_path_buf());
+        let t = Tree::new(d.to_path_buf(), false);
         assert_eq!(t.root, d, "rooted at the working directory");
         T { t, v: TreeView::default() }
     }
@@ -573,6 +573,31 @@ mod tests {
     }
 
     #[test]
+    fn walks_find_dot_files_but_do_not_enter_dot_folders_unless_they_start_in_one() {
+        let d = tmp("dotwalk");
+        fs::create_dir(d.join(".dir")).unwrap();
+        fs::write(d.join(".dir/needle.txt"), "needle\n").unwrap();
+        fs::write(d.join(".env"), "needle\n").unwrap();
+
+        let mut t = at(&d);
+        t.toggle_hidden();
+        ktype(&mut t, "needle");
+        assert!(names(&t).is_empty(), "the filter does not enter .dir: {:?}", names(&t));
+        t.key(key(KeyCode::Esc));
+        ktype(&mut t, "env");
+        assert_eq!(names(&t), [".env"], "a dot file is found");
+        t.key(key(KeyCode::Esc));
+        t.key(alt(KeyCode::Char('g')));
+        ktype(&mut t, "needle");
+        t.key(key(KeyCode::Enter));
+        assert_eq!(names(&t), [".env:1: needle"], "Search contents does not enter .dir");
+
+        assert_eq!(file_names(&d, true, &[]).0, [".env"]);
+        assert_eq!(file_names(&d.join(".dir"), true, &[]).0, ["needle.txt"], "a walk that starts inside a dot folder walks it");
+        rm(&d);
+    }
+
+    #[test]
     fn the_filter_finds_a_file_behind_a_huge_folder() {
         let d = tmp("huge-before");
         fs::create_dir_all(d.join("a_assets")).unwrap();
@@ -680,7 +705,7 @@ mod tests {
         fs::create_dir(d.join("inner")).unwrap();
         fs::write(d.join("f.txt"), "x").unwrap();
 
-        let t = Tree::new(d.clone());
+        let t = Tree::new(d.clone(), false);
         assert_eq!(t.root, d, "the workspace is the root");
         assert_eq!(names(&t), ["inner", "f.txt"], "its own entries, at no indent");
         assert!(ents(&t).iter().all(|r| r.depth == 0));

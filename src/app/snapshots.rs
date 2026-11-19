@@ -66,7 +66,7 @@ pub(crate) fn fixed_tree(tag: &str) -> (PathBuf, crate::tree::Tree) {
     std::fs::write(dir.join("src/lib.rs"), "// TODO one\n".repeat(40)).unwrap();
     std::fs::write(dir.join("src/deep/a.txt"), "a").unwrap();
     let dir = dir.canonicalize().unwrap();
-    let mut t = crate::tree::Tree::new(dir.clone());
+    let mut t = crate::tree::Tree::new(dir.clone(), false);
     t.preview_on = false;
     (dir, t)
 }
@@ -461,7 +461,7 @@ fn small_tree(tag: &str, files: &[&str], marks: &[(&str, char)], marked: &[(&str
         std::fs::write(dir.join(f), "x").unwrap();
     }
     let dir = dir.canonicalize().unwrap();
-    let mut t = crate::tree::Tree::new(dir.clone());
+    let mut t = crate::tree::Tree::new(dir.clone(), false);
     t.preview_on = false;
     t.set_git_marks(marks.iter().map(|(p, m)| (dir.join(p), *m)).collect());
     if flat {
@@ -581,7 +581,7 @@ pub(crate) fn preview_text(t: &mut crate::tree::Tree, file: &std::path::Path) ->
 #[test]
 fn golden_previews_as_master_drew_them() {
     let dir = preview_files("master");
-    let mut t = crate::tree::Tree::new(dir.clone());
+    let mut t = crate::tree::Tree::new(dir.clone(), false);
     let mut out = String::new();
     for f in ["notes.txt", "main.rs", "data.json", "README.md", "data.csv", "pic.png"] {
         if f == "pic.png" {
@@ -596,7 +596,7 @@ fn golden_previews_as_master_drew_them() {
 #[test]
 fn golden_previews_of_the_public_built_ins() {
     let dir = preview_files("builtins");
-    let mut t = crate::tree::Tree::new(dir.clone());
+    let mut t = crate::tree::Tree::new(dir.clone(), false);
     let mut store = crate::slots::Store::default();
     let mut out = String::new();
     for f in ["data.csv", "data.json", "README.md"] {

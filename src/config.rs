@@ -34,6 +34,8 @@ pub struct Config {
     pub battery_critical: u8,
     pub pane_border: BorderMode,
     pub tree_width: u16,
+    /// A tree opens with hidden entries shown; the switch in the tree flips it for that tree.
+    pub tree_hidden: bool,
     /// If the preview doesn't fit next to the tree, it goes under it instead.
     pub preview_width: u16,
     pub notify: Notify,
@@ -249,6 +251,7 @@ impl Default for Config {
             battery_critical: 10,
             pane_border: BorderMode::Always,
             tree_width: 34,
+            tree_hidden: true,
             preview_width: 60,
             notify: Notify::default(),
             sandbox: true,
@@ -454,6 +457,12 @@ pub(crate) mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn tree_hidden_defaults_to_shown_and_reads_false() {
+        assert!(serde_json::from_str::<Config>("{}").unwrap().tree_hidden);
+        assert!(!serde_json::from_str::<Config>(r#"{"tree_hidden": false}"#).unwrap().tree_hidden);
+    }
     use std::path::Path;
 
     // HOME is swapped process-wide for the test, so these serialize on this lock.

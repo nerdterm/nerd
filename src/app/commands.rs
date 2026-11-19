@@ -738,7 +738,7 @@ impl App {
         match (&self.tree, self.focus == Focus::Tree) {
             (None, _) => {
                 let cwd = self.space().map(|s| s.cwd.clone()).unwrap_or_default();
-                self.tree = Some(crate::tree::Tree::new(cwd));
+                self.tree = Some(crate::tree::Tree::new(cwd, self.cfg.tree_hidden));
                 self.focus = Focus::Tree;
                 self.refresh_tree_marks();
             }

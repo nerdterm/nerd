@@ -673,7 +673,11 @@ impl App {
             self.notice = None;
         }
         let restyled = fresh.colors != self.cfg.colors || fresh.theme != self.cfg.theme;
+        let hidden = (fresh.tree_hidden != self.cfg.tree_hidden).then_some(fresh.tree_hidden);
         self.cfg = fresh;
+        if let (Some(on), Some(tree)) = (hidden, self.tree.as_mut()) {
+            tree.set_hidden(on);
+        }
         if restyled {
             self.apply_theme();
         }
