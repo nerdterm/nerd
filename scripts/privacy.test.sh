@@ -11,7 +11,9 @@ trap 'rm -rf "$work"' EXIT
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
 cd "$work" || exit 1
-git init -q
+git init -q || exit 1
+# Every git below, privacy.sh's too, on this repository by name: none may find the checkout this folder is inside.
+export GIT_DIR="$work/.git" GIT_WORK_TREE="$work"
 printf 'private@example.org\nsecret-project\n' > .git/info/privacy
 fail=0
 n=0

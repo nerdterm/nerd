@@ -72,18 +72,22 @@ pull request, `chore(master): release X.Y.Z`. Replace `N` and `X.Y.Z` below with
    every tag into it from `https://github.com/nerdterm/nerd.git`, checks the release commit there, and builds a
    checkout of that repository, so `build.rs` stamps the version with that commit's hash and date. No git, gh or build
    runs in the checkout, so hooks, config, grafts, replace refs, attributes or another origin left in its `.git` change
-   nothing, and the git variables a hook exports (`GIT_DIR` and the like) are cleared first. cargo and rustup read a
-   `Cargo.toml`, `rust-toolchain`, `rust-toolchain.toml` and `.cargo/config` or `.cargo/config.toml` in every folder
-   above the source; the script stops before building if any folder from its work folder up to your home holds one,
-   naming the file, except your own `$CARGO_HOME/config.toml` (`~/.cargo/config.toml` by default). The folders above
-   your home belong to the system. The build and the tests write programs to their temp folder and run them, as you,
+   nothing. It first clears every variable a git hook exports that points git elsewhere: the ones
+   `git rev-parse --local-env-vars` names, `GIT_NAMESPACE`, and each `GIT_CONFIG_KEY_n` and `GIT_CONFIG_VALUE_n`.
+   cargo and rustup read a `Cargo.toml`, `rust-toolchain`, `rust-toolchain.toml` and `.cargo/config` or
+   `.cargo/config.toml` in every folder above the source, by real paths; the script stops before building if any
+   folder holds one or a link by one of these names, naming it, except your own `$CARGO_HOME/config.toml`
+   (`~/.cargo/config.toml` by default). It looks from the real path of its work folder up to the real path of your
+   home, whose parents belong to the system, or up to `/` when a link in `~/.local` takes the work folder outside your
+   home. The build and the tests write programs to their temp folder and run them, as you,
    before the key is used, so theirs is in that same folder of its own, not the per-user temp folder; four tests that
    run nothing from it still use the per-user one.
 
    Trusted, not checked: the script files themselves, read from the checkout before anything is verified, which is why
    the checkout must not be inside any folder an isolated pane has had, nor in a temp folder, which every isolated pane
    may write; your own git configuration (`~/.gitconfig`, `~/.config/git`, the system's git config), which every git
-   call reads, `url.*.insteadOf` included; `$CARGO_HOME/config.toml`, rustup's settings and toolchains; and your
+   call reads, `url.*.insteadOf` included; `$CARGO_HOME/config.toml`; `$CARGO_HOME/registry` and `$CARGO_HOME/git`,
+   the unpacked sources of the dependencies that go into the release; rustup's settings and toolchains; and your
    environment: the `git`, `gh` and `cargo` first on your PATH, and variables such as `CARGO_*`, `RUSTUP_TOOLCHAIN`,
    `RUSTFLAGS` and `RUSTC_WRAPPER`.
 

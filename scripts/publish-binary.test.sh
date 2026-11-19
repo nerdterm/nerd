@@ -3,11 +3,15 @@
 # nothing is built, signed or sent anywhere. The global git config, which is the maintainer's and trusted, sends the
 # public URL to a local repository and every other https or ssh address nowhere. Each refusal is checked by its message
 # and by gh's calls.
+# shellcheck disable=SC2030,SC2031 # case (A) sets HOME only inside its run's subshell, on purpose
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 # In the checkout, not the per-user temp folder every isolated pane may write: the stand-ins here are run.
 mkdir -p "$here/../target"
-t=$(cd "$here/../target" && mktemp -d "$PWD/.nerd-test.XXXXXX")
+t=$(cd "$here/../target" && mktemp -d "$(pwd -P)/.nerd-test.XXXXXX")
+ln -s home "$t/homelink"
+# Above HOME, where the walk of the folders above the build must end before it.
+echo '[workspace]' >"$t/Cargo.toml"
 trap 'rm -rf "$t"' EXIT
 fail=0
 bad() { echo "FAIL: $*" >&2; fail=1; }
@@ -45,6 +49,8 @@ cat >"$t/stub/cargo" <<'EOF'
 echo "$*" >>"$STUB/cargo.log"
 echo "$1 ${TMPDIR:-} $HOME" >>"$STUB/home.log"
 [ "$1" = build ] || exit 0
+# As build.rs's git, but never finding a repository above the folder it builds.
+export GIT_CEILING_DIRECTORIES="${PWD%/*}"
 # What it was asked to build, and the version stamp as build.rs makes it, from git in the folder it builds.
 cat main.rs >"$STUB/built-main.rs"
 git status --porcelain >/dev/null
@@ -154,23 +160,41 @@ publish() {
     c="$t/checkout-$runs"
     git clone -q "$o" "$c"
     [ -z "${STUB_PLANT:-}" ] || plant "$c" "$STUB_PLANT"
-    if [ -n "${STUB_ABOVE:-}" ]; then mkdir -p "$(dirname "$HOME/$STUB_ABOVE")" && echo '[workspace]' >"$HOME/$STUB_ABOVE"; fi
+    if [ -n "${STUB_ABOVE:-}" ]; then
+        mkdir -p "$(dirname "$HOME/$STUB_ABOVE")"
+        if [ -n "${STUB_DANGLING:-}" ]; then ln -s "$t/nowhere" "$HOME/$STUB_ABOVE"; else echo '[workspace]' >"$HOME/$STUB_ABOVE"; fi
+    fi
+    # ~/.local/bin a link into another folder, whose real parent holds a cargo config.
+    if [ -n "${STUB_LINKBIN:-}" ]; then
+        rm -rf "${HOME:?}/.local/bin" && mkdir -p "$t/phys/inner/bin" "$t/phys/.cargo" "$HOME/.local"
+        echo '[build]' >"$t/phys/.cargo/config.toml" && ln -s "$t/phys/inner/bin" "$HOME/.local/bin"
+    fi
     rm -f "$t/calls.log"
     (cd "$c" && export STUB_CHECKOUT="$c" && if [ -n "${STUB_TEMPLATE:-}" ]; then export GIT_TEMPLATE_DIR="$t/templates"; fi \
         && if [ -n "${STUB_DIFF:-}" ]; then export GIT_CONFIG_GLOBAL="$t/gitconfig-diff"; fi \
+        && if [ -n "${STUB_HOMELINK:-}" ]; then export HOME="$t/homelink"; fi \
+        && if [ -n "${STUB_CARGOSLASH:-}" ]; then export CARGO_HOME="$HOME/.cargo/"; fi \
         && if [ -n "${STUB_GITENV:-}" ]; then
             # As a git hook exports them, every one naming the checkout.
             export GIT_DIR="$c/.git" GIT_WORK_TREE="$c" GIT_INDEX_FILE="$c/.git/index" GIT_OBJECT_DIRECTORY="$c/.git/objects" \
                 GIT_ALTERNATE_OBJECT_DIRECTORIES="$c/.git/objects" GIT_COMMON_DIR="$c/.git" GIT_NAMESPACE="$c" \
-                GIT_GRAFT_FILE="$c/.git/info/grafts" GIT_SHALLOW_FILE="$c/.git/shallow" GIT_REPLACE_REF_BASE="$c/refs/replace/"
+                GIT_GRAFT_FILE="$c/.git/info/grafts" GIT_SHALLOW_FILE="$c/.git/shallow" GIT_REPLACE_REF_BASE="$c/refs/replace/" \
+                GIT_CONFIG="$c/.git/config" GIT_CONFIG_PARAMETERS="'core.hookspath'='$c/.git/hooks'" GIT_CONFIG_COUNT=2 \
+                GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0="$c/.git/hooks" GIT_CONFIG_KEY_1=include.path GIT_CONFIG_VALUE_1="$c/.git/config" \
+                GIT_IMPLICIT_WORK_TREE="$c" GIT_NO_REPLACE_OBJECTS="$c" GIT_PREFIX="$c/"
         fi \
         && PATH="$t/plant:$PATH" sh scripts/publish-binary.sh "$1") >"$t/out" 2>&1 && rc=0 || rc=$?
     cat "$t/out"
     [ -z "${STUB_ABOVE:-}" ] || rm -rf "${HOME:?}/${STUB_ABOVE%%/*}"
+    if [ -n "${STUB_LINKBIN:-}" ]; then
+        [ -z "$(ls -A "$t/phys/inner/bin")" ] || bad "$1: left $(ls -A "$t/phys/inner/bin") in the folder ~/.local/bin links to"
+        rm -f "$HOME/.local/bin" && rm -rf "$t/phys"
+    fi
     [ -z "$(ls -A "$HOME/.local/bin" 2>/dev/null)" ] || bad "$1: left $(ls -A "$HOME/.local/bin") in ~/.local/bin"
     ! grep -F "$c" "$t/calls.log" >/dev/null 2>&1 || bad "$1: ran git or gh in the checkout or on it: $(grep -F "$c" "$t/calls.log")"
     # A prefix assignment before a function call outlives it in sh: each case starts clean.
-    unset at STUB_VERSION STUB_TARGET STUB_HIJACK STUB_PLANT STUB_TEMPLATE STUB_DIFF STUB_GITENV STUB_ABOVE
+    unset at STUB_VERSION STUB_TARGET STUB_HIJACK STUB_PLANT STUB_TEMPLATE STUB_DIFF STUB_GITENV STUB_ABOVE STUB_DANGLING STUB_LINKBIN \
+        STUB_HOMELINK STUB_CARGOSLASH
     return "$rc"
 }
 # What a pane whose folder is the checkout could leave in its .git: each program it names records that it ran.
@@ -326,5 +350,19 @@ done
 STUB_ABOVE=.cargo/config.toml at=$release publish v0.2.0 >/dev/null || bad "(x) the release commit, with CARGO_HOME's config.toml: $(cat "$t/out")"
 built_src "(x) CARGO_HOME's config.toml"
 
-[ "$fail" = 0 ] && echo "publish-binary: 29 cases pass"
+STUB_DANGLING=1 STUB_ABOVE=Cargo.toml at=$release publish v0.2.0 >/dev/null && bad "(y) built under a dangling Cargo.toml link"
+expect_refused "(y) dangling link" "$HOME/Cargo.toml is above the build folder"
+
+STUB_LINKBIN=1 at=$release publish v0.2.0 >/dev/null && bad "(z) built with a cargo config above the real ~/.local/bin"
+expect_refused "(z) linked ~/.local/bin" "$t/phys/.cargo/config.toml is above the build folder"
+
+# HOME given through a link: the walk ends at its real path, before the Cargo.toml above it.
+STUB_HOMELINK=1 at=$release publish v0.2.0 >/dev/null || bad "(A) the release commit, with HOME a link: $(cat "$t/out")"
+built_src "(A) HOME a link"
+
+STUB_CARGOSLASH=1 STUB_ABOVE=.cargo/config.toml at=$release publish v0.2.0 >/dev/null \
+    || bad "(B) the release commit, with CARGO_HOME ending in a slash: $(cat "$t/out")"
+built_src "(B) CARGO_HOME/"
+
+[ "$fail" = 0 ] && echo "publish-binary: 33 cases pass"
 exit "$fail"

@@ -5,13 +5,18 @@ set -eu
 main() {
     tag=${1:?usage: scripts/publish-binary.sh vX.Y.Z}
     stop() { echo "publish: $*; stop and look at who changed it" >&2; exit 1; }
-    # A git hook exports these: they would point every git here at another repository, index or object store.
-    unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE \
-        GIT_GRAFT_FILE GIT_SHALLOW_FILE GIT_REPLACE_REF_BASE
+    # A git hook exports these: they would point every git here at another repository, index, object store or config.
+    # Named, not asked of `git rev-parse --local-env-vars`: that would run git in the checkout with them still set.
+    unset GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_CONFIG GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT GIT_OBJECT_DIRECTORY GIT_DIR GIT_WORK_TREE \
+        GIT_IMPLICIT_WORK_TREE GIT_GRAFT_FILE GIT_INDEX_FILE GIT_NO_REPLACE_OBJECTS GIT_REPLACE_REF_BASE GIT_PREFIX GIT_SHALLOW_FILE \
+        GIT_COMMON_DIR GIT_NAMESPACE
+    for v in $(env | sed -En 's/^(GIT_CONFIG_(KEY|VALUE)_[0-9]+)=.*/\1/p'); do unset "$v"; done
     # Under ~/.local/bin, which no This-folder-only pane may write: one in the temp folders could change the build before it is signed.
     mkdir -p "$HOME/.local/bin"
     work=$(mktemp -d "$HOME/.local/bin/.nerd-publish.XXXXXX")
     trap 'rm -rf "$work"' EXIT
+    # Its real path, which cargo and rustup walk up from: ~/.local or ~/.local/bin may be a link to another folder.
+    work=$(cd "$work" && pwd -P)
     # Nothing reads the checkout's .git, which a pane may have written (docs/releasing.md): no git, gh or build runs in the
     # checkout, and every git call names the repository made here from the public URL. ~/.gitconfig is the maintainer's.
     cd "$work"
@@ -68,15 +73,18 @@ main() {
     rustup_home=${RUSTUP_HOME:-$HOME/.rustup}
     user_path=$PATH
     # cargo and rustup read these in every folder above the source: a workspace root that patches dependencies, a
-    # toolchain that is any program, build config. Up to HOME, as the folders above it are root's; CARGO_HOME's is yours.
+    # toolchain that is any program, build config. By real paths up to HOME, as the folders above it are root's, or to /
+    # when HOME is not above; CARGO_HOME's config.toml is yours.
+    home=$(cd "$HOME" && pwd -P)
+    trusted=$(cd "$cargo_home" 2>/dev/null && pwd -P || :)/config.toml
     dir=$work
     while :; do
         for f in Cargo.toml rust-toolchain rust-toolchain.toml .cargo/config .cargo/config.toml; do
             if [ -e "$dir/$f" ] || [ -L "$dir/$f" ]; then
-                [ "$dir/$f" = "$cargo_home/config.toml" ] || stop "$dir/$f is above the build folder, and cargo or rustup would read it"
+                [ "$dir/$f" = "$trusted" ] || stop "$dir/$f is above the build folder, and cargo or rustup would read it"
             fi
         done
-        { [ "$dir" = "$HOME" ] || [ -z "$dir" ]; } && break
+        { [ "$dir" = "$home" ] || [ -z "$dir" ]; } && break
         dir=${dir%/*}
     done
     (cd "$src" \
