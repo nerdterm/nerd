@@ -1435,7 +1435,7 @@ mod tests {
     fn folder_only_cannot_plant_cargo_or_rustup_settings_above_projects_but_a_project_keeps_its_own() {
         let d = scratch("cargo");
         let home = d.join("home");
-        for dir in [".local", ".cargo", ".rustup/toolchains"] {
+        for dir in [".local", ".cargo", ".rustup/toolchains", ".config"] {
             std::fs::create_dir_all(home.join(dir)).unwrap();
         }
         // On a case-insensitive volume rustup finds `Rust-Toolchain.TOML` as `rust-toolchain.toml`, so the other spelling must be refused too.
@@ -1445,8 +1445,9 @@ mod tests {
         for (cwd, names) in [
             ("home", at_home),
             ("home/.local", &[".cargo/config.toml", ".cargo/config", "rust-toolchain.toml", "rust-toolchain", "Cargo.toml"][..]),
-            ("home/.cargo", &["env", "env.fish", "env.nu", "env.tcsh", "env.xsh", "env.ps1", "credentials.toml", "credentials", "registry/src/x/build.rs", "git/checkouts/x/build.rs"][..]),
+            ("home/.cargo", &["config", "config.toml", "env", "env.fish", "env.nu", "env.tcsh", "env.xsh", "env.ps1", "credentials.toml", "credentials", "registry/src/x/build.rs", "git/checkouts/x/build.rs"][..]),
             ("home/.rustup", &["settings.toml", "toolchains/x/bin/cargo"][..]),
+            ("home/.config", &["homebrew/brew.env"][..]),
         ] {
             let profile = text(&places(&d), &Files::Folder, &Network::None, &d.join(cwd), Path::new("/tmp/none.msock"), None).unwrap();
             let Some(rc) = sandboxed(&profile, &format!("cd '{}/{cwd}' && echo x > staged", d.display())) else { return };
