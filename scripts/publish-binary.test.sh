@@ -10,6 +10,8 @@ bad() { echo "FAIL: $*" >&2; fail=1; }
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
 # A gh that is not the stand-in must never be reached: no token, no config.
 export GH_TOKEN= GH_CONFIG_DIR="$t/gh-config"
+# The script works under ~/.local/bin: a HOME of its own.
+export HOME="$t/home"
 
 mkdir -p "$t/stub"
 cat >"$t/stub/gh" <<'EOF'
@@ -27,9 +29,9 @@ mkdir -p "$dir/release"
 printf '#!/bin/sh\necho "nerd %s (test)"\n' "${STUB_VERSION:-$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)}" >"$dir/release/nerd"
 chmod 755 "$dir/release/nerd"
 [ -n "${STUB_HIJACK:-}" ] || exit 0
-# What a build script could do: append to every script run after it (the clone is three folders up) and plant
+# What a build script could do: append to every script run after it (in the clone this worktree belongs to) and plant
 # commands in a folder on PATH.
-top=$(cd ../../.. && pwd)
+top=$(cd "$(git rev-parse --git-common-dir)/.." && pwd)
 for f in "$top/scripts/publish-binary.sh" "$top/scripts/sign-release.sh" "$top/scripts/publish-formula.sh" "$top/install.sh" "$PWD/install.sh" "$(cd .. && pwd)/pin/install"; do
     if [ -f "$f" ]; then printf 'echo %s >>"$STUB/hijacked"\n' "$f" >>"$f"; fi
 done
@@ -113,6 +115,8 @@ publish() {
     git clone -q "$o" "$c"
     (cd "$c" && PATH="$t/plant:$PATH" sh scripts/publish-binary.sh "$1") >"$t/out" 2>&1 && rc=0 || rc=$?
     cat "$t/out"
+    [ -z "$(ls -A "$HOME/.local/bin" 2>/dev/null)" ] || bad "$1: left $(ls -A "$HOME/.local/bin") in ~/.local/bin"
+    [ "$(git -C "$c" worktree list | wc -l | tr -d ' ')" = 1 ] || bad "$1: left a worktree entry: $(git -C "$c" worktree list)"
     # A prefix assignment before a function call outlives it in sh: each case starts clean.
     unset at STUB_VERSION STUB_TARGET STUB_HIJACK
     return "$rc"
@@ -126,7 +130,7 @@ expect_refused() { # case, message
 at=$release publish v0.2.0 >/dev/null || bad "(a) the release commit: $(cat "$t/out")"
 uploaded || bad "(a) the release commit was not uploaded"
 [ -f "$t/sign.log" ] || bad "(a) not signed"
-case $(cat "$t/home.log" 2>/dev/null) in */target/publish.*/home) ;; *) bad "(a) the tests' HOME is not in the work folder: $(cat "$t/home.log" 2>/dev/null)" ;; esac
+case $(cat "$t/home.log" 2>/dev/null) in "$HOME"/.local/bin/.nerd-publish.*/home) ;; *) bad "(a) the work folder is not under ~/.local/bin: $(cat "$t/home.log" 2>/dev/null)" ;; esac
 
 at=$side publish v0.2.0 >/dev/null && bad "(b) published a commit off master"
 expect_refused "(b) off master" "is not on master"
@@ -165,6 +169,7 @@ expect_refused "(l) draft target" "targets master, not a commit id"
 
 STUB_HIJACK=1 at=$release publish v0.2.0 >/dev/null || bad "(m) the release commit, with a build that rewrites scripts: $(cat "$t/out")"
 uploaded || bad "(m) the release commit was not uploaded"
+grep -q hijacked "$c/scripts/sign-release.sh" || bad "(m) the build never reached the clone's scripts"
 [ ! -f "$t/hijacked" ] || bad "(m) ran what the build appended to: $(tr '\n' ' ' <"$t/hijacked")"
 [ ! -f "$t/planted" ] || bad "(m) ran commands the build planted: $(tr '\n' ' ' <"$t/planted")"
 cmp -s "$t/formula-install" "$w/install.sh" || bad "(m) the formula did not read the release commit's install.sh"

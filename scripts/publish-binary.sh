@@ -33,10 +33,11 @@ main() {
             || stop "$f at $tag changes more than nerd's version from $was to $want"
     done
     [ "$(d --numstat "$sha^" "$sha" -- CHANGELOG.md | cut -f2)" = 0 ] || stop "CHANGELOG.md at $tag removes lines"
-    # Under target/, not the temp folders: the isolation tests need a checkout a This-folder-only pane cannot write.
-    mkdir -p target
-    work=$(mktemp -d "$PWD/target/publish.XXXXXX")
-    trap 'rm -rf "$work"' EXIT
+    # Under ~/.local/bin, which no This-folder-only pane may write: one in this checkout or the temp folders could change the build before it is signed.
+    mkdir -p "$HOME/.local/bin"
+    work=$(mktemp -d "$HOME/.local/bin/.nerd-publish.XXXXXX")
+    # The worktree first: a run that stops leaves no entry for it in this clone's .git.
+    trap 'git worktree remove --force "$work/src" 2>/dev/null || true; rm -rf "$work"' EXIT
     # Read from git before the build, which can rewrite any file of this user: what runs after it is the release's text.
     sign_src=$(git cat-file blob "$sha:scripts/sign-release.sh")
     formula_src=$(git cat-file blob "$sha:scripts/publish-formula.sh")
