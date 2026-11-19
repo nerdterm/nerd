@@ -20,6 +20,7 @@ EOF
 cat >"$t/stub/cargo" <<'EOF'
 #!/bin/sh
 echo "$*" >>"$STUB/cargo.log"
+[ "$1" != test ] || echo "$HOME" >>"$STUB/home.log"
 [ "$1" = build ] || exit 0
 while [ $# -gt 0 ]; do [ "$1" = --target-dir ] && dir=$2; shift; done
 mkdir -p "$dir/release"
@@ -104,7 +105,7 @@ git -C "$w" push -q origin side
 
 # publish TAG: a fresh clone runs the real script; the tag, if any, points where $at says.
 publish() {
-    rm -rf "$t/gh.log" "$t/cargo.log" "$t/sign.log" "$t/formula.log" "$t/formula-install" "$t/hijacked" "$t/planted" "$t/plant"
+    rm -rf "$t/gh.log" "$t/cargo.log" "$t/home.log" "$t/sign.log" "$t/formula.log" "$t/formula-install" "$t/hijacked" "$t/planted" "$t/plant"
     mkdir "$t/plant"
     git -C "$o" tag -d "$1" >/dev/null 2>&1 || true
     [ -z "${at:-}" ] || git -C "$o" tag "$1" "$at"
@@ -125,6 +126,7 @@ expect_refused() { # case, message
 at=$release publish v0.2.0 >/dev/null || bad "(a) the release commit: $(cat "$t/out")"
 uploaded || bad "(a) the release commit was not uploaded"
 [ -f "$t/sign.log" ] || bad "(a) not signed"
+case $(cat "$t/home.log" 2>/dev/null) in */target/publish.*/home) ;; *) bad "(a) the tests' HOME is not in the work folder: $(cat "$t/home.log" 2>/dev/null)" ;; esac
 
 at=$side publish v0.2.0 >/dev/null && bad "(b) published a commit off master"
 expect_refused "(b) off master" "is not on master"

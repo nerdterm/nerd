@@ -42,7 +42,10 @@ main() {
     formula_src=$(git cat-file blob "$sha:scripts/publish-formula.sh")
     install_src=$(git cat-file blob "$sha:install.sh")
     git worktree add -q --detach "$work/src" "$sha"
-    fresh=$(mktemp -d)
+    # The empty HOME the test binaries and what they start inherit, in the work folder: a temp folder is every isolated pane's to write.
+    # ceiling: a test build keeps its own home and test folders in the temp folder (paths::home, test_dir); a TMPDIR of its own is the way past once socket paths fit.
+    fresh="$work/home"
+    mkdir "$fresh"
     # Resolved before HOME changes: /bin/sh expands later prefix assignments with the new HOME.
     cargo_home=${CARGO_HOME:-$HOME/.cargo}
     rustup_home=${RUSTUP_HOME:-$HOME/.rustup}
@@ -55,7 +58,6 @@ main() {
     # From here on only the system's commands: the build may have planted others in a folder on the user's PATH.
     # gh and the formula get that PATH back, after the key.
     PATH=/usr/bin:/bin:/usr/sbin:/sbin
-    rm -rf "$fresh"
     # Made only now, so the build never saw it; mkdir fails if anything made it first.
     pin="$work/pin"
     mkdir "$pin"

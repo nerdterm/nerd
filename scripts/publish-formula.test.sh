@@ -22,6 +22,8 @@ awk -v m="$stub/main.pub" '
     /^# release keys end/ { skip = 0 }
     !skip' "$here/../install.sh" >"$stub/install.sh"
 name=nerd-v1.2.3-macos-arm64.tar.gz
+# What it downloads and checks belongs under ~/.local/bin, not in a temp folder every isolated pane may write.
+export HOME="$stub/home"
 mkdir -p "$stub/served"
 # Serves `line` as the checksum, signed with `key` (none for no signature).
 serve() {
@@ -46,7 +48,7 @@ check '    assert_match version.to_s, shell_output("#{bin}/nerd --version")'
 # Homebrew reads the version from the url; a version line is one more place to forget.
 ! grep -q '^ *version ' "$stub/out" || { echo "publish-formula: a version line" >&2; fail=1; }
 ruby -W0 -c "$stub/out" >/dev/null || fail=1
-calls=$(grep -c "^release download v1.2.3 --repo nerdterm/nerd -p $name.sha256\(\.sig\)\? -O " "$stub/calls")
+calls=$(grep -c "^release download v1.2.3 --repo nerdterm/nerd -p $name.sha256\(\.sig\)\? -O $HOME/.local/bin/.nerd-formula\.[^/]*/$name" "$stub/calls")
 [ "$calls" = 2 ] && [ "$(wc -l <"$stub/calls" | tr -d ' ')" = 2 ] || { echo "publish-formula: a dry run called $(cat "$stub/calls")" >&2; fail=1; }
 for bad in "1.2.3" "v1.2" "v1.2.3;x" "v1.2.3
 x"; do
@@ -63,6 +65,7 @@ serve "not-a-sum  $name" main
 render v1.2.3 >/dev/null 2>&1 && { echo "publish-formula: took a bad checksum" >&2; fail=1; }
 serve "$sha  nerd-v1.2.0-macos-arm64.tar.gz" main
 render v1.2.3 >/dev/null 2>&1 && { echo "publish-formula: took a checksum for another archive" >&2; fail=1; }
+[ -z "$(ls -A "$HOME/.local/bin")" ] || { echo "publish-formula: left $(ls -A "$HOME/.local/bin") in ~/.local/bin" >&2; fail=1; }
 if [ "$fail" -eq 0 ]; then
     echo "publish-formula: the formula renders only for a release signed with install.sh's keys"
 else

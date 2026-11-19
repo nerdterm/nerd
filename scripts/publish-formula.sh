@@ -8,7 +8,9 @@ tag=${1:?usage: scripts/publish-formula.sh [--dry-run] vX.Y.Z}
 case $tag in *[!v0-9.]* | '') tag_ok= ;; *) tag_ok=1 ;; esac
 [ -n "$tag_ok" ] && echo "$tag" | grep -Eqx 'v[0-9]+\.[0-9]+\.[0-9]+' || { echo "publish-formula: not a release tag: $tag" >&2; exit 1; }
 name="nerd-$tag-macos-arm64.tar.gz"
-t=$(mktemp -d)
+# The keys, checksum and signature it checks, under ~/.local/bin: every isolated pane may write the temp folders, none this one.
+mkdir -p "$HOME/.local/bin"
+t=$(mktemp -d "$HOME/.local/bin/.nerd-formula.XXXXXX")
 trap 'rm -rf "$t"' EXIT
 # The published checksum, never a rebuilt one: a second archive of the same tag has another hash.
 gh release download "$tag" --repo nerdterm/nerd -p "$name.sha256" -O "$t/$name.sha256" || { echo "publish-formula: $tag has no checksum" >&2; exit 1; }
