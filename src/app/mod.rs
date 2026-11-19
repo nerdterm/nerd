@@ -4852,6 +4852,10 @@ mod tests {
             app.toggle_tree();
             search_for(&mut app, "dot-needle");
             assert!(found(&app), "tree open with hidden files shown");
+            app.overlay = Overlay::None;
+            app.run_action(Action::TreeHidden, &MenuCtx::Tree(dir.join("a.txt")));
+            search_for(&mut app, "dot-needle");
+            assert!(!found(&app), "tree open with hidden files switched off");
             let _ = std::fs::remove_dir_all(&dir);
         }
     }
