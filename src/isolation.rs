@@ -313,9 +313,9 @@ const RUN_LATER: &[&str] = &[".zshrc", ".zprofile", ".zshenv", ".zlogin", ".zlog
 const RUN_LATER_DIRS: &[&str] = &[
     ".config/git", ".config/fish", "Library/LaunchAgents", "Applications", ".ssh", ".aws", ".gnupg", ".docker", ".kube", ".azure", ".config/gh", ".config/gcloud", ".cargo/bin", ".local/bin", ".local/.cargo",
     ".cargo/registry", ".cargo/git", ".rustup/toolchains",
-    // The programs behind `~/.local/bin` links: Claude Code's versions, uv's tools and Pythons, and Python's user site-packages.
+    // The programs behind `~/.local/bin` links: Claude Code's versions, uv's tools and Pythons; and Python's user site-packages, in ~/.local/lib or, for the system's and Homebrew's framework Pythons, ~/Library/Python.
     // ceiling: other targets of `~/.local/bin` links are not resolved, so one outside these folders stays writable to a pane whose folder holds it; resolving each link when the profile is built is the way past.
-    ".local/share/claude", ".local/share/uv", ".local/lib",
+    ".local/share/claude", ".local/share/uv", ".local/lib", "Library/Python",
     ".vim", ".config/nvim", ".config/tmux", ".emacs.d", "Library/Preferences", ".pyenv/shims", ".rbenv/shims", ".nvm", ".bun/bin", "go/bin", ".volta/bin", ".deno/bin", ".asdf/shims", ".local/share/nvim",
     "Library/Caches/pnpm", "Library/Caches/uv", "Library/Caches/deno", "Library/Caches/go-build", "Library/Caches/ms-playwright", "Library/Caches/pypoetry", "Library/Caches/Yarn", "Library/Caches/node-gyp",
     "Library/Caches/pip", "Library/Caches/Cypress", "Library/Caches/org.swift.swiftpm", "Library/Caches/copilot", "go/pkg/mod",
@@ -859,7 +859,7 @@ mod tests {
              (allow file-write* (subpath \"/Users/u/.claude/projects\") (regex #\"^/Users/u/\\.codex/[^/]*\\.sqlite[^/]*$\"))\n\
              (deny file-write* (subpath \"/Users/u/Library/Application Support/nerd\") (subpath \"/private/var/folders/ab/T/podman\") (subpath \"/Users/u/.config/git\") (subpath \"/Users/u/.config/fish\") (subpath \"/Users/u/Library/LaunchAgents\") (subpath \"/Users/u/Applications\") (subpath \"/Users/u/.ssh\") (subpath \"/Users/u/.aws\") (subpath \"/Users/u/.gnupg\") (subpath \"/Users/u/.docker\") (subpath \"/Users/u/.kube\") (subpath \"/Users/u/.azure\") (subpath \"/Users/u/.config/gh\") (subpath \"/Users/u/.config/gcloud\") (subpath \"/Users/u/.cargo/bin\") (subpath \"/Users/u/.local/bin\") (subpath \"/Users/u/.local/.cargo\") \
              (subpath \"/Users/u/.cargo/registry\") (subpath \"/Users/u/.cargo/git\") (subpath \"/Users/u/.rustup/toolchains\") \
-             (subpath \"/Users/u/.local/share/claude\") (subpath \"/Users/u/.local/share/uv\") (subpath \"/Users/u/.local/lib\") \
+             (subpath \"/Users/u/.local/share/claude\") (subpath \"/Users/u/.local/share/uv\") (subpath \"/Users/u/.local/lib\") (subpath \"/Users/u/Library/Python\") \
              (subpath \"/Users/u/.vim\") (subpath \"/Users/u/.config/nvim\") (subpath \"/Users/u/.config/tmux\") (subpath \"/Users/u/.emacs.d\") (subpath \"/Users/u/Library/Preferences\") (subpath \"/Users/u/.pyenv/shims\") (subpath \"/Users/u/.rbenv/shims\") (subpath \"/Users/u/.nvm\") (subpath \"/Users/u/.bun/bin\") (subpath \"/Users/u/go/bin\") (subpath \"/Users/u/.volta/bin\") (subpath \"/Users/u/.deno/bin\") (subpath \"/Users/u/.asdf/shims\") (subpath \"/Users/u/.local/share/nvim\") \
              (subpath \"/Users/u/Library/Caches/pnpm\") (subpath \"/Users/u/Library/Caches/uv\") (subpath \"/Users/u/Library/Caches/deno\") (subpath \"/Users/u/Library/Caches/go-build\") (subpath \"/Users/u/Library/Caches/ms-playwright\") (subpath \"/Users/u/Library/Caches/pypoetry\") (subpath \"/Users/u/Library/Caches/Yarn\") (subpath \"/Users/u/Library/Caches/node-gyp\") \
              (subpath \"/Users/u/Library/Caches/pip\") (subpath \"/Users/u/Library/Caches/Cypress\") (subpath \"/Users/u/Library/Caches/org.swift.swiftpm\") (subpath \"/Users/u/Library/Caches/copilot\") (subpath \"/Users/u/go/pkg/mod\") \
@@ -1502,6 +1502,35 @@ mod tests {
             }
         }
         assert!(bad.is_empty(), "written where a ~/.local/bin link leads: {bad:#?}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn folder_only_at_library_cannot_plant_python_user_packages_but_writes_its_own() {
+        let d = scratch("pylib");
+        let lib = d.join("home/Library");
+        let profile = text(&places(&d), &Files::Folder, &Network::None, &lib, Path::new("/tmp/none.msock"), None).unwrap();
+        let Some(rc) = sandboxed(&profile, &format!("cd '{}' && echo x > mine && mkdir -p Other && echo x > Other/mine", lib.display())) else { return };
+        assert_eq!(rc, 0, "an ordinary file of its own");
+        let mut bad = Vec::new();
+        if sandboxed(&profile, &format!("cd '{}' && mkdir -p stg/Python/3.9/lib/python/site-packages && echo x > stg/Python/3.9/lib/python/site-packages/x.pth && mv stg/Python Python", lib.display())) == Some(0) {
+            bad.push("a Python folder moved in whole".to_string());
+        }
+        std::fs::create_dir_all(lib.join("Python/3.9/lib/python/site-packages")).unwrap();
+        for (cwd, name) in [(lib.clone(), "Python/3.9/lib/python/site-packages/x.pth"), (lib.clone(), "Python/3.13/lib/python/site-packages/x.pth"), (lib.join("Python"), "3.9/lib/python/site-packages/x.pth")] {
+            let profile = text(&places(&d), &Files::Folder, &Network::None, &cwd, Path::new("/tmp/none.msock"), None).unwrap();
+            for (how, script) in [("written", "echo x > \"$1\""), ("moved in", "mv \"$s\" \"$1\""), ("linked", "ln -s \"$s\" \"$1\""), ("hard-linked", "ln \"$s\" \"$1\"")] {
+                let script = format!("cd '{}' && s=$(mktemp) && mkdir -p \"$(dirname '{name}')\" 2>/dev/null; set -- '{name}'; {script}; r=$?; rm -f \"$s\"; exit $r", cwd.display());
+                if sandboxed(&profile, &script) == Some(0) || std::fs::symlink_metadata(cwd.join(name)).is_ok() {
+                    bad.push(format!("{name} {how} in {}", cwd.display()));
+                    let _ = std::fs::remove_file(cwd.join(name));
+                }
+            }
+        }
+        if sandboxed(&profile, &format!("cd '{}' && mv Python x", lib.display())) == Some(0) {
+            bad.push("~/Library/Python renamed".to_string());
+        }
+        assert!(bad.is_empty(), "written where Python reads user packages: {bad:#?}");
         let _ = std::fs::remove_dir_all(&d);
     }
 
