@@ -13,17 +13,23 @@ awk -v m="$t/main.pub" '
     /^# release keys begin/ { print; printf "keys='\''"; n = 0; while ((getline l < m) > 0) { if (++n > 1) print prev; prev = l } printf "%s'\''\n", prev; skip = 1; next }
     /^# release keys end/ { skip = 0 }
     !skip' "$here/../install.sh" >"$t/install.sh"
+printf 'echo "$NERD_BINDIR" >>"%s/bindirs"\n' "$t" >>"$t/install.sh.head"
+cat "$t/install.sh" >>"$t/install.sh.head" && mv "$t/install.sh.head" "$t/install.sh"
 mkdir -p "$t/build"
 printf '#!/bin/sh\necho "nerd 0.99.0 (test)"\n' >"$t/build/nerd"
 chmod 755 "$t/build/nerd"
 a="$t/nerd-v0.99.0-macos-arm64.tar.gz"
 tar -czf "$a" -C "$t/build" nerd
+# Its scratch belongs under ~/.local/bin, not in a temp folder every isolated pane may write.
+export HOME="$t/home"
 NERD_RELEASE_KEY="$t/main.key" sh "$here/sign-release.sh" "$a" "$t/install.sh" >/dev/null || { echo "sign-release: refused a key in the block" >&2; fail=1; }
 [ -f "$a.sha256" ] && [ -f "$a.sha256.sig" ] || { echo "sign-release: wrote no checksum or signature" >&2; fail=1; }
 "$ssl" dgst -sha256 -verify "$t/main.pub" -signature "$a.sha256.sig" "$a.sha256" >/dev/null 2>&1 || { echo "sign-release: the signature does not verify" >&2; fail=1; }
 rm -f "$a.sha256" "$a.sha256.sig"
 NERD_RELEASE_KEY="$t/other.key" sh "$here/sign-release.sh" "$a" "$t/install.sh" >/dev/null 2>&1 && { echo "sign-release: took a key not in the block" >&2; fail=1; }
 [ ! -e "$a.sha256" ] && [ ! -e "$a.sha256.sig" ] || { echo "sign-release: left files after a refusal" >&2; fail=1; }
+[ "$(grep -cx "$HOME/.local/bin/.nerd-sign.[^/]*/bin" "$t/bindirs")" = 2 ] && [ "$(wc -l <"$t/bindirs")" -eq 2 ] && [ -z "$(ls -A "$HOME/.local/bin")" ] \
+    || { echo "sign-release: did not work in ~/.local/bin, or left a folder there: $(cat "$t/bindirs")" >&2; fail=1; }
 if [ "$fail" -eq 0 ]; then
     echo "sign-release: signs with a release key and refuses any other"
 else

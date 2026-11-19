@@ -9,14 +9,15 @@ ssl=/usr/bin/openssl
 [ -f "$archive" ] && [ -f "$installer" ] || { echo "sign-release: no such file" >&2; exit 1; }
 [ -f "$key" ] || { echo "sign-release: no key at $key (scripts/release-key.sh makes one)" >&2; exit 1; }
 sum="$archive.sha256"
-trap 'rm -f "$sum" "$sum.sig"' EXIT
+# Under ~/.local/bin, as install.sh works in its bindir: every isolated pane may write the temp folders, none this one.
+mkdir -p "$HOME/.local/bin"
+scratch=$(mktemp -d "$HOME/.local/bin/.nerd-sign.XXXXXX")
+trap 'rm -rf "$scratch"; rm -f "$sum" "$sum.sig"' EXIT
 (cd "$(dirname "$archive")" && shasum -a 256 "$(basename "$archive")") >"$sum"
 "$ssl" dgst -sha256 -sign "$key" -out "$sum.sig" "$sum"
-scratch=$(mktemp -d)
 # The same check every install makes, into a folder of its own: nothing installed on this Mac changes.
 if ! env HOME="$scratch" NERD_BINDIR="$scratch/bin" PATH="$scratch/bin:/usr/bin:/bin:/usr/sbin:/sbin" sh "$installer" "$archive" >"$scratch/out" 2>&1; then
     echo "sign-release: the release's own install.sh refuses it: $(tail -n 1 "$scratch/out")" >&2
-    rm -rf "$scratch"
     exit 1
 fi
 rm -rf "$scratch"
