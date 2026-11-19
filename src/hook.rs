@@ -1697,14 +1697,21 @@ const noted = () => { const o = { sections: {} }; on.before_agent_start?.({ syst
             // once, says it is loaded, waits for that, then queues a message, asks for the note and reports again.
             // `unsure`: as `rewalk`, but the walk due at 5 s cannot tell; it reports, and once more after the retry.
             // `backoff`: as `rewalk`, on a clock of its own, asking for the note at each step
+            // `blind`: its first walk cannot run ps; then it asks for the note and reports again
             let script = format!(
                 r#"import {{ copyFileSync, existsSync, mkdirSync, writeFileSync }} from "node:fs"
 const dir = process.env.NERD_STATE, mode = process.argv[2], t0 = Date.now()
 let clock = t0
 if (mode === "backoff") Date.now = () => clock
 const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+if (mode === "blind") process.env.NERD_TEST_BULK = "x".repeat(4 << 20)
 {setup}
 await first()
+if (mode === "blind") {{
+  delete process.env.NERD_TEST_BULK
+  writeFileSync(dir + "/after", JSON.stringify({{ note: await noted() }}))
+  await second()
+}}
 if (mode === "orphan" || mode === "rewalk") {{
   writeFileSync(dir + "/loaded", "")
   const ppid = process.ppid, t = Date.now()
@@ -1758,6 +1765,12 @@ if (mode === "backoff") {{
             assert_eq!(detached(&wrapper("nerd", "--daemon", &ext)), "", "{agent} under nerd's own server");
             assert_eq!(detached(&wrapper("broker", "--broker", &ext)), "", "{agent} under a program that only calls itself broker");
             assert_eq!(detached(&wrapper("nerd", "--broker", &ext)), "working", "{agent} under nerd's broker");
+            reset();
+            assert_eq!(detached(&wrapper("nerd", "--broker", &format!("{ext} blind"))), "", "{agent}: a first walk that cannot tell counts as outside");
+            assert_eq!(std::fs::read_to_string(file("after")).unwrap(), r#"{"note":false}"#, "{agent}: and gives no note");
+            if agent == "opencode" {
+                assert_eq!(std::fs::read_to_string(file("keys")).unwrap(), "0", "and hooks nothing");
+            }
             if agent == "opencode" {
                 reset();
                 assert_eq!(detached(&wrapper("nerd", "--broker", &format!("{ext} serve"))), "", "a standalone server speaks for no pane");
@@ -2987,6 +3000,24 @@ await wait(1500)
 console.log(JSON.stringify({ delivered }))
 "#,
         );
+    }
+
+    #[test]
+    fn a_standalone_opencode_server_speaks_for_no_isolated_pane() {
+        let dir = PathBuf::from(format!("/tmp/nt-s3b-{}-ocserve", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (path, seen, l) = fake_msock(&dir);
+        serve_msock(l, seen.clone());
+        let h = Hook::new("ocserve");
+        let uid = own_uid(&dir);
+        let env = [("NERD_STATE", ""), ("NERD_MSOCK", path.to_str().unwrap()), ("NERD_MSOCK_UID", uid.as_str())];
+        let script = |argv: &str| format!("{MAIL_HEAD_SOCK}\n{argv}\nconst p = await mod.NerdPlugin({{ client: {{}} }})\nawait wait(300)\nconsole.log(JSON.stringify(Object.keys(p).length))\n");
+        let Some(r) = run_ext(&h, "opencode", &script(r#"process.argv[2] = "serve""#), &env) else { return };
+        assert_eq!(r, json!(0), "`opencode serve` hooks nothing, so gives no note");
+        assert!(seen.lock().unwrap().is_empty(), "and never reaches nerd's message socket");
+        let r = run_ext(&h, "opencode", &script(""), &env).unwrap();
+        assert_eq!(r, json!(5), "the agent in the pane still hooks all five");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -30,7 +30,8 @@ export const NerdPlugin = async ({ client } = {}) => {
       const m = /^ *([0-9]+) +([0-9]+) (.*)$/.exec(l)
       if (m) ps.set(Number(m[1]), [Number(m[2]), m[3]])
     }
-    for (let p = process.pid, n = 0; n < 16 && p > 1; n++) {
+    // this process and the 16 ancestors above it, as many as nerd's shell hook walks from its parent
+    for (let p = process.pid, n = 0; n < 17 && p > 1; n++) {
       const [pp, args] = ps.get(p) ?? []
       // a whole snapshot holds this process: one without it is malformed and cannot tell
       if (args === undefined) return n === 0 ? null : false
@@ -67,11 +68,11 @@ export const NerdPlugin = async ({ client } = {}) => {
     }
     return !parent
   }
+  // a standalone server (`opencode serve`, `opencode web`) serves sessions attached from anywhere: it speaks for no pane
+  // ceiling: only the first argument is read, so a global option before it (`opencode --print-logs serve`) is missed and
+  // the parent walk decides alone (in socket mode, nothing does); reading OpenCode's options is the way past
+  if (/^(serve|web)$/.test(process.argv[2] ?? "")) return {}
   if (ok) {
-    // a standalone server (`opencode serve`, `opencode web`) serves sessions attached from anywhere: it speaks for no pane
-    // ceiling: only the first argument is read, so a global option before it (`opencode --print-logs serve`) is missed and
-    // the parent walk decides alone; reading OpenCode's options is the way past
-    if (/^(serve|web)$/.test(process.argv[2] ?? "")) return {}
     decide()
     if (!parent) return {}
   }

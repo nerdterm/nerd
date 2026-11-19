@@ -29,7 +29,8 @@ export default function NerdPiExtension(pi) {
       const m = /^ *([0-9]+) +([0-9]+) (.*)$/.exec(l)
       if (m) ps.set(Number(m[1]), [Number(m[2]), m[3]])
     }
-    for (let p = process.pid, n = 0; n < 16 && p > 1; n++) {
+    // this process and the 16 ancestors above it, as many as nerd's shell hook walks from its parent
+    for (let p = process.pid, n = 0; n < 17 && p > 1; n++) {
       const [pp, args] = ps.get(p) ?? []
       // a whole snapshot holds this process: one without it is malformed and cannot tell
       if (args === undefined) return n === 0 ? null : false
