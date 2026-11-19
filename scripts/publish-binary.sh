@@ -5,6 +5,20 @@ set -eu
 main() {
     tag=${1:?usage: scripts/publish-binary.sh vX.Y.Z}
     cd "$(git rev-parse --show-toplevel)"
+    # This checkout is trusted (docs/releasing.md). As a second line, no git here or in build.rs runs what its .git names:
+    # hooks, fsmonitor, replace refs, ext:: or a local upload-pack, credential helpers, signature checks, submodules, filters.
+    n=0
+    add() { export "GIT_CONFIG_KEY_$n=$1" "GIT_CONFIG_VALUE_$n=$2"; n=$((n + 1)); export GIT_CONFIG_COUNT=$n; }
+    for kv in core.hooksPath=/dev/null core.fsmonitor=false protocol.ext.allow=never remote.origin.uploadpack=git-upload-pack \
+        credential.helper= log.showSignature=false submodule.recurse=false fetch.recurseSubmodules=false; do
+        add "${kv%%=*}" "${kv#*=}"
+    done
+    while IFS= read -r k; do
+        case $k in filter.*.required) add "$k" false ;; filter.*) add "$k" "" ;; esac
+    done <<EOF
+$(git config --name-only --get-regexp '^filter\.' || true)
+EOF
+    export GIT_NO_REPLACE_OBJECTS=1
     [ -z "$(git status --porcelain)" ] || { echo "publish: the tree must be clean" >&2; exit 1; }
     git fetch -q --tags origin
     # A draft release has no git tag until it is published: build its target commit.
@@ -19,12 +33,12 @@ main() {
     # else. Whoever can move a tag, edit a draft or push to the release pull request's branch cannot choose the commit.
     git fetch -q origin master
     want=${tag#v}
-    d() { git diff --no-color --no-ext-diff --no-renames "$@"; }
+    d() { git diff --no-color --no-ext-diff --no-textconv --no-renames "$@"; }
     sha=$(git rev-parse -q --verify "$ref^{commit}") || stop "$ref is not a commit"
     git merge-base --is-ancestor "$sha" origin/master || stop "$tag ($sha) is not on master"
     files=$(d --name-only "$sha^" "$sha" | LC_ALL=C sort | tr '\n' ' ')
     [ "$files" = ".release-please-manifest.json CHANGELOG.md Cargo.lock Cargo.toml " ] || stop "$tag ($sha) is not a release commit: it changes $files"
-    was=$(git show "$sha^:Cargo.toml" | sed -n 's/^version = "\(.*\)"$/\1/p' | head -n 1)
+    was=$(git cat-file blob "$sha^:Cargo.toml" | sed -n 's/^version = "\(.*\)"$/\1/p' | head -n 1)
     # Counted, not read off the diff's text: a line of content may itself begin with "--" or "++".
     for f in Cargo.toml Cargo.lock; do
         [ "$(d --numstat "$sha^" "$sha" -- "$f")" = "$(printf '1\t1\t%s' "$f")" ] \
@@ -43,18 +57,27 @@ main() {
     formula_src=$(git cat-file blob "$sha:scripts/publish-formula.sh")
     install_src=$(git cat-file blob "$sha:install.sh")
     git worktree add -q --detach "$work/src" "$sha"
-    # The empty HOME the test binaries and what they start inherit, in the work folder: a temp folder is every isolated pane's to write.
-    # ceiling: a test build keeps its own home and test folders in the temp folder (paths::home, test_dir); a TMPDIR of its own is the way past once socket paths fit.
-    fresh="$work/home"
-    mkdir "$fresh"
+    # The tests write programs to their temp folder and run them, so theirs is in the work folder, and HOME inside it:
+    # a test build takes HOME only from inside its temp folder (paths::home). One letter: the daemon tests' socket paths
+    # fit macOS's 104 bytes only while it is no longer than the system's temp folder.
+    tmp="$work/t"
+    fresh="$tmp/home"
+    mkdir -m 700 "$tmp" "$fresh"
+    # These four take the temp folder to be the system's and run no program from it; another like them stops the run.
+    sys="agents::tests::a_plugins_executable_half_is_checked_before_it_can_run agents::tests::a_plugins_profile_denies_by_default_and_names_what_it_allows
+        agents::tests::what_a_plugin_can_do_comes_from_its_manifest_and_only_new_kinds_are_new
+        isolation::tests::folder_only_keeps_agents_settings_and_what_runs_later_even_when_the_folder_is_home"
+    skips=$(for s in $sys; do printf ' --skip %s' "$s"; done)
     # Resolved before HOME changes: /bin/sh expands later prefix assignments with the new HOME.
     cargo_home=${CARGO_HOME:-$HOME/.cargo}
     rustup_home=${RUSTUP_HOME:-$HOME/.rustup}
     user_path=$PATH
     (cd "$work/src" \
         && cargo build --release --locked --target-dir "$work/target" \
+        && TMPDIR="$tmp" HOME="$fresh" CARGO_HOME="$cargo_home" RUSTUP_HOME="$rustup_home" \
+           cargo test --release --locked --target-dir "$work/target" -- --exact $skips >"$work/tests.log" \
         && HOME="$fresh" CARGO_HOME="$cargo_home" RUSTUP_HOME="$rustup_home" \
-           cargo test --release --locked --target-dir "$work/target" >"$work/tests.log" \
+           cargo test --release --locked --target-dir "$work/target" --bin nerd -- --exact $sys >>"$work/tests.log" \
         || { sed -n '/^failures:/,$p' "$work/tests.log" >&2; exit 1; })
     # From here on only the system's commands: the build may have planted others in a folder on the user's PATH.
     # gh and the formula get that PATH back, after the key.

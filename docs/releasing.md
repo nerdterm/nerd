@@ -37,11 +37,12 @@ pull request, `chore(master): release X.Y.Z`. Replace `N` and `X.Y.Z` below with
    until gh release view vX.Y.Z >/dev/null 2>&1; do sleep 5; done; echo ready
    ```
 
-5. From a plain terminal (gh needs the keychain), in a clean checkout, build, test, sign and attach the binary, which
+5. From a plain terminal (gh needs the keychain), in a clean checkout that no isolated pane has had as its folder (a
+   fresh `git clone` is the simple form), build, test, sign and attach the binary, which
    publishes the release, starts the nerdterm.dev build and points the Homebrew formula in nerdterm/homebrew-tap at
    the new archive. It asks for the release key's passphrase once, installs the signed archive with the tag's own
    install.sh into a scratch folder before uploading anything, and stops if that refuses it. It builds, tests and signs
-   in a folder of its own, `~/.local/bin/.nerd-publish.*`, which no isolated pane may write: about half a gigabyte
+   in a folder of its own, `~/.local/bin/.nerd-publish.*`, which no isolated pane may write: about 300 MB
    while it runs, removed when it ends or stops (only a killed run leaves it behind). It takes several minutes
    and ends with `attached nerd-vX.Y.Z-macos-arm64.tar.gz to vX.Y.Z and published it`, `started the nerdterm.dev
    build` and `updated the Homebrew formula to X.Y.Z`:
@@ -66,6 +67,16 @@ pull request, `chore(master): release X.Y.Z`. Replace `N` and `X.Y.Z` below with
    your gh login without a prompt (upload to the draft, write the tap), change the binary being built, or wait for a
    later release. Only building releases as a separate macOS user closes that; if a run looks wrong, see "If a release
    run looks wrong".
+
+   The checkout the script runs from is trusted, not checked: the script itself, its `.git` and the objects in it are
+   read before anything is verified, so whatever could write them could change what is built and signed. That is why
+   it must be a checkout no isolated pane has had as its folder. As a second line only, git in the script and in the
+   build's `build.rs` runs none of the hooks, fsmonitor, replace refs, filters, diff textconv, credential helpers,
+   signature checks, submodules, `ext::` transport or local upload-pack that the checkout's `.git` could name. What the
+   checkout's `.git` still decides: the remote's URL, `url.*.insteadOf`, `core.sshCommand`, and the object files
+   themselves. The tests write programs to their temp folder and run them, as you, before the key is used, so theirs
+   is in that same folder of its own, not the per-user temp folder every isolated pane may write; four tests that run
+   nothing from it still use the per-user one.
 
 6. Check it: `false`, then the archive, its `.sha256` and its `.sha256.sig`:
 

@@ -22,8 +22,11 @@ EOF
 cat >"$t/stub/cargo" <<'EOF'
 #!/bin/sh
 echo "$*" >>"$STUB/cargo.log"
-[ "$1" != test ] || echo "$HOME" >>"$STUB/home.log"
+[ "$1" != test ] || echo "${TMPDIR:-} $HOME" >>"$STUB/home.log"
 [ "$1" = build ] || exit 0
+# As build.rs does, and what it was asked to build.
+git status --porcelain >/dev/null && git log -1 --format=%cd >/dev/null
+cat main.rs >"$STUB/built-main.rs"
 while [ $# -gt 0 ]; do [ "$1" = --target-dir ] && dir=$2; shift; done
 mkdir -p "$dir/release"
 printf '#!/bin/sh\necho "nerd %s (test)"\n' "${STUB_VERSION:-$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)}" >"$dir/release/nerd"
@@ -107,19 +110,43 @@ git -C "$w" push -q origin side
 
 # publish TAG: a fresh clone runs the real script; the tag, if any, points where $at says.
 publish() {
-    rm -rf "$t/gh.log" "$t/cargo.log" "$t/home.log" "$t/sign.log" "$t/formula.log" "$t/formula-install" "$t/hijacked" "$t/planted" "$t/plant"
+    rm -rf "$t/ran" "$t/built-main.rs" "$t/gh.log" "$t/cargo.log" "$t/home.log" "$t/sign.log" "$t/formula.log" "$t/formula-install" "$t/hijacked" "$t/planted" "$t/plant"
     mkdir "$t/plant"
     git -C "$o" tag -d "$1" >/dev/null 2>&1 || true
     [ -z "${at:-}" ] || git -C "$o" tag "$1" "$at"
     c="$t/clone-$1-$(date +%s%N)"
     git clone -q "$o" "$c"
+    [ -z "${STUB_PLANT:-}" ] || plant "$c" "$STUB_PLANT"
     (cd "$c" && PATH="$t/plant:$PATH" sh scripts/publish-binary.sh "$1") >"$t/out" 2>&1 && rc=0 || rc=$?
     cat "$t/out"
     [ -z "$(ls -A "$HOME/.local/bin" 2>/dev/null)" ] || bad "$1: left $(ls -A "$HOME/.local/bin") in ~/.local/bin"
     [ "$(git -C "$c" worktree list | wc -l | tr -d ' ')" = 1 ] || bad "$1: left a worktree entry: $(git -C "$c" worktree list)"
     # A prefix assignment before a function call outlives it in sh: each case starts clean.
-    unset at STUB_VERSION STUB_TARGET STUB_HIJACK
+    unset at STUB_VERSION STUB_TARGET STUB_HIJACK STUB_PLANT
     return "$rc"
+}
+# What a pane whose folder is the checkout can leave in its .git: each program it names records that it ran.
+cat >"$t/evil" <<'EOF'
+#!/bin/sh
+echo "$1" >>"$STUB/ran"
+case $1 in hook) echo planted >>main.rs ;; textconv) cat "$2" ;; fsmonitor) exit 1 ;; smudge) sed 's/^src$/planted/' ;; *) cat ;; esac
+EOF
+chmod 755 "$t/evil"
+plant() { # clone, what
+    case $2 in
+        hook)
+            printf '#!/bin/sh\nexec "%s" hook\n' "$t/evil" >"$1/.git/hooks/post-checkout"
+            chmod 755 "$1/.git/hooks/post-checkout"
+            ;;
+        replace) git -C "$1" update-ref "refs/replace/$(git -C "$1" rev-parse "$release:main.rs")" "$(echo planted | git -C "$1" hash-object -w --stdin)" ;;
+        config)
+            printf '* filter=evil diff=evil\n' >"$1/.git/info/attributes"
+            for kv in "core.fsmonitor=$t/evil fsmonitor" "filter.evil.smudge=$t/evil smudge" "filter.evil.clean=$t/evil clean" \
+                filter.evil.required=true "diff.evil.textconv=$t/evil textconv"; do
+                git -C "$1" config "${kv%%=*}" "${kv#*=}"
+            done
+            ;;
+    esac
 }
 uploaded() { grep -q '^release upload' "$t/gh.log" 2>/dev/null; }
 expect_refused() { # case, message
@@ -130,7 +157,8 @@ expect_refused() { # case, message
 at=$release publish v0.2.0 >/dev/null || bad "(a) the release commit: $(cat "$t/out")"
 uploaded || bad "(a) the release commit was not uploaded"
 [ -f "$t/sign.log" ] || bad "(a) not signed"
-case $(cat "$t/home.log" 2>/dev/null) in "$HOME"/.local/bin/.nerd-publish.*/home) ;; *) bad "(a) the work folder is not under ~/.local/bin: $(cat "$t/home.log" 2>/dev/null)" ;; esac
+case $(head -n 1 "$t/home.log" 2>/dev/null) in "$HOME"/.local/bin/.nerd-publish.*/t\ "$HOME"/.local/bin/.nerd-publish.*/t/home) ;; *) bad "(a) the tests' TMPDIR and HOME are not in the work folder: $(cat "$t/home.log" 2>/dev/null)" ;; esac
+[ "$(wc -l <"$t/home.log" | tr -d ' ')" = 2 ] && ! sed -n 2p "$t/home.log" | grep -q '^[^ ]*/\.nerd-publish\.' || bad "(a) the four tests that need the system's temp folder did not run in it: $(cat "$t/home.log")"
 
 at=$side publish v0.2.0 >/dev/null && bad "(b) published a commit off master"
 expect_refused "(b) off master" "is not on master"
@@ -174,5 +202,11 @@ grep -q hijacked "$c/scripts/sign-release.sh" || bad "(m) the build never reache
 [ ! -f "$t/planted" ] || bad "(m) ran commands the build planted: $(tr '\n' ' ' <"$t/planted")"
 cmp -s "$t/formula-install" "$w/install.sh" || bad "(m) the formula did not read the release commit's install.sh"
 
-[ "$fail" = 0 ] && echo "publish-binary: 13 cases pass"
+for p in "n hook" "o replace" "p config"; do
+    STUB_PLANT=${p#* } at=$release publish v0.2.0 >/dev/null || bad "(${p%% *}) the release commit, with a ${p#* } a pane left in .git: $(cat "$t/out")"
+    [ ! -f "$t/ran" ] || bad "(${p%% *}) ran what .git named: $(tr '\n' ' ' <"$t/ran")"
+    [ "$(cat "$t/built-main.rs" 2>/dev/null)" = src ] || bad "(${p%% *}) built another source: $(cat "$t/built-main.rs" 2>/dev/null)"
+done
+
+[ "$fail" = 0 ] && echo "publish-binary: 16 cases pass"
 exit "$fail"
