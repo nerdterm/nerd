@@ -4819,7 +4819,50 @@ mod tests {
     }
 
     #[test]
+    fn a_tree_hidden_read_from_config_reaches_an_open_tree_once() {
+        crate::config::tests::with_temp_home(|| {
+            let path = crate::paths::config_path();
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, "{}").unwrap();
+            let (mut app, dir) = tree_on("tree-hidden-live", &[(".dot", "x"), ("a.txt", "x")]);
+            app.toggle_tree();
+            assert!(screen(&mut app).contains(".dot"));
+            std::fs::write(&path, r#"{"tree_hidden": false}"#).unwrap();
+            app.reload_cfg();
+            assert!(!screen(&mut app).contains(".dot"), "the changed value reaches the open tree");
+            app.run_action(Action::TreeHidden, &MenuCtx::Tree(dir.join("a.txt")));
+            assert!(screen(&mut app).contains(".dot"));
+            std::fs::write(&path, r#"{"tree_hidden": false, "pane_gap": 2}"#).unwrap();
+            app.reload_cfg();
+            assert!(screen(&mut app).contains(".dot"), "an unrelated change leaves the switch alone");
+            let _ = std::fs::remove_dir_all(&dir);
+        });
+    }
+
+    #[test]
+    fn search_outside_a_tree_skips_dot_entries_and_inside_one_follows_the_tree() {
+        let found = |app: &App| find(app).of(crate::find::Group::Files).iter().any(|h| h.name == ".dot-needle");
+        for on in [true, false] {
+            let (mut app, dir) = tree_on("search-dot", &[(".dot-needle", "x"), ("a.txt", "x")]);
+            app.cfg.tree_hidden = on;
+            search_for(&mut app, "dot-needle");
+            assert!(!found(&app), "tree closed, tree_hidden {on}");
+            app.overlay = Overlay::None;
+            app.cfg.tree_hidden = true;
+            app.toggle_tree();
+            search_for(&mut app, "dot-needle");
+            assert!(found(&app), "tree open with hidden files shown");
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    #[test]
     fn a_tree_opens_with_hidden_files_as_tree_hidden_says() {
+        let (mut only, dot_dir) = tree_on("tree-hidden-only", &[(".first", "x"), (".second", "x")]);
+        only.toggle_tree();
+        let t = only.tree.as_ref().unwrap();
+        assert_eq!(t.selected_path().map(|p| p.file_name().unwrap().to_owned()), Some(".first".into()), "the cursor is on the first dot entry, not ../");
+        let _ = std::fs::remove_dir_all(&dot_dir);
         let (mut app, dir) = tree_on("tree-hidden-cfg", &[(".dot", "x"), ("a.txt", "x")]);
         let label = |app: &App| rows(app.tree_menu(dir.join("a.txt"), false, (1, 1))).into_iter().find(|r| r.contains("hidden files")).unwrap();
         assert!(app.cfg.tree_hidden, "the default shows them");
@@ -4915,7 +4958,7 @@ mod tests {
     #[test]
     fn from_the_tab_bar_shift_option_and_an_arrow_reaches_the_areas_beside_it() {
         let mut app = with_one_space();
-        app.tree = Some(crate::tree::Tree::new(PathBuf::from("/")));
+        app.tree = Some(crate::tree::Tree::new(PathBuf::from("/"), false));
         app.view.tree_rect = Some(Rect::new(80, 1, 40, 30));
 
         app.focus = Focus::Tabs;
@@ -4942,7 +4985,7 @@ mod tests {
     #[test]
     fn shift_option_and_an_arrow_leaves_the_tree_and_never_walks_it() {
         let mut app = with_one_space();
-        app.tree = Some(crate::tree::Tree::new(PathBuf::from("/")));
+        app.tree = Some(crate::tree::Tree::new(PathBuf::from("/"), false));
         app.view.tree_rect = Some(Rect::new(80, 1, 40, 30));
         app.focus = Focus::Tree;
 

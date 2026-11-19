@@ -91,7 +91,7 @@ pub const COMMAND: &[Key] = &[
           act: |t, _, _| match t.sel() { Some(r) => Outcome::AskDelete(r.path), None => Outcome::None } },
     Key { code: Char('g'), alt: true, label: "⌥+G", word: "grep", what: "search inside the files", group: Group::Do,
           act: |t, _, _| { t.start_grep(); Outcome::None } },
-    Key { code: Char('h'), alt: true, label: "⌥+H", word: "hidden", what: "show hidden files", group: Group::Do,
+    Key { code: Char('h'), alt: true, label: "⌥+H", word: "hidden", what: "show or hide hidden files", group: Group::Do,
           act: |t, _, _| { t.toggle_hidden(); Outcome::None } },
     Key { code: Char('r'), alt: true, label: "⌥+R", word: "reload", what: "reread from disk", group: Group::Do,
           act: |t, _, _| { t.reload(); Outcome::None } },

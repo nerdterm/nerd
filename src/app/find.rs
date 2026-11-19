@@ -82,7 +82,7 @@ impl App {
             // The tree's own folder and hidden files; with the tree closed, what opening it would show.
             let (root, hidden) = match &self.tree {
                 Some(t) => (t.root().to_path_buf(), t.hidden()),
-                None => (self.space().map(|s| std::fs::canonicalize(&s.cwd).unwrap_or_else(|_| s.cwd.clone())).unwrap_or_default(), self.cfg.tree_hidden),
+                None => (self.space().map(|s| std::fs::canonicalize(&s.cwd).unwrap_or_else(|_| s.cwd.clone())).unwrap_or_default(), false),
             };
             let home = crate::paths::home().and_then(|h| std::fs::canonicalize(h).ok());
             let mut guarded: Vec<PathBuf> = home.iter().flat_map(|h| GUARDED.map(|g| h.join(g))).chain(MOUNTS.map(PathBuf::from)).collect();

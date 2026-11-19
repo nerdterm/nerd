@@ -70,7 +70,7 @@ The right Option key keeps typing the layout's symbols, such as — and €. ner
 | Help | shows the section in the window; `o` opens its page on nerdterm.dev |
 | Text | searches what every pane printed, on Enter; a line opens in the pane search, on that line |
 
-Files are read from the file tree's folder, or the space's folder when the tree is closed, from the second letter typed (the first on the Files tab). Desktop, Documents, Downloads, Library, Pictures, Movies and Music in the home folder, and other disks and network folders, are never entered from outside them.
+Files are read from the file tree's folder, or the space's folder when the tree is closed, from the second letter typed (the first on the Files tab); hidden files are listed only while the open tree shows them, and folders whose names start with a dot below the folder searched are not entered. Desktop, Documents, Downloads, Library, Pictures, Movies and Music in the home folder, and other disks and network folders, are never entered from outside them.
 
 Anything that changes what a pane can reach (isolation, routes, providers) opens its own window and never changes in place.
 

@@ -7,7 +7,7 @@ impl Tree {
     }
 
     /// A tree of the workspace's own directory; `../` on top leads out of it.
-    pub fn new(cwd: PathBuf) -> Self {
+    pub fn new(cwd: PathBuf, hidden: bool) -> Self {
         let space = canon(&cwd);
         let mut t = Self {
             given: cwd,
@@ -26,7 +26,7 @@ impl Tree {
             cut: None,
             complete: None,
             typing: false,
-            hidden: false,
+            hidden,
             svg_source: false,
             focus: Focus::Tree,
             preview: None,
@@ -972,7 +972,8 @@ fn walk_names(root: &Path, hidden: bool, budget: std::time::Duration, skip: &[Pa
                 continue;
             }
             let Ok(ft) = e.file_type() else { continue };
-            let huge = is_skipped(&name);
+            // Dot folders (`.claude/worktrees` copies) are not entered, hidden shown or not; dot files are.
+            let huge = is_skipped(&name) || name.starts_with('.');
             let r = if rel.is_empty() { name.into_owned() } else { format!("{rel}/{name}") };
             // A symlinked folder is not entered: it could be a shortcut to a cycle.
             if ft.is_dir() {
