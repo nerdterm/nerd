@@ -3412,14 +3412,14 @@ mod tests {
             app.pane_mut(2).unwrap().agent_session = None;
             let (claude, text) = titles(&open(&app, IsolationTarget::Pane(1)));
             assert_eq!(claude, ["Claude Code"], "{text:#?}");
-            assert!(text.iter().any(|l| l == "Its own sandbox cannot run here; nerd's limits replace it"), "{text:#?}");
+            assert!(text.iter().any(|l| l == "Its own sandbox cannot run here; nerd's limits above apply instead"), "{text:#?}");
             assert!(!text.iter().any(|l| l.contains("--sandbox") || l.contains("SEATBELT_PROFILE")), "{text:#?}");
             let (shell, text) = titles(&open(&app, IsolationTarget::Pane(2)));
             assert!(shell.is_empty() && !text.iter().any(|l| l.contains("sandbox")), "a shell pane hears no advice: {text:#?}");
             assert!(text.iter().any(|l| l == "Here programs cannot"), "the refused list stays: {text:#?}");
             let (all, text) = titles(&open(&app, IsolationTarget::Tab(0, 0)));
             assert!(["Claude Code", "Codex", "Gemini CLI", "Qwen Code"].iter().all(|t| all.iter().any(|a| a == t)), "{all:?}");
-            assert!(text.iter().any(|l| l == "Agents' own sandboxes cannot run here; nerd's limits replace them"), "{text:#?}");
+            assert!(text.iter().any(|l| l == "Agents' own sandboxes cannot run here; nerd's limits above apply instead"), "{text:#?}");
         });
     }
 
