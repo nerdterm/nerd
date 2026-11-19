@@ -305,11 +305,14 @@ fn fresh_mux(mux: &Path, uid: u32) -> std::io::Result<()> {
 
 /// Under HOME, run later by a shell, git, ssh, an editor, tmux, a package manager or toolchain from its cache, launchd, LaunchServices or `defaults`, or ahead on PATH:
 /// never writable, even when the pane's folder is HOME itself.
-const RUN_LATER: &[&str] = &[".zshrc", ".zprofile", ".zshenv", ".zlogin", ".zlogout", ".bashrc", ".bash_profile", ".bash_login", ".bash_logout", ".profile", ".gitconfig", ".netrc", ".npmrc", ".cargo/config.toml", ".cargo/config", "rust-toolchain", "rust-toolchain.toml", ".local/rust-toolchain", ".local/rust-toolchain.toml", ".vimrc", ".tmux.conf", ".emacs", ".wezterm.lua"];
+const RUN_LATER: &[&str] = &[".zshrc", ".zprofile", ".zshenv", ".zlogin", ".zlogout", ".bashrc", ".bash_profile", ".bash_login", ".bash_logout", ".profile", ".gitconfig", ".netrc", ".npmrc", ".cargo/config.toml", ".cargo/config", "rust-toolchain", "rust-toolchain.toml", "Cargo.toml", ".local/rust-toolchain", ".local/rust-toolchain.toml", ".local/Cargo.toml",
+    ".cargo/env", ".cargo/env.fish", ".cargo/env.nu", ".cargo/env.tcsh", ".cargo/env.xsh", ".cargo/credentials.toml", ".cargo/credentials", ".rustup/settings.toml", ".vimrc", ".tmux.conf", ".emacs", ".wezterm.lua"];
 // ceiling: a denylist, so a cache that runs code and is not named here stays writable; an allowlist of the agents' own caches under ~/Library/Caches is the way past.
 // ceiling: Cargo's and rustup's settings are named only in HOME and ~/.local, so a pane whose folder holds projects (~/dev) may still put them above those projects; denying them in every folder above a project is the way past.
+// ceiling: Cargo's and rustup's own files are named under ~/.cargo and ~/.rustup, so a `CARGO_HOME` or `RUSTUP_HOME` set elsewhere is not covered; reading the variables is the way past.
 const RUN_LATER_DIRS: &[&str] = &[
     ".config/git", ".config/fish", "Library/LaunchAgents", "Applications", ".ssh", ".aws", ".gnupg", ".docker", ".kube", ".azure", ".config/gh", ".config/gcloud", ".cargo/bin", ".local/bin", ".local/.cargo",
+    ".cargo/registry", ".cargo/git", ".rustup/toolchains",
     ".vim", ".config/nvim", ".config/tmux", ".emacs.d", "Library/Preferences", ".pyenv/shims", ".rbenv/shims", ".nvm", ".bun/bin", "go/bin", ".volta/bin", ".deno/bin", ".asdf/shims", ".local/share/nvim",
     "Library/Caches/pnpm", "Library/Caches/uv", "Library/Caches/deno", "Library/Caches/go-build", "Library/Caches/ms-playwright", "Library/Caches/pypoetry", "Library/Caches/Yarn", "Library/Caches/node-gyp",
     "Library/Caches/pip", "Library/Caches/Cypress", "Library/Caches/org.swift.swiftpm", "Library/Caches/copilot", "go/pkg/mod",
@@ -774,6 +777,11 @@ mod tests {
         let err = String::from_utf8_lossy(&out.stderr);
         if err.contains("sandbox_apply") {
             println!("skipped: this test process already runs under Seatbelt: {err}");
+            // scripts/gates.sh counts these, so a gate run in an isolated pane says what it did not check.
+            if let Some(f) = std::env::var_os("NERD_SEATBELT_SKIPS") {
+                use std::io::Write as _;
+                let _ = std::fs::OpenOptions::new().create(true).append(true).open(f).and_then(|mut f| writeln!(f, "{}", std::thread::current().name().unwrap_or("?")));
+            }
             return None;
         }
         Some(out.status.code().unwrap_or(-1))
@@ -840,7 +848,7 @@ mod tests {
         let t = |f: Files, n: Network, port| text(&p, &f, &n, d, m, port).unwrap();
         let above = ["/", "/Users", "/Users/u", "/Users/u/.1p", "/Users/u/.asdf", "/Users/u/.bun", "/Users/u/.cargo", "/Users/u/.claude", "/Users/u/.codex", "/Users/u/.config", "/Users/u/.deno", "/Users/u/.gemini"]
             .into_iter()
-            .chain(["/Users/u/.gemini/tmp", "/Users/u/.local", "/Users/u/.local/bin", "/Users/u/.local/share", "/Users/u/.local/share/opencode", "/Users/u/.pyenv", "/Users/u/.rbenv", "/Users/u/.volta", "/Users/u/Library"])
+            .chain(["/Users/u/.gemini/tmp", "/Users/u/.local", "/Users/u/.local/bin", "/Users/u/.local/share", "/Users/u/.local/share/opencode", "/Users/u/.pyenv", "/Users/u/.rbenv", "/Users/u/.rustup", "/Users/u/.volta", "/Users/u/Library"])
             .chain(["/Users/u/Library/Application Support", "/Users/u/Library/Application Support/iTerm2", "/Users/u/Library/Caches", "/Users/u/go", "/Users/u/go/pkg"])
             .chain(["/private", "/private/tmp", "/private/var", "/private/var/folders", "/private/var/folders/ab", "/private/var/folders/ab/T"])
             .map(|a| format!("(literal \"{a}\")"))
@@ -852,6 +860,7 @@ mod tests {
              (deny file-write* (subpath \"/Users/u/.claude.json\") (subpath \"/Users/u/.claude\"))\n\
              (allow file-write* (subpath \"/Users/u/.claude/projects\") (regex #\"^/Users/u/\\.codex/[^/]*\\.sqlite[^/]*$\"))\n\
              (deny file-write* (subpath \"/Users/u/Library/Application Support/nerd\") (subpath \"/private/var/folders/ab/T/podman\") (subpath \"/Users/u/.config/git\") (subpath \"/Users/u/.config/fish\") (subpath \"/Users/u/Library/LaunchAgents\") (subpath \"/Users/u/Applications\") (subpath \"/Users/u/.ssh\") (subpath \"/Users/u/.aws\") (subpath \"/Users/u/.gnupg\") (subpath \"/Users/u/.docker\") (subpath \"/Users/u/.kube\") (subpath \"/Users/u/.azure\") (subpath \"/Users/u/.config/gh\") (subpath \"/Users/u/.config/gcloud\") (subpath \"/Users/u/.cargo/bin\") (subpath \"/Users/u/.local/bin\") (subpath \"/Users/u/.local/.cargo\") \
+             (subpath \"/Users/u/.cargo/registry\") (subpath \"/Users/u/.cargo/git\") (subpath \"/Users/u/.rustup/toolchains\") \
              (subpath \"/Users/u/.vim\") (subpath \"/Users/u/.config/nvim\") (subpath \"/Users/u/.config/tmux\") (subpath \"/Users/u/.emacs.d\") (subpath \"/Users/u/Library/Preferences\") (subpath \"/Users/u/.pyenv/shims\") (subpath \"/Users/u/.rbenv/shims\") (subpath \"/Users/u/.nvm\") (subpath \"/Users/u/.bun/bin\") (subpath \"/Users/u/go/bin\") (subpath \"/Users/u/.volta/bin\") (subpath \"/Users/u/.deno/bin\") (subpath \"/Users/u/.asdf/shims\") (subpath \"/Users/u/.local/share/nvim\") \
              (subpath \"/Users/u/Library/Caches/pnpm\") (subpath \"/Users/u/Library/Caches/uv\") (subpath \"/Users/u/Library/Caches/deno\") (subpath \"/Users/u/Library/Caches/go-build\") (subpath \"/Users/u/Library/Caches/ms-playwright\") (subpath \"/Users/u/Library/Caches/pypoetry\") (subpath \"/Users/u/Library/Caches/Yarn\") (subpath \"/Users/u/Library/Caches/node-gyp\") \
              (subpath \"/Users/u/Library/Caches/pip\") (subpath \"/Users/u/Library/Caches/Cypress\") (subpath \"/Users/u/Library/Caches/org.swift.swiftpm\") (subpath \"/Users/u/Library/Caches/copilot\") (subpath \"/Users/u/go/pkg/mod\") \
@@ -860,7 +869,8 @@ mod tests {
              (subpath \"/Users/u/.homebrew\") (subpath \"/Users/u/.config/homebrew\") \
              (subpath \"/Users/u/.claude/shell-snapshots\") (subpath \"/Users/u/.claude/session-env\") (subpath \"/Users/u/.codex/shell_snapshots\") (subpath \"/Users/u/.codex/tmp\") (subpath \"/Users/u/.codex/.tmp\") (subpath \"/Users/u/.gemini/tmp/bin\") (subpath \"/Users/u/.gemini/history\") (subpath \"/Users/u/.local/share/opencode/snapshot\") (subpath \"/Users/u/.claude/tasks\") \
              (subpath \"/Users/u/.config/ghostty\") (subpath \"/Users/u/Library/Application Support/com.mitchellh.ghostty\") (subpath \"/Users/u/.config/kitty\") (subpath \"/Users/u/.config/wezterm\") (subpath \"/Users/u/Library/Application Support/iTerm2/DynamicProfiles\") (subpath \"/Users/u/.claude/hooks\") \
-             (literal \"/Users/u/.local/bin/nerd\") (literal \"/Users/u/.zshrc\") (literal \"/Users/u/.zprofile\") (literal \"/Users/u/.zshenv\") (literal \"/Users/u/.zlogin\") (literal \"/Users/u/.zlogout\") (literal \"/Users/u/.bashrc\") (literal \"/Users/u/.bash_profile\") (literal \"/Users/u/.bash_login\") (literal \"/Users/u/.bash_logout\") (literal \"/Users/u/.profile\") (literal \"/Users/u/.gitconfig\") (literal \"/Users/u/.netrc\") (literal \"/Users/u/.npmrc\") (literal \"/Users/u/.cargo/config.toml\") (literal \"/Users/u/.cargo/config\") (literal \"/Users/u/rust-toolchain\") (literal \"/Users/u/rust-toolchain.toml\") (literal \"/Users/u/.local/rust-toolchain\") (literal \"/Users/u/.local/rust-toolchain.toml\") (literal \"/Users/u/.vimrc\") (literal \"/Users/u/.tmux.conf\") (literal \"/Users/u/.emacs\") (literal \"/Users/u/.wezterm.lua\") (literal \"/Users/u/.claude/settings.json\") (literal \"/Users/u/.1p/agent.sock\") \
+             (literal \"/Users/u/.local/bin/nerd\") (literal \"/Users/u/.zshrc\") (literal \"/Users/u/.zprofile\") (literal \"/Users/u/.zshenv\") (literal \"/Users/u/.zlogin\") (literal \"/Users/u/.zlogout\") (literal \"/Users/u/.bashrc\") (literal \"/Users/u/.bash_profile\") (literal \"/Users/u/.bash_login\") (literal \"/Users/u/.bash_logout\") (literal \"/Users/u/.profile\") (literal \"/Users/u/.gitconfig\") (literal \"/Users/u/.netrc\") (literal \"/Users/u/.npmrc\") (literal \"/Users/u/.cargo/config.toml\") (literal \"/Users/u/.cargo/config\") (literal \"/Users/u/rust-toolchain\") (literal \"/Users/u/rust-toolchain.toml\") (literal \"/Users/u/Cargo.toml\") (literal \"/Users/u/.local/rust-toolchain\") (literal \"/Users/u/.local/rust-toolchain.toml\") (literal \"/Users/u/.local/Cargo.toml\") \
+             (literal \"/Users/u/.cargo/env\") (literal \"/Users/u/.cargo/env.fish\") (literal \"/Users/u/.cargo/env.nu\") (literal \"/Users/u/.cargo/env.tcsh\") (literal \"/Users/u/.cargo/env.xsh\") (literal \"/Users/u/.cargo/credentials.toml\") (literal \"/Users/u/.cargo/credentials\") (literal \"/Users/u/.rustup/settings.toml\") (literal \"/Users/u/.vimrc\") (literal \"/Users/u/.tmux.conf\") (literal \"/Users/u/.emacs\") (literal \"/Users/u/.wezterm.lua\") (literal \"/Users/u/.claude/settings.json\") (literal \"/Users/u/.1p/agent.sock\") \
              (regex #\"^/private/tmp/nerd-[0-9]+(/|$)\") (regex #\"^/private/tmp/cc-socks\") (regex #\"^/private/var/folders/ab/T/cc-socks\") (regex #\"^/Users/u/\\.[^/]+/projects/[^/]+/memory(/|$)\") (regex #\"^/Users/u/\\.codex/[^/]*\\.sqlite\") (regex #\"^/Users/u/\\.qwen/projects/[^/]+/workflows(/|$)\"))\n\
              (deny file-write-unlink {above} {parents})\n\
              (deny file-write-create {above})\n\
@@ -1426,22 +1436,43 @@ mod tests {
     fn folder_only_cannot_plant_cargo_or_rustup_settings_above_projects_but_a_project_keeps_its_own() {
         let d = scratch("cargo");
         let home = d.join("home");
-        std::fs::create_dir_all(home.join(".local")).unwrap();
-        for (cwd, names) in [("home", &["rust-toolchain.toml", "rust-toolchain"][..]), ("home/.local", &[".cargo/config.toml", ".cargo/config", "rust-toolchain.toml", "rust-toolchain"][..])] {
+        for dir in [".local", ".cargo", ".rustup/toolchains"] {
+            std::fs::create_dir_all(home.join(dir)).unwrap();
+        }
+        // On a case-insensitive volume rustup finds `Rust-Toolchain.TOML` as `rust-toolchain.toml`, so the other spelling must be refused too.
+        let folded = std::fs::write(d.join("case"), "").is_ok() && d.join("CASE").exists();
+        let at_home: &[&str] = if folded { &["rust-toolchain.toml", "rust-toolchain", "Cargo.toml", "Rust-Toolchain.TOML"] } else { &["rust-toolchain.toml", "rust-toolchain", "Cargo.toml"] };
+        let mut bad = Vec::new();
+        for (cwd, names) in [
+            ("home", at_home),
+            ("home/.local", &[".cargo/config.toml", ".cargo/config", "rust-toolchain.toml", "rust-toolchain", "Cargo.toml"][..]),
+            ("home/.cargo", &["env", "env.fish", "env.nu", "env.tcsh", "env.xsh", "credentials.toml", "credentials", "registry/src/x/build.rs", "git/checkouts/x/build.rs"][..]),
+            ("home/.rustup", &["settings.toml", "toolchains/x/bin/cargo"][..]),
+        ] {
             let profile = text(&places(&d), &Files::Folder, &Network::None, &d.join(cwd), Path::new("/tmp/none.msock"), None).unwrap();
             let Some(rc) = sandboxed(&profile, &format!("cd '{}/{cwd}' && echo x > staged", d.display())) else { return };
             assert_eq!(rc, 0, "its own folder {cwd}");
             for name in names {
                 let to = d.join(cwd).join(name);
                 for (how, script) in [("written", "echo x > \"$1\""), ("moved in", "mv staged \"$1\""), ("linked", "ln -s staged \"$1\""), ("hard-linked", "ln staged \"$1\"")] {
-                    let script = format!("cd '{}/{cwd}' && mkdir -p \"$(dirname '{name}')\" 2>/dev/null; set -- '{name}'; {script}", d.display());
-                    assert_ne!(sandboxed(&profile, &script), Some(0), "{name} {how} in {cwd}");
-                    assert!(std::fs::symlink_metadata(&to).is_err(), "{name} {how} in {cwd}");
+                    let script = format!("cd '{}/{cwd}' && echo x > staged && mkdir -p \"$(dirname '{name}')\" 2>/dev/null; set -- '{name}'; {script}", d.display());
+                    if sandboxed(&profile, &script) == Some(0) || std::fs::symlink_metadata(&to).is_ok() {
+                        bad.push(format!("{name} {how} in {cwd}"));
+                        let _ = std::fs::remove_file(&to);
+                    }
                 }
             }
         }
+        let local = text(&places(&d), &Files::Folder, &Network::None, &home.join(".local"), Path::new("/tmp/none.msock"), None).unwrap();
+        for (what, script) in [("a .cargo folder moved in whole", "mkdir -p stg/.cargo && echo x > stg/.cargo/config.toml && mv stg/.cargo .cargo"), ("~/.local renamed", "mv ../.local ../x")] {
+            if sandboxed(&local, &format!("cd '{}' && {script}", home.join(".local").display())) == Some(0) {
+                bad.push(what.to_string());
+            }
+        }
+        assert!(home.join(".local").is_dir() && !home.join(".local/.cargo").exists() && !home.join("x").exists());
+        assert!(bad.is_empty(), "written where a later build reads it: {bad:#?}");
         let profile = text(&places(&d), &Files::Folder, &Network::None, &d.join("work"), Path::new("/tmp/none.msock"), None).unwrap();
-        let own = format!("cd '{}/work' && mkdir -p .cargo && echo x > .cargo/config.toml && echo x > rust-toolchain.toml", d.display());
+        let own = format!("cd '{}/work' && mkdir -p .cargo && echo x > .cargo/config.toml && echo x > rust-toolchain.toml && echo x > Cargo.toml", d.display());
         assert_eq!(sandboxed(&profile, &own), Some(0), "a project's own Cargo and rustup settings");
         let _ = std::fs::remove_dir_all(&d);
     }

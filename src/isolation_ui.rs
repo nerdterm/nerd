@@ -761,7 +761,8 @@ pub(crate) mod tests {
             crate::app::snapshots::dump(&buf, Rect::new(0, 0, 100, 40))
         };
         let has = |w: &IsolationWin, t: &str| rows(w, 76).iter().any(|s| s.contains(t));
-        assert!(FOLDER_COSTS.iter().chain([&FOLDER_LATER]).all(|c| has(&w, c)) && shown.contains("danger-full-access") && shown.contains("ps, top, sudo"), "{shown}");
+        // Drawn: each line's first 40 cells, which come before any wrap; whole: in the window's rows.
+        assert!(FOLDER_COSTS.iter().chain([&FOLDER_LATER]).all(|c| shown.contains(&c[..40]) && has(&w, c)) && shown.contains("danger-full-access") && shown.contains("ps, top, sudo"), "{shown}");
         assert!(has(&w, PROFILED_HEAD) && has(&w, "launchctl"), "{shown}");
         assert!(!has(&w, NO_AGENT) && !has(&w, NO_MUX), "only these providers: {shown}");
         let profiled = [PROFILED_HEAD, "ps, top, sudo", "danger-full-access"];
