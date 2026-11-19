@@ -44,7 +44,7 @@ taste.
     ("Next view: source"); the names are lowercase, as rule 10's values are.
 16. **A note says what applies here, in groups:** the lines that explain a choice (what it costs, what is refused,
     advice, a warning) sit under a heading that names the target and the reader's loss ("Here programs cannot",
-    "Agents' own sandboxes cannot run here; nerd's limits replace them"), one item per line, `what | how` in aligned
+    "Agents' own sandboxes cannot run here; nerd's limits above apply instead"), one item per line, `what | how` in aligned
     columns where an item has both. A line that wraps continues under its item's own text, not under the margin; a
     clause that every item shares is said once, in the heading. A note appears only when it applies to this pane, tab
     or space: not for another agent, another folder or a setting that is off. Faint is information; warn is a risk the

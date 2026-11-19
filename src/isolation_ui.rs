@@ -87,13 +87,14 @@ const BACK: &str = " [Esc] back ";
 const DONE: &str = " [Enter] done ";
 const NOTHING_TICKED: &str = "choose at least one provider, or all";
 const HOME_FOLDER: &str = "This pane's folder is your home folder, so it can change your files there, though not dot files, ~/Library or ~/bin; choose a project folder for a real limit.";
-const FOLDER_HEAD: &str = "To keep it from planting code or instructions for your other sessions, here";
+const FOLDER_HEAD: &str = "To keep it from planting code or instructions in your home folder for your other sessions, here";
 /// What a This-folder-only pane costs, each line in what stops working.
 const FOLDER_COSTS: [&str; 3] = [
-    "agents cannot save their settings or memory; Claude Code has no task list",
+    "agents cannot save their settings or memory in your home folder; Claude Code has no task list",
     "Codex sessions and Qwen Code workflows cannot be resumed later",
     "uv, pnpm, Go, pip and others fail unless their cache is in this folder",
 ];
+const FOLDER_LATER: &str = "What this pane writes in its own folder can run later outside it";
 const NO_AGENT: &str = "git over ssh and docker do not work: no ssh agent, no Docker";
 const NO_MUX: &str = "tmux and Zellij here run only this pane's sessions; the WezTerm, iTerm2 and kitty sockets nerd knows are closed";
 const PROFILED_HEAD: &str = "Here programs cannot";
@@ -105,8 +106,8 @@ const PROFILED: [(&str, &str); 5] = [
     ("save macOS settings", "defaults, Xcode, other Apple tools"),
     ("run setuid tools", "ps, top, sudo, other setuid tools"),
 ];
-const ADVICE_ONE: &str = "Its own sandbox cannot run here; nerd's limits replace it";
-const ADVICE_MANY: &str = "Agents' own sandboxes cannot run here; nerd's limits replace them";
+const ADVICE_ONE: &str = "Its own sandbox cannot run here; nerd's limits above apply instead";
+const ADVICE_MANY: &str = "Agents' own sandboxes cannot run here; nerd's limits above apply instead";
 
 /// Down on a frame: its close button or outside it closes; otherwise what was hit.
 fn pressed<H: Clone>(ev: crossterm::event::MouseEvent, d: &Drawn<H>) -> Result<Option<H>, Out> {
@@ -182,6 +183,7 @@ impl IsolationWin {
             if network == Some(&Network::Open) {
                 costs.extend([NO_AGENT, NO_MUX].map(|c| format!("  {c}")));
             }
+            costs.push(format!("  {FOLDER_LATER}"));
         }
         let shown = self.pick.as_ref().unwrap_or(&self.inherited);
         let profiled = Isolation::profiled(&shown.files, &shown.network);
@@ -758,8 +760,8 @@ pub(crate) mod tests {
             w.draw(&mut buf, Rect::new(0, 0, 100, 40), &Theme::dark());
             crate::app::snapshots::dump(&buf, Rect::new(0, 0, 100, 40))
         };
-        assert!(FOLDER_COSTS.iter().all(|c| shown.contains(c.trim())) && shown.contains("danger-full-access") && shown.contains("ps, top, sudo"), "{shown}");
         let has = |w: &IsolationWin, t: &str| rows(w, 76).iter().any(|s| s.contains(t));
+        assert!(FOLDER_COSTS.iter().chain([&FOLDER_LATER]).all(|c| has(&w, c)) && shown.contains("danger-full-access") && shown.contains("ps, top, sudo"), "{shown}");
         assert!(has(&w, PROFILED_HEAD) && has(&w, "launchctl"), "{shown}");
         assert!(!has(&w, NO_AGENT) && !has(&w, NO_MUX), "only these providers: {shown}");
         let profiled = [PROFILED_HEAD, "ps, top, sudo", "danger-full-access"];

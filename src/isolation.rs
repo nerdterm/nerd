@@ -1042,30 +1042,32 @@ mod tests {
 
     #[test]
     fn a_wrapped_pane_has_no_nerd_state() {
-        let argv = vec!["/bin/zsh".to_string(), "-l".into()];
-        let mut env = vec![("NERD_STATE".to_string(), "/s".to_string()), ("NERD_MSOCK".into(), "/m.sock".into()), ("NERD_MSOCK_UID".into(), "501".into())];
-        let got = wrap(3, &argv, Path::new("/w"), &Isolation { files: Files::Folder, network: Network::None }, &mut env).unwrap();
-        let exe = std::env::current_exe().unwrap().to_string_lossy().into_owned();
-        let sock = crate::session::socket_path().to_string_lossy().into_owned();
-        let want: Vec<String> = [&exe, "--pane-exec", "--pane", "3", "--network", "none", "--files", "folder", "--cwd", "/w", "--msock", "/m.sock", "--msock-uid", "501", "--bin", &exe, "--sock", &sock].iter().map(|s| s.to_string()).collect();
-        assert_eq!(got[..want.len()], want[..], "{got:?}");
-        assert_eq!(got[got.len() - 3..], ["--", "/bin/zsh", "-l"], "{got:?}");
-        assert!(!env.iter().any(|(k, _)| k == "NERD_STATE"), "{env:?}");
-        assert!(env.contains(&("NERD_BIN".into(), exe)), "{env:?}");
-        let mut env = Vec::new();
-        let e = wrap(3, &argv, Path::new("/w"), &Isolation { files: Files::Everything, network: Network::Providers(vec!["claude".into(), "no-such-agent".into()]) }, &mut env).unwrap_err();
-        assert_eq!(e.to_string(), "no-such-agent names no hosts");
-        let e = wrap(3, &argv, Path::new("/w"), &Isolation { files: Files::Everything, network: Network::Providers(Vec::new()) }, &mut env).unwrap_err();
-        assert_eq!(e.to_string(), "no provider is chosen");
-        let got = wrap(3, &argv, Path::new("/w"), &Isolation { files: Files::Everything, network: Network::Providers(vec!["claude".into(), "pi".into(), "gemini".into()]) }, &mut env).unwrap();
-        let hosts = got.windows(2).find(|w| w[0] == "--hosts").map(|w| w[1].clone()).unwrap_or_default();
-        let net = crate::proxy::Net::parse(&hosts).unwrap();
-        assert!(["api.anthropic.com", "accounts.google.com", "api.openai.com"].iter().all(|h| net.hosts.iter().filter(|n| n == h).count() == 1), "every chosen agent's hosts, each once: {hosts}");
-        assert_eq!(net.ports, [443], "{hosts}");
-        let got = wrap(3, &argv, Path::new("/w"), &Isolation { files: Files::Everything, network: Network::Providers(vec!["pi/deepseek".into()]) }, &mut env).unwrap();
-        assert_eq!(got.windows(2).find(|w| w[0] == "--hosts").map(|w| w[1].as_str()), Some("api.deepseek.com;443"), "{got:?}");
-        let e = wrap(3, &argv, Path::new("/w"), &Isolation { files: Files::Account("nobody-here".into()), network: Network::Open }, &mut env).unwrap_err();
-        assert_eq!(e.to_string(), "nobody-here is not an admitted account");
+        crate::session::tests::with_temp_state_dir("wrapped", || {
+            let argv = vec!["/bin/zsh".to_string(), "-l".into()];
+            let mut env = vec![("NERD_STATE".to_string(), "/s".to_string()), ("NERD_MSOCK".into(), "/m.sock".into()), ("NERD_MSOCK_UID".into(), "501".into())];
+            let got = wrap(3, &argv, Path::new("/w"), &Isolation { files: Files::Folder, network: Network::None }, &mut env).unwrap();
+            let exe = std::env::current_exe().unwrap().to_string_lossy().into_owned();
+            let sock = crate::session::socket_path().to_string_lossy().into_owned();
+            let want: Vec<String> = [&exe, "--pane-exec", "--pane", "3", "--network", "none", "--files", "folder", "--cwd", "/w", "--msock", "/m.sock", "--msock-uid", "501", "--bin", &exe, "--sock", &sock].iter().map(|s| s.to_string()).collect();
+            assert_eq!(got[..want.len()], want[..], "{got:?}");
+            assert_eq!(got[got.len() - 3..], ["--", "/bin/zsh", "-l"], "{got:?}");
+            assert!(!env.iter().any(|(k, _)| k == "NERD_STATE"), "{env:?}");
+            assert!(env.contains(&("NERD_BIN".into(), exe)), "{env:?}");
+            let mut env = Vec::new();
+            let e = wrap(3, &argv, Path::new("/w"), &Isolation { files: Files::Everything, network: Network::Providers(vec!["claude".into(), "no-such-agent".into()]) }, &mut env).unwrap_err();
+            assert_eq!(e.to_string(), "no-such-agent names no hosts");
+            let e = wrap(3, &argv, Path::new("/w"), &Isolation { files: Files::Everything, network: Network::Providers(Vec::new()) }, &mut env).unwrap_err();
+            assert_eq!(e.to_string(), "no provider is chosen");
+            let got = wrap(3, &argv, Path::new("/w"), &Isolation { files: Files::Everything, network: Network::Providers(vec!["claude".into(), "pi".into(), "gemini".into()]) }, &mut env).unwrap();
+            let hosts = got.windows(2).find(|w| w[0] == "--hosts").map(|w| w[1].clone()).unwrap_or_default();
+            let net = crate::proxy::Net::parse(&hosts).unwrap();
+            assert!(["api.anthropic.com", "accounts.google.com", "api.openai.com"].iter().all(|h| net.hosts.iter().filter(|n| n == h).count() == 1), "every chosen agent's hosts, each once: {hosts}");
+            assert_eq!(net.ports, [443], "{hosts}");
+            let got = wrap(3, &argv, Path::new("/w"), &Isolation { files: Files::Everything, network: Network::Providers(vec!["pi/deepseek".into()]) }, &mut env).unwrap();
+            assert_eq!(got.windows(2).find(|w| w[0] == "--hosts").map(|w| w[1].as_str()), Some("api.deepseek.com;443"), "{got:?}");
+            let e = wrap(3, &argv, Path::new("/w"), &Isolation { files: Files::Account("nobody-here".into()), network: Network::Open }, &mut env).unwrap_err();
+            assert_eq!(e.to_string(), "nobody-here is not an admitted account");
+        });
     }
 
     #[test]
