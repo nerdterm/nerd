@@ -1,7 +1,9 @@
 #!/bin/sh
 # sign-release.sh with a test key: a key in install.sh's block signs and self-installs; any other key leaves nothing.
 here=$(cd "$(dirname "$0")" && pwd)
-t=$(mktemp -d)
+# In the checkout, not the per-user temp folder every isolated pane may write: the programs here are run.
+mkdir -p "$here/../target"
+t=$(cd "$here/../target" && mktemp -d "$PWD/.nerd-test.XXXXXX")
 trap 'rm -rf "$t"' EXIT
 ssl=/usr/bin/openssl
 fail=0

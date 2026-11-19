@@ -1,6 +1,8 @@
 #!/bin/sh
 # Writes Formula/nerd.rb in nerdterm/homebrew-tap for a published release; --dry-run prints it and writes nothing.
 set -eu
+# An exported CDPATH would send the relative cd below to another folder's install.sh.
+unset CDPATH
 dry=
 [ "${1:-}" = --dry-run ] && { dry=1; shift; }
 tag=${1:?usage: scripts/publish-formula.sh [--dry-run] vX.Y.Z}

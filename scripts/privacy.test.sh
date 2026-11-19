@@ -4,7 +4,9 @@
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
 p="$here/privacy.sh"
-work=$(mktemp -d)
+# In the checkout, not the per-user temp folder every isolated pane may write: git here runs what its .git names.
+mkdir -p "$here/../target"
+work=$(cd "$here/../target" && mktemp -d "$PWD/.nerd-test.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com

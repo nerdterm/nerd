@@ -5,7 +5,9 @@
 # and by gh's calls.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
-t=$(mktemp -d)
+# In the checkout, not the per-user temp folder every isolated pane may write: the stand-ins here are run.
+mkdir -p "$here/../target"
+t=$(cd "$here/../target" && mktemp -d "$PWD/.nerd-test.XXXXXX")
 trap 'rm -rf "$t"' EXIT
 fail=0
 bad() { echo "FAIL: $*" >&2; fail=1; }
@@ -19,7 +21,7 @@ cat >"$t/gitconfig" <<EOF
     insteadOf = git@
 EOF
 export GIT_CONFIG_GLOBAL="$t/gitconfig" GIT_CONFIG_NOSYSTEM=1 GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
-unset GIT_TEMPLATE_DIR
+unset GIT_TEMPLATE_DIR CARGO_HOME
 # A gh that is not the stand-in must never be reached: no token, no config.
 export GH_TOKEN= GH_CONFIG_DIR="$t/gh-config"
 # The script works under ~/.local/bin: a HOME of its own.
@@ -29,7 +31,7 @@ mkdir -p "$t/stub"
 # Every git and gh call, with the folder it ran in: none may run in the checkout or name it.
 cat >"$t/stub/git" <<EOF
 #!/bin/sh
-echo "\$PWD \$*" >>"\$STUB/calls.log"
+echo "\$PWD \$* \$(env | grep '^GIT_' | tr '\n' ' ')" >>"\$STUB/calls.log"
 exec "$(command -v git)" "\$@"
 EOF
 cat >"$t/stub/gh" <<'EOF'
@@ -152,15 +154,23 @@ publish() {
     c="$t/checkout-$runs"
     git clone -q "$o" "$c"
     [ -z "${STUB_PLANT:-}" ] || plant "$c" "$STUB_PLANT"
+    if [ -n "${STUB_ABOVE:-}" ]; then mkdir -p "$(dirname "$HOME/$STUB_ABOVE")" && echo '[workspace]' >"$HOME/$STUB_ABOVE"; fi
     rm -f "$t/calls.log"
     (cd "$c" && export STUB_CHECKOUT="$c" && if [ -n "${STUB_TEMPLATE:-}" ]; then export GIT_TEMPLATE_DIR="$t/templates"; fi \
         && if [ -n "${STUB_DIFF:-}" ]; then export GIT_CONFIG_GLOBAL="$t/gitconfig-diff"; fi \
+        && if [ -n "${STUB_GITENV:-}" ]; then
+            # As a git hook exports them, every one naming the checkout.
+            export GIT_DIR="$c/.git" GIT_WORK_TREE="$c" GIT_INDEX_FILE="$c/.git/index" GIT_OBJECT_DIRECTORY="$c/.git/objects" \
+                GIT_ALTERNATE_OBJECT_DIRECTORIES="$c/.git/objects" GIT_COMMON_DIR="$c/.git" GIT_NAMESPACE="$c" \
+                GIT_GRAFT_FILE="$c/.git/info/grafts" GIT_SHALLOW_FILE="$c/.git/shallow" GIT_REPLACE_REF_BASE="$c/refs/replace/"
+        fi \
         && PATH="$t/plant:$PATH" sh scripts/publish-binary.sh "$1") >"$t/out" 2>&1 && rc=0 || rc=$?
     cat "$t/out"
+    [ -z "${STUB_ABOVE:-}" ] || rm -rf "${HOME:?}/${STUB_ABOVE%%/*}"
     [ -z "$(ls -A "$HOME/.local/bin" 2>/dev/null)" ] || bad "$1: left $(ls -A "$HOME/.local/bin") in ~/.local/bin"
     ! grep -F "$c" "$t/calls.log" >/dev/null 2>&1 || bad "$1: ran git or gh in the checkout or on it: $(grep -F "$c" "$t/calls.log")"
     # A prefix assignment before a function call outlives it in sh: each case starts clean.
-    unset at STUB_VERSION STUB_TARGET STUB_HIJACK STUB_PLANT STUB_TEMPLATE STUB_DIFF
+    unset at STUB_VERSION STUB_TARGET STUB_HIJACK STUB_PLANT STUB_TEMPLATE STUB_DIFF STUB_GITENV STUB_ABOVE
     return "$rc"
 }
 # What a pane whose folder is the checkout could leave in its .git: each program it names records that it ran.
@@ -304,5 +314,17 @@ printf 'Cargo.toml diff=x\nCargo.lock diff=x\n' >"$t/attributes-diff"
 STUB_DIFF=1 at=$release publish v0.2.0 >/dev/null || bad "(u) the release commit, with the maintainer's own diff settings: $(cat "$t/out")"
 built_src "(u) diff settings"
 
-[ "$fail" = 0 ] && echo "publish-binary: 21 cases pass"
+STUB_GITENV=1 at=$release publish v0.2.0 >/dev/null || bad "(v) the release commit, with git variables naming the checkout: $(cat "$t/out")"
+built_src "(v) git variables"
+
+# What cargo and rustup read in a folder above the build, each kind in a folder of its own; the maintainer's is read.
+for above in Cargo.toml rust-toolchain .local/rust-toolchain.toml .local/bin/.cargo/config .local/.cargo/config.toml .cargo/config; do
+    STUB_ABOVE=$above at=$release publish v0.2.0 >/dev/null && bad "(w) built under $above"
+    expect_refused "(w) $above" "$HOME/$above is above the build folder"
+    [ ! -f "$t/cargo.log" ] || bad "(w) $above: ran cargo"
+done
+STUB_ABOVE=.cargo/config.toml at=$release publish v0.2.0 >/dev/null || bad "(x) the release commit, with CARGO_HOME's config.toml: $(cat "$t/out")"
+built_src "(x) CARGO_HOME's config.toml"
+
+[ "$fail" = 0 ] && echo "publish-binary: 29 cases pass"
 exit "$fail"

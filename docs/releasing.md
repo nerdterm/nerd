@@ -72,12 +72,20 @@ pull request, `chore(master): release X.Y.Z`. Replace `N` and `X.Y.Z` below with
    every tag into it from `https://github.com/nerdterm/nerd.git`, checks the release commit there, and builds a
    checkout of that repository, so `build.rs` stamps the version with that commit's hash and date. No git, gh or build
    runs in the checkout, so hooks, config, grafts, replace refs, attributes or another origin left in its `.git` change
-   nothing. Two things are trusted, not checked: the script files themselves, read from the checkout before anything is
-   verified, and your own global git config (`~/.gitconfig`), which every git call reads, `url.*.insteadOf` included.
-   That is why the checkout must not be inside any folder an isolated pane has had, nor in a temp folder, which every
-   isolated pane may write. The build and the tests write programs to their temp folder and run them, as you, before
-   the key is used, so theirs is in that same folder of its own, not the per-user temp folder; four tests that run
-   nothing from it still use the per-user one.
+   nothing, and the git variables a hook exports (`GIT_DIR` and the like) are cleared first. cargo and rustup read a
+   `Cargo.toml`, `rust-toolchain`, `rust-toolchain.toml` and `.cargo/config` or `.cargo/config.toml` in every folder
+   above the source; the script stops before building if any folder from its work folder up to your home holds one,
+   naming the file, except your own `$CARGO_HOME/config.toml` (`~/.cargo/config.toml` by default). The folders above
+   your home belong to the system. The build and the tests write programs to their temp folder and run them, as you,
+   before the key is used, so theirs is in that same folder of its own, not the per-user temp folder; four tests that
+   run nothing from it still use the per-user one.
+
+   Trusted, not checked: the script files themselves, read from the checkout before anything is verified, which is why
+   the checkout must not be inside any folder an isolated pane has had, nor in a temp folder, which every isolated pane
+   may write; your own git configuration (`~/.gitconfig`, `~/.config/git`, the system's git config), which every git
+   call reads, `url.*.insteadOf` included; `$CARGO_HOME/config.toml`, rustup's settings and toolchains; and your
+   environment: the `git`, `gh` and `cargo` first on your PATH, and variables such as `CARGO_*`, `RUSTUP_TOOLCHAIN`,
+   `RUSTFLAGS` and `RUSTC_WRAPPER`.
 
 6. Check it: `false`, then the archive, its `.sha256` and its `.sha256.sig`:
 

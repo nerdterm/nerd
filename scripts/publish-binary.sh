@@ -4,6 +4,10 @@ set -eu
 # All of it in main, called by the last line: /bin/sh rereads a running script from disk, which the build can rewrite.
 main() {
     tag=${1:?usage: scripts/publish-binary.sh vX.Y.Z}
+    stop() { echo "publish: $*; stop and look at who changed it" >&2; exit 1; }
+    # A git hook exports these: they would point every git here at another repository, index or object store.
+    unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE \
+        GIT_GRAFT_FILE GIT_SHALLOW_FILE GIT_REPLACE_REF_BASE
     # Under ~/.local/bin, which no This-folder-only pane may write: one in the temp folders could change the build before it is signed.
     mkdir -p "$HOME/.local/bin"
     work=$(mktemp -d "$HOME/.local/bin/.nerd-publish.XXXXXX")
@@ -18,7 +22,6 @@ main() {
     # Every tag, so build.rs finds the last release for the update window's list of commits.
     g fetch -q --no-tags https://github.com/nerdterm/nerd.git +refs/heads/master:refs/remotes/origin/master '+refs/tags/*:refs/tags/*'
     # A draft release has no git tag until it is published: build its target commit.
-    stop() { echo "publish: $*; stop and look at who changed it" >&2; exit 1; }
     ref=$tag
     if ! g rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
         ref=$(gh release view "$tag" --repo nerdterm/nerd --json targetCommitish -q .targetCommitish)
@@ -64,6 +67,18 @@ main() {
     cargo_home=${CARGO_HOME:-$HOME/.cargo}
     rustup_home=${RUSTUP_HOME:-$HOME/.rustup}
     user_path=$PATH
+    # cargo and rustup read these in every folder above the source: a workspace root that patches dependencies, a
+    # toolchain that is any program, build config. Up to HOME, as the folders above it are root's; CARGO_HOME's is yours.
+    dir=$work
+    while :; do
+        for f in Cargo.toml rust-toolchain rust-toolchain.toml .cargo/config .cargo/config.toml; do
+            if [ -e "$dir/$f" ] || [ -L "$dir/$f" ]; then
+                [ "$dir/$f" = "$cargo_home/config.toml" ] || stop "$dir/$f is above the build folder, and cargo or rustup would read it"
+            fi
+        done
+        { [ "$dir" = "$HOME" ] || [ -z "$dir" ]; } && break
+        dir=${dir%/*}
+    done
     (cd "$src" \
         && TMPDIR="$tmp" cargo build --release --locked --target-dir "$work/target" \
         && TMPDIR="$tmp" HOME="$fresh" CARGO_HOME="$cargo_home" RUSTUP_HOME="$rustup_home" \

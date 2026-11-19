@@ -2,7 +2,9 @@
 # Renders the formula through a stub gh that answers only `release download`: nothing reaches GitHub.
 # The release's checksum is signed with a test key that a copy of install.sh carries.
 here=$(cd "$(dirname "$0")" && pwd)
-stub=$(mktemp -d)
+# In the checkout, not the per-user temp folder every isolated pane may write: the stand-ins here are run.
+mkdir -p "$here/../target"
+stub=$(cd "$here/../target" && mktemp -d "$PWD/.nerd-test.XXXXXX")
 trap 'rm -rf "$stub"' EXIT
 ssl=/usr/bin/openssl
 cat >"$stub/gh" <<'EOF'
@@ -75,6 +77,11 @@ GIT_CONFIG_GLOBAL=/dev/null git init -q "$c" && GIT_CONFIG_GLOBAL=/dev/null git 
 serve "$sha  $name" main
 (cd "$c" && PATH="$stub:$PATH" STUB=$stub sh scripts/publish-formula.sh --dry-run v1.2.3) >"$stub/out" 2>&1 \
     || { echo "publish-formula: run alone, it did not take the keys beside it: $(cat "$stub/out")" >&2; fail=1; }
+# Nor of a folder an exported CDPATH offers for the script's relative cd.
+mkdir -p "$stub/cdpath/scripts"
+cp "$stub/elsewhere/install.sh" "$stub/cdpath/install.sh"
+(cd "$c" && CDPATH="$stub/cdpath" PATH="$stub:$PATH" STUB=$stub sh scripts/publish-formula.sh --dry-run v1.2.3) >"$stub/out" 2>&1 \
+    || { echo "publish-formula: with CDPATH set, it did not take the keys beside it: $(cat "$stub/out")" >&2; fail=1; }
 [ -z "$(ls -A "$HOME/.local/bin")" ] || { echo "publish-formula: left $(ls -A "$HOME/.local/bin") in ~/.local/bin" >&2; fail=1; }
 if [ "$fail" -eq 0 ]; then
     echo "publish-formula: the formula renders only for a release signed with install.sh's keys"
