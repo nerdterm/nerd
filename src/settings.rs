@@ -112,6 +112,8 @@ pub struct Settings {
     hook_installed: bool,
     /// A hooked agent's resume line changed since the person confirmed it.
     resume_changed: bool,
+    /// The record of confirmed resume lines is there but could not be read.
+    resume_unread: bool,
     /// An install error, red, under the list; without one the selected row's hint shows there.
     message: Option<(bool, String)>,
     /// The window is attached from inside a pane: agent hooks are not changed from it.
@@ -148,11 +150,13 @@ pub const KEYS: &[Key] = &[
 
 impl Settings {
     pub fn new(cfg: &Config) -> Self {
+        let ask = crate::hook::first_installs();
         Self {
             selected: 0,
             cfg: cfg.clone(),
             hook_installed: crate::hook::is_installed(),
-            resume_changed: !crate::hook::first_installs().relined().is_empty(),
+            resume_changed: !ask.relined().is_empty(),
+            resume_unread: ask.unread,
             message: None,
             inside: false,
             scroll: Default::default(),
@@ -379,6 +383,7 @@ impl Settings {
             Item::Scrollback => c.scrollback.to_string(),
             Item::PaneGap => c.pane_gap.to_string(),
             Item::EditConfig => String::new(),
+            Item::Hook if self.hook_installed && self.resume_changed && self.resume_unread => "confirmed resume lines unreadable, confirm".into(),
             Item::Hook if self.hook_installed && self.resume_changed => "a resume line changed, confirm".into(),
             Item::Hook => if self.hook_installed { "installed" } else { "not installed" }.into(),
             Item::Messaging => on_off(crate::policy::current().on),
@@ -1114,6 +1119,19 @@ mod tests {
         let click = crossterm::event::MouseEvent { kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left), column: first.0.x + 2, row: first.0.y, modifiers: crossterm::event::KeyModifiers::NONE };
         s.mouse(click, short, &mut cfg, &rows);
         assert_eq!(s.chosen(), ROWS[first.1].1, "a click hits the row drawn there");
+    }
+
+    #[test]
+    fn an_unreadable_record_is_called_that_on_the_hook_item_and_fits_beside_its_label() {
+        let mut s = at(Item::Hook, &Config::default());
+        (s.hook_installed, s.resume_changed, s.resume_unread) = (true, true, true);
+        assert_eq!(s.hook_row_value(), "confirmed resume lines unreadable, confirm");
+        let screen = Rect::new(0, 0, 120, 60);
+        let mut buf = Buffer::empty(screen);
+        let rows = s.draw(&mut buf, screen, &theme());
+        let (row, _) = rows.iter().find(|(_, i)| ROWS[*i].2 == Item::Hook).unwrap();
+        let line = text_of(&buf, *row);
+        assert!(line.contains("Agent hooks ") && line.trim_end().ends_with("confirmed resume lines unreadable, confirm"), "{line:?}");
     }
 
     #[test]

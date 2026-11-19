@@ -901,14 +901,16 @@ impl Ask {
     pub fn intro(&self) -> String {
         let (relined, fresh) = (self.relined(), self.titles(false));
         match (relined.len(), fresh.len()) {
+            (_, 0) if self.unread => "The record of confirmed resume lines could not be read. Confirm the lines below to keep resuming those sessions.".into(),
             (1, 0) => "The resume line of this agent changed since you confirmed it; nerd types it into a restored pane only once you confirm again.".into(),
             (_, 0) => "The resume lines of these agents changed since you confirmed them; nerd types them into a restored pane only once you confirm again.".into(),
             (0, 1) => "nerd adds its hook to this agent, so it sees when it works and when it waits for you.".into(),
             (0, _) => "nerd adds its hook to these agents, so it sees when they work and when they wait for you.".into(),
             (r, f) => format!(
-                "nerd adds its hook to {}, so it sees when {} for you, and confirms the changed resume {} of {}; nerd types a resume line into a restored pane only once you confirm it.",
+                "nerd adds its hook to {}, so it sees when {} for you, and confirms the {}resume {} of {}; nerd types a resume line into a restored pane only once you confirm it.",
                 fresh.join(", "),
                 if f == 1 { "it works and when it waits" } else { "they work and when they wait" },
+                if self.unread { "" } else { "changed " },
                 if r == 1 { "line" } else { "lines" },
                 relined.join(", ")
             ),
@@ -3528,6 +3530,10 @@ console.log("{}")
         install_in(&home, true).unwrap();
         std::fs::write(&seen, "{not json").unwrap();
         assert_eq!(first_installs_in(&home, &seen).notice().as_deref(), Some("The record of confirmed resume lines could not be read; confirm them in Settings to keep resuming those sessions"));
+        assert_eq!(first_installs_in(&home, &seen).intro(), "The record of confirmed resume lines could not be read. Confirm the lines below to keep resuming those sessions.", "the window and the prompt say the same");
+        let row = |r: [&str; 3]| r.map(String::from);
+        let mixed = Ask { rows: vec![row(["A", "a", "a <id>"]), row(["B", "b", "b <id>"])], hooked: vec![true, false], unread: true, ..Default::default() };
+        assert_eq!(mixed.intro(), "nerd adds its hook to B, so it sees when it works and when it waits for you, and confirms the resume line of A; nerd types a resume line into a restored pane only once you confirm it.", "not called changed");
         std::fs::write(&seen, "{}").unwrap();
         assert_eq!(first_installs_in(&home, &seen).notice(), None, "a readable record with no entries is an older install, confirmed");
         let _ = std::fs::remove_dir_all(&home);

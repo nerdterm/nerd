@@ -722,6 +722,7 @@ fn serve(started: &mut bool) -> std::io::Result<()> {
                 }
                 Err(e) => {
                     warn(&format!("frame did not go out: {e}"));
+                    // ceiling: a frame queued for a client that dies before reading it counts as told; the way past is an acknowledgement from the client.
                     app.resume_unseen();
                     crate::clients::close(&mut app.clients, current, crate::clients::End::Lost, crate::clients::now());
                     sink.set(None);

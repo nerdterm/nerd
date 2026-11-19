@@ -3699,9 +3699,9 @@ fn a_yes_at_the_install_prompt_does_what_it_showed() {
     let _ = std::fs::remove_dir_all(&home);
 }
 
-/// What `nerd --install-hook` prints after the answer carries no format character from a manifest's title.
+/// What `nerd --install-hook` prints after the answer, and `nerd --uninstall-hook`, carry no format character from a manifest's title.
 #[test]
-fn the_lines_after_the_answer_print_no_format_characters() {
+fn install_and_uninstall_hook_print_no_format_characters() {
     let home = std::env::temp_dir().join(format!("nerd-prompt-bidi-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&home);
     let state = home.join("state");
@@ -3726,6 +3726,16 @@ fn the_lines_after_the_answer_print_no_format_characters() {
     child.stdin.take().unwrap().write_all(b"y\n").unwrap();
     let said = String::from_utf8_lossy(&child.wait_with_output().unwrap().stdout).into_owned();
     assert!(said.contains("Bidi: ") && !said.contains('\u{202E}'), "{said:?}");
+    let out = Command::new(env!("CARGO_BIN_EXE_nerd"))
+        .arg("--uninstall-hook")
+        .env("HOME", &home)
+        .env("NERD_STATE_DIR", &state)
+        .env_remove("NERD_SOCKET")
+        .env_remove("NERD_INSTANCE")
+        .output()
+        .unwrap();
+    let gone = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(gone.contains("Removed from Bidi") && !gone.contains('\u{202E}'), "{gone:?}");
     let _ = std::fs::remove_dir_all(&home);
 }
 

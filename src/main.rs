@@ -215,7 +215,7 @@ fn run() -> std::io::Result<()> {
         }
         Some("--uninstall-hook") => {
             let gone = hook::uninstall()?;
-            println!("{}", if gone.is_empty() { "No hook was installed".to_string() } else { format!("Removed from {}", gone.join(", ")) });
+            println!("{}", if gone.is_empty() { "No hook was installed".to_string() } else { render::unspoofed(&format!("Removed from {}", gone.join(", "))) });
             return Ok(());
         }
         Some("--uninstall") => {
