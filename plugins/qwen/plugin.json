@@ -26,6 +26,11 @@
       "value": ["--resume", "-r"],
       "flag": ["--continue", "-c"]
     },
+    "blocked_text": ["› 1."],
+    "idle_text": [">"],
+    "busy_text": ["esc to cancel)"],
+    "busy_at": "above_rule",
+    "placeholder_text": ["Type your message or @path/to/file"],
     "data": ["~/.qwen/sessions", "~/.qwen/projects", "~/.qwen/tmp", "~/.qwen/usage", "~/.qwen/tip_history.json", "~/.qwen/usage_record.jsonl"],
     "network": { "hosts": ["chat.qwen.ai", "portal.qwen.ai", "dashscope.aliyuncs.com", "dashscope-intl.aliyuncs.com"], "ports": [443] },
     "own_sandbox": "start it without --sandbox"

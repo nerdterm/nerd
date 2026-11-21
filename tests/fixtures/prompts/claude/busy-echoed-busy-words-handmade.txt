@@ -1,0 +1,22 @@
+cursor 17 2 shown size 143x21
+❯ [message from sender via nerd, id 01M8036RP10000000000000000; reply: nerd send --reply 01M8036RP10000000000000000 "…"]
+  case6 first paragraph: reply with only the word PONG6
+
+  second paragraph: use no tools
+
+⏺ PONG6
+
+✻ Sautéed for 0s · done 11:21 PM
+
+❯ [message from sender via nerd, id 01M8037CZ60000000000000000; reply: nerd send --reply 01M8037CZ60000000000000000 "…"]
+  case7: the footer may say esc to interrupt; reply with only the word PONG7, use no tools
+
+⏺ PONG7
+
+✻ Baked for 1s · done 11:21 PM
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  [STATUS]   Fable 5.2 (medium)
+  ⏸ manual mode on · esc to interrupt · ← 1 agent

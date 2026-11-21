@@ -1,0 +1,31 @@
+cursor 25 0 hidden size 100x30
+
+
+ Warning: tmux extended-keys is off. Modified Enter keys may not work. Add `set -g extended-keys
+ on` to ~/.tmux.conf and restart tmux.
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ Package Updates Available
+ Package updates are available. Run pi update --extensions
+ Packages:
+ - pi-web-access
+ - visual-explainer
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ Warning: MCP servers need attention:
+   jev: failed: Failed to resolve MCP server "jev" env "TYPESAFE_API_KEY" from shell command:
+ security find-generic-password -ws typesafe-api-key
+ Run /mcp to fix.
+
+
+ Reply with the single word: ready
+
+
+ ready
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+/private/tmp/claude-501/-Users-person-dev-projects-nerd/00000000-0000-0000-0000-000000000000/scra...
+
+mcp: unconfigured

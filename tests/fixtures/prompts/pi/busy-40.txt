@@ -1,0 +1,31 @@
+cursor 25 0 hidden size 40x30
+ 28
+ 29
+ 30
+
+ Took 30.2s
+
+
+ Counted 1–30, one second apart.
+
+
+ Count slowly to 10 using the shell,
+ sleep 1 between numbers.
+
+
+
+ $ for i in $(seq 1 10); do echo $i;
+ sleep 1; done (timeout 30s)
+
+ 1
+ 2
+
+ Elapsed 1.0s
+
+
+── ⠧ Working ───────────────────────────
+
+────────────────────────────────────────
+/private/tmp/claude-501/-Users-person...
+
+mcp: unconfigured

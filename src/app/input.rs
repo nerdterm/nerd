@@ -1265,7 +1265,7 @@ impl App {
 
     /// Delivery waits a while after the owner typed into a pane.
     fn owner_typed(&mut self, id: PaneId) {
-        self.mail.owner_typed = Some((id, Instant::now()));
+        self.mail.owner_typed.insert(id, Instant::now());
     }
 }
 

@@ -1,0 +1,31 @@
+cursor 26 17 shown size 100x30
+
+ ▐▛███▛█   Claude Code v2.1.330
+▝▜██████▀  Fable 5.2
+ ▝▝   ▝▝   /…/00000000-0000-0000-0000-000000000000/scratchpad/build-typing/proj
+
+
+❯ Answer in English. Reply with the single word: ready
+
+⏺ ready
+
+✻ Churned for 1s · done 6:12 PM
+
+❯ Count slowly to 30 using the shell: a loop that prints each number with sleep 1 between them.
+
+  Ran 1 shell command
+
+⏺ Done — the loop counted from 1 to 30, one number per second, and finished without errors.
+
+✻ Cooked for 33s · done 6:13 PM
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ half typed text
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  [STATUS]   Fable 5.2 (medium)
+  ⏸ manual mode on

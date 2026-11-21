@@ -1,0 +1,31 @@
+cursor 23 7 hidden size 100x30
+│ 26                                                                                           │
+│ 27                                                                                           │
+│ 28                                                                                           │
+│ 29                                                                                           │
+│ 30                                                                                           │
+╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+
+✦ Finished counting from 1 to 30 with 1-second intervals.
+▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄
+ > Think about the number 7 for a while, then reply with one short sentence about it.
+▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+✦ Seven is a prime number uniquely celebrated across mathematics and culture, often regarded as the
+  world's most popular favorite number.
+▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄
+ > If you have a tool for asking the user a question, use it now to ask me which colour I prefer,
+   letting me type any answer. Otherwise just say you have none.
+▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+
+╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Answer Questions                                                                                 │
+│                                                                                                  │
+│ Which colour do you prefer?                                                                      │
+│                                                                                                  │
+│ > gre                                                                                            │
+│                                                                                                  │
+│                                                                                                  │
+│ Enter to submit · Esc to cancel                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+

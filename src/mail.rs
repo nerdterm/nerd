@@ -247,11 +247,30 @@ impl Via {
 }
 
 impl Message {
-    /// Wall time it entered its state.
+    /// Wall time it entered its state; a step that only adds a note to the same state does not move it.
     pub fn since(&self) -> u64 {
-        self.events.last().map_or(self.created, |s| s.at)
+        self.events.iter().rev().take_while(|s| s.state == self.state).last().map_or(self.created, |s| s.at)
+    }
+
+    /// Why a queued message waits for its agent, when that is the reason: `WAITING_FOR_PROMPT` or `WAITING_FOR_INBOX`.
+    pub fn waiting_note(&self) -> Option<&'static str> {
+        let note = self.events.last()?.note.as_deref()?;
+        [WAITING_FOR_PROMPT, WAITING_FOR_INBOX].into_iter().find(|w| *w == note).filter(|_| self.state == State::Queued)
+    }
+
+    /// What the Messages window says in place of the bare state: why it waits, or that it sits typed and unsent.
+    pub fn shown_note(&self) -> Option<&'static str> {
+        let unsent = self.state == State::Delivered && self.events.last().is_some_and(|s| s.note.as_deref() == Some(NOT_SUBMITTED));
+        self.waiting_note().or(unsent.then_some(NOT_SUBMITTED))
     }
 }
+
+/// The note of a message held until its agent's idle prompt shows, and the Messages window's words for it.
+pub const WAITING_FOR_PROMPT: &str = "waiting for its prompt";
+/// The same for an agent nerd never types into: only `nerd inbox` reads it.
+pub const WAITING_FOR_INBOX: &str = "waiting for nerd inbox";
+/// The note of a message typed into an agent's input and left there unsent.
+pub const NOT_SUBMITTED: &str = "typed, not submitted";
 
 pub fn path() -> PathBuf {
     crate::session::state_dir().join("messages.jsonl")
@@ -337,7 +356,8 @@ pub fn framed(m: &Message) -> String {
 /// Never the text.
 pub fn log_line(m: &Message) -> String {
     let via = m.via.map(|v| format!(" via {}", v.word())).unwrap_or_default();
-    format!("message {} {} -> {} {} B hop {}{via}: {}", m.id, m.from.said(), m.to.said(), m.text.len(), m.hops.len().saturating_sub(1), m.state.words())
+    let why = m.waiting_note().map(|n| format!(" ({n})")).unwrap_or_default();
+    format!("message {} {} -> {} {} B hop {}{via}: {}{why}", m.id, m.from.said(), m.to.said(), m.text.len(), m.hops.len().saturating_sub(1), m.state.words())
 }
 
 /// The words of a text for comparing two messages: lowercase runs of letters and digits.

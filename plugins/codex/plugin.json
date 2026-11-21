@@ -33,6 +33,10 @@
       "Do you want to approve network access to",
       "› 1."
     ],
+    "idle_text": ["›"],
+    "busy_text": ["esc to interrupt)"],
+    "busy_at": "above",
+    "placeholder_text": ["Ask Codex to do anything"],
     "data": ["~/.codex/sessions", "~/.codex/log", "~/.codex/history.jsonl", "~/.codex/session_index.jsonl", "~/.codex/installation_id", "~/.codex/thread-writer-locks"],
     "network": { "hosts": ["api.openai.com", "auth.openai.com", "chatgpt.com"], "ports": [443] },
     "own_sandbox": "start it with --sandbox danger-full-access"

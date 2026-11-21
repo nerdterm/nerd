@@ -1,0 +1,31 @@
+cursor 23 5 shown size 100x30
+
+  ┃
+  ┃  Reply with the single word: ready
+  ┃
+
+     ready
+
+     ▣  Build · Big Pickle · 3.1s
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  ┃
+  ┃
+  ┃
+  ┃  Build · Big Pickle OpenCode
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+   /private/tmp/claude-501/-Users-person-dev-projects-nerd/00000000-0000-    14.4K (7%ctrl+p
+   0000-0000-000000000000/scratchpad/build-typing/proj                                commands
+

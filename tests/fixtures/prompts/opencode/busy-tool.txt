@@ -1,0 +1,31 @@
+cursor 24 5 shown size 100x30
+
+     ▣  Build · Big Pickle · 3.1s
+
+  ┃
+  ┃  Count slowly to 30 using the shell: a loop that prints each number with sleep 1 between them.
+  ┃
+
+     + Thought: 298ms
+
+  ┃
+  ┃  ⠦ for i in $(seq 1 30); do echo "$i"; sleep 1; done
+  ┃
+  ┃  1
+  ┃  2
+  ┃  3
+  ┃  4
+  ┃  5
+  ┃  6
+  ┃  7
+  ┃
+
+     ▣  Build · Big Pickle
+
+  ┃
+  ┃
+  ┃
+  ┃  Build · Big Pickle OpenCode
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+   ⬝■■■■■■⬝  esc interrupt                                             14.4K (7%)  ctrl+p commands
+

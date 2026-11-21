@@ -1,0 +1,31 @@
+cursor 24 2 shown size 40x30
+                                       │
+  ∴︎ Thought briefly (click or ctrl+o   │
+  to expand)                           │
+                                       │
+  ◆︎ Seven is often considered lucky,   │
+    symbolizing completeness and       │
+    perfection in many cultures.       │
+                                       │
+  > Write a 300 word story about a     │
+    lighthouse.                        │
+                                       │
+  ∴︎ Thought briefly (click or ctrl+o   │
+  to expand)                           │
+                                       █
+  ◆︎ The storm had been coming for      █
+    days, a dark swell of wind and     █
+    wave that gnawed at the cliffs     █
+    like a relentless beast. At the    █
+    very edge,                         █
+
+  .. Ensuring the magic smoke stays insi
+de…
+  (1s · esc to cancel)
+────────────────────────────────────────
+>   Type your message or @path/to/file
+────────────────────────────────────────
+  ➜ proj · model ·
+  
+  Enter to steer · Ctrl+Q to queue · …
+  

@@ -1,0 +1,31 @@
+cursor 14 16 shown size 100x30
+
+
+
+
+
+
+
+                                                                ▄
+                               █▀▀█ █▀▀█ █▀▀█ █▀▀▄ █▀▀▀ █▀▀█ █▀▀█ █▀▀█
+                               █  █ █  █ █▀▀▀ █  █ █    █  █ █  █ █▀▀▀
+                               ▀▀▀▀ █▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀
+
+
+             ┃
+             ┃  Ask anything… "Fix broken tests"
+             ┃
+             ┃  Build · Big Pickle OpenCode
+             ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+                                                             tab agents  ctrl+p commands
+
+
+
+                      ● Tip Run /connect to add an AI provider and start coding
+
+
+
+
+  /private/tmp/claude-501/-Users-person-dev-projects-nerd/00000000-0000-0000-0000-          1.19.5
+  000000000000/scratchpad/build-typing/proj
+

@@ -1,0 +1,31 @@
+cursor 26 2 shown size 100x30
+
+ ▐▛███▛█   Claude Code v2.1.330
+▝▜██████▀  Fable 5.2
+ ▝▝   ▝▝   /…/00000000-0000-0000-0000-000000000000/scratchpad/build-typing/proj
+
+
+❯ Answer in English. Reply with the single word: ready
+
+⏺ ready
+
+✻ Churned for 1s · done 6:12 PM
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  [STATUS]   Fable 5.2 (medium)
+  ⏸ manual mode on · ← 1 agent

@@ -1,0 +1,31 @@
+cursor 6 12 hidden size 100x30
+
+   ▄▄▄▄▄▄  ▄▄     ▄▄ ▄▄▄▄▄▄▄ ▄▄▄    ▄▄   ┌───────────────────────────────────────────────────────┐
+  ██╔═══██╗██║    ██║██╔════╝████╗  ██║  │ >_ Qwen Code (v0.27.0)                                │
+  ██║   ██║██║ █╗ ██║█████╗  ██╔██╗ ██║  │                                                       │
+  ██║▄▄ ██║██║███╗██║██╔══╝  ██║╚██╗██║  │ provider | model                                     │
+  ╚██████╔╝╚███╔███╔╝███████╗██║ ╚████║  │ /private/.../scratchpad/build-typing/proj             │
+   ╚══▀▀═╝  ╚══╝╚══╝ ╚══════╝╚═╝  ╚═══╝  └───────────────────────────────────────────────────────┘
+
+  Tips: Add a QWEN.md file to give Qwen Code persistent project context.
+  ●︎ Read context files: ~/.qwen/output-language.md
+
+  > Reply with the single word: ready
+
+  .. Warp speed engaged... (1s · esc to cancel)
+────────────────────────────────────────────────────────────────────────────────────────────────────
+>   Type your message or @path/to/file
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  ➜ proj · model
+  Enter to steer · Ctrl+Q to queue · Auto mode (shift + tab to cycle)
+
+
+
+
+
+
+
+
+
+
+

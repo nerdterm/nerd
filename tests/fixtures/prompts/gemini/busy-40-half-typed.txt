@@ -1,0 +1,31 @@
+cursor 25 18 hidden size 40x30
+▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄
+ > Count slowly to 30 using the shell:
+   a loop that prints each number with
+   sleep 1 between them.
+▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+
+╭──────────────────────────────────╮
+│ ⊶  Shell for i in {1..30}; do e… │
+│                                  │
+│ ... 20 hidden (Ctrl+O) ...       │
+│ 21                               │
+│ 22                               │
+│ 23                               │
+│ 24                               │
+│ 25                               │
+│ 26                               │
+│                                  │
+╰──────────────────────────────────╯
+
+
+ ⠸ Thinking... (esc to cancel, 26s)
+────────────────────────────────────────
+ Shift+Tab to accept edits
+
+▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄
+ > half typed text
+▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+ workspace               sandbox
+ /private/.../proj       no sandbox   …
+

@@ -56,7 +56,7 @@ const ALLOW: &[(&str, &str, &str, &str, &str, &str)] = &[
     ("src/app/input.rs", "key", "pty-write", "", "pane", "your keys"),
     ("src/app/input.rs", "pane_type", "pty-write", "", "pane", "text you type through a dialog"),
     ("src/app/input.rs", "mouse", "pty-write", "", "pane", "your mouse, to a program that asked for it"),
-    ("src/app/input.rs", "paste_into", "pty-write", "", "pane", "what you paste, and a message nerd types into an idle agent's pane, its frame first"),
+    ("src/app/input.rs", "paste_into", "pty-write", "", "pane", "what you paste, and a message nerd types into an agent's pane at its idle prompt, its frame first"),
     ("src/app/deliver.rs", "submit_typed", "pty-write", "", "pane", "the carriage return 150 ms after a typed message"),
     ("src/hook.rs", "relay_cmd", "spawn", "\"/bin/sh\"", "pane", "the hook's answer for an isolated pane: a waiting message or nerd's note, handed to the agent"),
     // local: these never leave the Mac.

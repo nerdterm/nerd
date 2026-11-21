@@ -1,0 +1,31 @@
+cursor 25 15 hidden size 40x30
+ loop that prints each number with
+ sleep 1 between them.
+
+
+ The user wants a loop counting to 30
+ with sleep 1. That takes 30 seconds.
+ Just run it.
+
+
+ $ for i in $(seq 1 30); do echo $i;
+ sleep 1; done (timeout 60s)
+
+ ... (25 earlier lines, ctrl+o to ex...
+ 26
+ 27
+ 28
+ 29
+ 30
+
+ Took 30.2s
+
+
+ Counted 1–30, one second apart.
+
+────────────────────────────────────────
+half typed text
+────────────────────────────────────────
+/private/tmp/claude-501/-Users-person...
+
+mcp: unconfigured

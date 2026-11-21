@@ -317,7 +317,14 @@ impl App {
         } else {
             self.close_tab(si, ti);
         }
+        self.forget_closed_panes();
         self.dirty = true;
+    }
+
+    /// The owner's last keys into panes that are gone no longer hold anything.
+    fn forget_closed_panes(&mut self) {
+        let live: std::collections::HashSet<PaneId> = self.spaces.iter().flat_map(|s| s.tabs.iter().flat_map(|t| t.panes.keys().copied())).collect();
+        self.mail.owner_typed.retain(|p, _| live.contains(p));
     }
 
     /// Puts a shell back into a pane whose process was something else. Returns false for a
@@ -407,6 +414,7 @@ impl App {
             self.run_zoom = false;
         }
         self.run_widths.remove(&id);
+        self.mail.owner_typed.remove(&id);
         crate::hook::clear_state(id);
         crate::log::info(&format!("pane {id}: restarted by the owner as pane {new}"));
         self.dirty = true;
@@ -507,6 +515,7 @@ impl App {
             return;
         }
         self.spaces.remove(i);
+        self.forget_closed_panes();
         // Closed to the left of the active one: it shifted by one, it didn't stay put.
         if i < self.active {
             self.active -= 1;
@@ -534,6 +543,7 @@ impl App {
             sp.active_tab -= 1;
         }
         sp.active_tab = sp.active_tab.min(sp.tabs.len() - 1);
+        self.forget_closed_panes();
     }
 }
 

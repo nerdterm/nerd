@@ -1,0 +1,31 @@
+cursor 26 2 shown size 100x30
+
+  Tips: Add a QWEN.md file to give Qwen Code persistent project context.
+  ●︎ Read context files: ~/.qwen/output-language.md
+
+  > Reply with the single word: ready
+
+  ∴︎ Thought briefly (click or ctrl+o to expand)
+
+  ◆︎ ready
+
+  > Count slowly to 30 using the shell: a loop that prints each number with sleep 1 between them.
+
+  ∴︎ Thought briefly (click or ctrl+o to expand)
+  ✓ Shell for i in {1..30}; do echo $i; sleep 1; done [in /private/tmp/claude-501/-Users-person-de
+    v-projects-nerd/00000000-0000-0000-0000-000000000000/scratchpad/build-typing/proj] (Count from
+     1 to 30 with a one‑second pause between numbers)
+    ... first 25 lines hidden ...
+    26
+    27
+    28
+    29
+    30
+
+  ◆︎ The shell loop counted from 1 to 30, printing each number with a one‑second pause.
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+>   Type your message or @path/to/file
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  ➜ proj · model
+  ⏸ Ask permissions (shift + tab to cycle)

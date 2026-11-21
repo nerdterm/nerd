@@ -1,0 +1,31 @@
+cursor 27 17 shown size 100x30
+ [Current]  Sessions   Issues   Pull requests   Gists
+
+   9                                                                                               ┃
+   10                                                                                              ┃
+   11                                                                                              ┃
+   12                                                                                              ┃
+   13                                                                                              ┃
+   14                                                                                              ┃
+   15                                                                                              ┃
+   16                                                                                              ┃
+   17                                                                                              ┃
+   18                                                                                              ┃
+   19                                                                                              ┃
+   20                                                                                              ┃
+   21                                                                                              ┃
+   22                                                                                              ┃
+   23                                                                                              ┃
+   24                                                                                              ┃
+   25                                                                                              ┃
+   26                                                                                              ┃
+   27                                                                                              ┃
+   28                                                                                              ┃
+   29                                                                                              ┃
+   30                                                                                              ┃
+                                                                                                   ┃
+ /private/tmp/claude-501/-Users-person-dev-projects-nerd/.../proj            
+────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ half typed text
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ Interactive · Manual Approval · @ files/sessions · # issues      Copilot Fusion → mai-code-2-flash

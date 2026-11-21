@@ -743,9 +743,10 @@ impl Messages {
         }
         for m in today {
             let via = m.via.map_or("-".to_string(), |v| format!("{v:?}").to_lowercase());
+            let state = m.shown_note().map_or_else(|| m.state.words(), str::to_string);
             let mut l: Line<Click> = vec![
                 (format!("{} → {}", m.from.name(), m.to.name()), g.fg(theme.text), None),
-                (format!("  {via}  {}  {}", m.state.words(), age(m)), g.fg(theme.muted), None),
+                (format!("  {via}  {state}  {}", age(m)), g.fg(theme.muted), None),
             ];
             if m.via == Some(crate::mail::Via::Inbox) {
                 text(&mut l, format!("  {INBOX_NOTE}"), g.fg(theme.faint));
@@ -1494,6 +1495,24 @@ pub(crate) mod tests {
             out += &format!("== {w}x{h}\n{}", crate::app::snapshots::dump(&buf, screen));
         }
         crate::hook::tests::golden("ui/messages.txt", &out);
+    }
+
+    #[test]
+    fn a_message_waiting_for_its_agents_prompt_says_so_where_queued_shows() {
+        let mut v = view();
+        let mut waits = msg("m4", "planner", Some("coder"), State::Queued, 20);
+        waits.events.push(Step { state: State::Queued, at: waits.created, note: Some(crate::mail::WAITING_FOR_PROMPT.into()) });
+        let mut inbox = msg("m6", "planner", Some("vault"), State::Queued, 15);
+        inbox.events.push(Step { state: State::Queued, at: inbox.created, note: Some(crate::mail::WAITING_FOR_INBOX.into()) });
+        let mut unsent = msg("m7", "coder", Some("reader"), State::Delivered, 5);
+        unsent.via = Some(crate::mail::Via::Typed);
+        unsent.events.push(Step { state: State::Delivered, at: unsent.created, note: Some(crate::mail::NOT_SUBMITTED.into()) });
+        v.today = vec![waits, inbox, unsent, msg("m5", "coder", Some("planner"), State::Queued, 10)];
+        let rows: Vec<String> = texts(&Messages::new().lines(&v, &verdict, 120, &Theme::dark()).0).iter().map(|l| norm(l)).collect();
+        assert!(rows.iter().any(|l| l.starts_with("planner → coder - waiting for its prompt ")), "{rows:#?}");
+        assert!(rows.iter().any(|l| l.starts_with("planner → vault - waiting for nerd inbox ")), "{rows:#?}");
+        assert!(rows.iter().any(|l| l.starts_with("coder → planner - queued ")), "{rows:#?}");
+        assert!(rows.iter().any(|l| l.starts_with("coder → reader typed typed, not submitted ")), "{rows:#?}");
     }
 
     /// The text of every line.
