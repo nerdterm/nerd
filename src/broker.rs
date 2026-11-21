@@ -21,6 +21,14 @@ const GRACE: Duration = Duration::from_millis(250);
 const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 /// Its connection ended: a pane still starting will never be answered.
 static GONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// This-folder-only panes' own temp folders, each removed when its pane's process ends or the broker leaves.
+static TEMPS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+/// A link put in its place goes, never what it points at.
+fn remove_temp(d: &std::path::Path) {
+    let _ = std::fs::remove_dir_all(d);
+    TEMPS.lock().unwrap_or_else(|e| e.into_inner()).retain(|t| t != d);
+}
 
 /// How long a pane waits for its spawn's answer: under heavy load a live broker's fork and exec take seconds.
 pub fn spawn_wait() -> Duration {
@@ -582,6 +590,11 @@ fn serve(sock: UnixStream) -> std::io::Result<()> {
     if n > 0 || !pgs.is_empty() {
         std::thread::sleep(GRACE + Duration::from_millis(50));
     }
+    // The panes go with the broker, even one whose process has not ended yet.
+    let left = std::mem::take(&mut *TEMPS.lock().unwrap_or_else(|e| e.into_inner()));
+    for d in left {
+        remove_temp(&d);
+    }
     for pg in pgs {
         let _ = killpg(pg, Signal::SIGKILL);
     }
@@ -662,6 +675,8 @@ fn open_pane(
     }
     let mut child = pair.slave.spawn_command(cmd).map_err(|e| std::io::Error::other(e.to_string()))?;
     let pid = child.process_id().unwrap_or(0);
+    let temp = crate::isolation::own_temp(argv, env, pid);
+    TEMPS.lock().unwrap_or_else(|e| e.into_inner()).extend(temp.clone());
     let killer = child.clone_killer();
     drop(pair.slave);
 
@@ -675,6 +690,9 @@ fn open_pane(
     let out = out.clone();
     std::thread::spawn(move || {
         let how = child.wait().ok().map(pty_how);
+        if let Some(d) = temp {
+            remove_temp(&d);
+        }
         reply(&out, &Rep::Exited { id, how }, None);
     });
 

@@ -220,7 +220,7 @@ struct Places {
     nerd: Vec<PathBuf>,
     /// Control sockets of the terminal and multiplexers nerd runs inside, from the environment.
     outer: Vec<PathBuf>,
-    /// The pane's own folder for tmux, Zellij and screen, when the wrapper made it.
+    /// The pane's own temp folder, tmux's, Zellij's and screen's too, when the wrapper made it.
     mux: Option<PathBuf>,
 }
 
@@ -282,10 +282,20 @@ fn outer(var: impl Fn(&str) -> Option<String>, tmp: &Path, uid: u32) -> Vec<Path
     kitty.into_iter().chain(dirs.into_iter().flatten()).chain(tmux).chain(inside).filter(|p| p.is_absolute()).collect()
 }
 
-/// A folder of the pane's program alone, named from `$TMPDIR` as given: from its canonical form screen's and Zellij's socket paths grow too long.
-/// ceiling: the folder stays in `$TMPDIR` after the program ends, until macOS clears old temp files or its pid comes back.
+/// A folder of the pane's program alone, its `TMPDIR` and its multiplexers', named from `$TMPDIR` as given: from its canonical form socket paths grow too long.
 fn mux_dir(tmp: &Path, pid: u32) -> PathBuf {
     tmp.join(format!("nm{pid}"))
+}
+
+/// The folder of its own a This-folder-only pane's wrapper made, which goes once its process `pid` has ended (the broker).
+/// ceiling: a broker from an older nerd, kept across an update, leaves it until macOS clears old temp files; stopping and starting nerd is the way past.
+pub fn own_temp(argv: &[String], env: &[(String, String)], pid: u32) -> Option<PathBuf> {
+    let at = argv.iter().position(|a| a == "--pane-exec")?;
+    let end = argv.iter().position(|a| a == "--").unwrap_or(argv.len());
+    argv.get(at + 1..end)?.chunks(2).any(|c| c == ["--files", "folder"]).then(|| {
+        let tmp = env.iter().rev().find(|(k, _)| k == "TMPDIR").map_or_else(tmp_dir, |(_, v)| PathBuf::from(v));
+        mux_dir(&tmp, pid)
+    })
 }
 
 /// An empty 0700 `mux` with `s` inside; a leftover is replaced only when it is a real folder of `uid`'s.
@@ -331,9 +341,9 @@ const RUN_LATER_DIRS: &[&str] = &[
     // Terminals' configs, which start programs and which `nerd --preset` edits.
     ".config/ghostty", "Library/Application Support/com.mitchellh.ghostty", ".config/kitty", ".config/wezterm", "Library/Application Support/iTerm2/DynamicProfiles",
 ];
-/// Under HOME, sockets that act as the owner outside the pane: ssh agents and connections, Docker, colima, OrbStack, Rancher, lima, podman, WezTerm, iTerm2, screen.
+/// Under HOME, sockets that act as the owner outside the pane: ssh agents and connections, gpg-agent, git's credential cache, Docker, colima, OrbStack, Rancher, lima, podman, WezTerm, iTerm2, screen.
 const SOCKETS: &[&str] = &[
-    ".ssh", ".docker", "Library/Containers/com.docker.docker", ".colima", ".orbstack", ".rd", ".lima", "Library/Application Support/rancher-desktop", ".local/share/containers/podman",
+    ".ssh", ".gnupg", ".cache/git/credential", ".git-credential-cache", ".docker", "Library/Containers/com.docker.docker", ".colima", ".orbstack", ".rd", ".lima", "Library/Application Support/rancher-desktop", ".local/share/containers/podman",
     "Library/Group Containers/2BUA8C4S2C.com.1password/t", "Library/Containers/com.maxgoedjen.Secretive.SecretAgent", ".local/share/wezterm", "Library/Application Support/iTerm2", ".screen",
 ];
 /// The part of SOCKETS whose folders hold a terminal's or multiplexer's sockets: a pane writes there no more than it connects.
@@ -398,7 +408,6 @@ fn text(p: &Places, files: &Files, network: &Network, cwd: &Path, msock: &Path, 
     let mux_allow = |op: &str| mux.as_ref().map_or(String::new(), |m| format!("(allow {op} (subpath {m}))\n"));
     let tmp_re = crate::plugins::regex_escape(&tmp.to_string_lossy());
     // Where tmux, Zellij, screen and shared daemons (Codex's) keep sockets other programs trust: a pane may neither plant nor reach one there.
-    // ceiling: sockets in temp folders are refused by name, so another program's daemon or a renamed Codex stays reachable; deny-by-default unix sockets with an allowlist (msock, DNS) is the way past.
     let muxes = format!(
         " (regex #\"^/private/tmp/tmux-[0-9]+(/|$)\") (regex #\"^/private/tmp/zellij-[0-9]+(/|$)\") (regex #\"^/private/tmp/u?screens(/|$)\") \
          (regex #\"^{tmp_re}/zellij-[0-9]+(/|$)\") (regex #\"^{tmp_re}/\\.screen(/|$)\") (regex #\"^{tmp_re}/nm[0-9]+(/|$)\") \
@@ -492,14 +501,27 @@ fn text(p: &Places, files: &Files, network: &Network, cwd: &Path, msock: &Path, 
     }
     match network {
         Network::Open if *files == Files::Folder => {
-            // DNS's own socket must keep working, so unix sockets are denied by place; Codex's daemon (in /private/tmp, ~/.codex or $TMPDIR, where Codex may put it) runs its tools outside the pane, an ssh agent signs and Docker runs as the owner.
+            // Known sockets stay refused inside the pane's folder, and no socket, nor a folder in the temp folders, leaves a place not the pane's: moved in, another program's would be reached.
+            // ceiling: a folder holding another program's socket in ~/Library/Caches or /private/var/folders outside the temp folder can be moved whole into the pane's folders and that socket reached; refusing folder renames there, which package managers rely on, is the way past.
             let run = canon(&p.run);
+            // A folder holding HOME or a temp folder would bring every socket below it.
+            let real = canon(cwd);
+            let own = ![canon(&p.home), "/private/tmp".into(), "/private/var/folders".into(), tmp.clone()].iter().any(|t| t.starts_with(&real));
+            let cwd = rules("subpath", [cwd.to_path_buf()])?;
+            let (head, tail) = (
+                format!("(regex #\"^/private/tmp/cc-socks\") (regex #\"^{tmp_re}/cc-socks\") (regex #\"^{}/com\\.apple\\.launchd\\.[^/]+/Listeners$\")", crate::plugins::regex_escape(&run.to_string_lossy())),
+                rules("literal", [run.join("docker.sock")].into_iter().chain(p.agent.clone()).chain(p.nerd.iter().cloned()))?
+                    + &rules("subpath", [root.clone(), p.home.join(".codex"), tmp.join("podman")].into_iter().chain(SOCKETS.iter().map(|s| p.home.join(s))))?,
+            );
+            let not_mux = mux.as_ref().map_or(String::new(), |m| format!(" (require-not (subpath {m}))"));
+            // ceiling: only folders right in the temp folders stay put, so a socket in a folder below them can still be carried in (refusing every depth breaks more cleanup); a bare `mktemp -d` folder in $TMPDIR is free too, as macOS's mktemp ignores TMPDIR, so another program's socket in one is exposed; one made by `mktemp -d -t` or from a /tmp template is left behind empty.
+            let shared = format!(" (regex #\"^/private/tmp/[^/]+$\") (require-all (regex #\"^{tmp_re}/[^/]+$\") (require-not (regex #\"^{tmp_re}/tmp\\.{}$\")))", "[A-Za-z0-9]".repeat(10));
+            let (keep, cwd_allow) = if own { (format!(" (require-not{cwd})"), format!("(allow network-outbound{cwd})\n")) } else { Default::default() };
             out += &format!(
-                "(deny network-outbound (regex #\"^/private/tmp/cc-socks\") (regex #\"^{tmp_re}/cc-socks\") (regex #\"^{}/com\\.apple\\.launchd\\.[^/]+/Listeners$\"){muxes}{}{})\n\
-                 (allow network-outbound (literal {msock}))\n{}",
-                crate::plugins::regex_escape(&run.to_string_lossy()),
-                rules("literal", [run.join("docker.sock")].into_iter().chain(p.agent.clone()).chain(p.nerd.iter().cloned()))?,
-                rules("subpath", [root.clone(), p.home.join(".codex"), tmp.join("podman")].into_iter().chain(SOCKETS.iter().map(|s| p.home.join(s))))?,
+                "(deny file-write-unlink (require-all (vnode-type SOCKET){keep}{not_mux}))\n(deny file-write-unlink (require-all (vnode-type SOCKET) (require-any {head}{tail})))\n\
+                 (deny file-write-unlink (require-all (vnode-type DIRECTORY) (require-any{shared}){keep}{not_mux}))\n\
+                 (deny network-outbound (remote unix-socket))\n{cwd_allow}(deny network-outbound {head}{muxes}{tail})\n\
+                 (allow network-outbound (literal {msock}) (literal \"/private/var/run/mDNSResponder\") (literal \"/private/var/run/syslog\"))\n{}",
                 mux_allow("network-outbound"),
             );
         }
@@ -677,11 +699,12 @@ pub fn pane_exec_main(args: &[String]) -> std::io::Result<()> {
     let mux = match files {
         Files::Folder => match fresh_mux(&mux, crate::policy::owner_uid()) {
             Ok(()) => {
-                cmd.env("TMUX_TMPDIR", &mux).env("ZELLIJ_SOCKET_DIR", &mux).env("SCREENDIR", mux.join("s"));
+                // The slash ends it as macOS's own TMPDIR does: some programs append a name without one.
+                cmd.env("TMPDIR", format!("{}/", mux.display())).env("TMUX_TMPDIR", &mux).env("ZELLIJ_SOCKET_DIR", &mux).env("SCREENDIR", mux.join("s")).env("HOMEBREW_TEMP", &mux);
                 Some(mux)
             }
             Err(e) => {
-                let _ = writeln!(std::io::stderr(), "nerd: no folder of this pane's own for tmux: {e}");
+                let _ = writeln!(std::io::stderr(), "nerd: no temp folder of this pane's own: {e}");
                 None
             }
         },
@@ -888,20 +911,37 @@ mod tests {
              (global-name \"com.apple.siri.VoiceShortcuts.xpc\") (global-name \"com.apple.shortcuts.systemshortcutservice.runner\") (global-name \"com.apple.siriactionsd.xpc\"))\n";
         let msock = "(allow network-outbound (literal \"/Users/u/Library/Application Support/nerd/nerd.msock\"))\n";
         let closed = |local: &str| format!("(deny network*)\n(allow network-bind network-inbound (local unix-socket))\n{msock}(allow network-outbound (remote ip \"localhost:{local}\"))\n");
-        assert_eq!(
-            t(Files::Folder, Network::Open, None),
-            format!(
-                "{head}{folder}(deny network-outbound (regex #\"^/private/tmp/cc-socks\") (regex #\"^/private/var/folders/ab/T/cc-socks\") (regex #\"^/private/var/run/com\\.apple\\.launchd\\.[^/]+/Listeners$\") \
-                 (regex #\"^/private/tmp/tmux-[0-9]+(/|$)\") (regex #\"^/private/tmp/zellij-[0-9]+(/|$)\") (regex #\"^/private/tmp/u?screens(/|$)\") \
-                 (regex #\"^/private/var/folders/ab/T/zellij-[0-9]+(/|$)\") (regex #\"^/private/var/folders/ab/T/\\.screen(/|$)\") (regex #\"^/private/var/folders/ab/T/nm[0-9]+(/|$)\") \
-                 (regex #\"^/private/tmp/codex-daemon-[0-9]+(/|$)\") (regex #\"^/private/var/folders/ab/T/codex-daemon-[0-9]+(/|$)\") (regex #\"^/private/tmp/codex-rc-[^/]+(/|$)\") (regex #\"^/private/var/folders/ab/T/codex-rc-[^/]+(/|$)\") (subpath \"/k/kitty.sock\") \
-                 (literal \"/private/var/run/docker.sock\") (literal \"/Users/u/.1p/agent.sock\") (subpath \"/Users/u/Library/Application Support/nerd\") (subpath \"/Users/u/.codex\") (subpath \"/private/var/folders/ab/T/podman\") \
-                 (subpath \"/Users/u/.ssh\") (subpath \"/Users/u/.docker\") (subpath \"/Users/u/Library/Containers/com.docker.docker\") (subpath \"/Users/u/.colima\") (subpath \"/Users/u/.orbstack\") (subpath \"/Users/u/.rd\") (subpath \"/Users/u/.lima\") \
+        let known_head = "(regex #\"^/private/tmp/cc-socks\") (regex #\"^/private/var/folders/ab/T/cc-socks\") (regex #\"^/private/var/run/com\\.apple\\.launchd\\.[^/]+/Listeners$\")";
+        let known_tail = " (literal \"/private/var/run/docker.sock\") (literal \"/Users/u/.1p/agent.sock\") (subpath \"/Users/u/Library/Application Support/nerd\") (subpath \"/Users/u/.codex\") (subpath \"/private/var/folders/ab/T/podman\") \
+                 (subpath \"/Users/u/.ssh\") (subpath \"/Users/u/.gnupg\") (subpath \"/Users/u/.cache/git/credential\") (subpath \"/Users/u/.git-credential-cache\") (subpath \"/Users/u/.docker\") (subpath \"/Users/u/Library/Containers/com.docker.docker\") (subpath \"/Users/u/.colima\") (subpath \"/Users/u/.orbstack\") (subpath \"/Users/u/.rd\") (subpath \"/Users/u/.lima\") \
                  (subpath \"/Users/u/Library/Application Support/rancher-desktop\") (subpath \"/Users/u/.local/share/containers/podman\") (subpath \"/Users/u/Library/Group Containers/2BUA8C4S2C.com.1password/t\") \
                  (subpath \"/Users/u/Library/Containers/com.maxgoedjen.Secretive.SecretAgent\") (subpath \"/Users/u/.local/share/wezterm\") (subpath \"/Users/u/Library/Application Support/iTerm2\") \
-                 (subpath \"/Users/u/.screen\"))\n{msock}(allow network-outbound (subpath \"/private/var/folders/ab/T/nm7\"))\n"
+                 (subpath \"/Users/u/.screen\")";
+        // The pane's folder, when it holds no HOME and no temp folder: its sockets reached, its folders moved; else neither.
+        let open_tail = |cwd: &str| {
+            let (keep, allow) = match cwd {
+                "" => (String::new(), String::new()),
+                c => (format!(" (require-not (subpath \"{c}\"))"), format!("(allow network-outbound (subpath \"{c}\"))\n")),
+            };
+            format!(
+                "(deny file-write-unlink (require-all (vnode-type SOCKET){keep} (require-not (subpath \"/private/var/folders/ab/T/nm7\"))))\n\
+                 (deny file-write-unlink (require-all (vnode-type SOCKET) (require-any {known_head}{known_tail})))\n\
+                 (deny file-write-unlink (require-all (vnode-type DIRECTORY) (require-any (regex #\"^/private/tmp/[^/]+$\") (require-all (regex #\"^/private/var/folders/ab/T/[^/]+$\") (require-not (regex #\"^/private/var/folders/ab/T/tmp\\.[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]$\")))){keep} (require-not (subpath \"/private/var/folders/ab/T/nm7\"))))\n\
+                 (deny network-outbound (remote unix-socket))\n{allow}\
+                 (deny network-outbound {known_head} \
+                 (regex #\"^/private/tmp/tmux-[0-9]+(/|$)\") (regex #\"^/private/tmp/zellij-[0-9]+(/|$)\") (regex #\"^/private/tmp/u?screens(/|$)\") \
+                 (regex #\"^/private/var/folders/ab/T/zellij-[0-9]+(/|$)\") (regex #\"^/private/var/folders/ab/T/\\.screen(/|$)\") (regex #\"^/private/var/folders/ab/T/nm[0-9]+(/|$)\") \
+                 (regex #\"^/private/tmp/codex-daemon-[0-9]+(/|$)\") (regex #\"^/private/var/folders/ab/T/codex-daemon-[0-9]+(/|$)\") (regex #\"^/private/tmp/codex-rc-[^/]+(/|$)\") (regex #\"^/private/var/folders/ab/T/codex-rc-[^/]+(/|$)\") (subpath \"/k/kitty.sock\")\
+                 {known_tail})\n\
+                 (allow network-outbound (literal \"/Users/u/Library/Application Support/nerd/nerd.msock\") (literal \"/private/var/run/mDNSResponder\") (literal \"/private/var/run/syslog\"))\n\
+                 (allow network-outbound (subpath \"/private/var/folders/ab/T/nm7\"))\n"
             )
-        );
+        };
+        assert_eq!(t(Files::Folder, Network::Open, None), format!("{head}{folder}{}", open_tail("/Users/u/x")));
+        for (cwd, what) in [("/Users/u", "HOME"), ("/Users", "a folder above HOME"), ("/private/tmp", "a temp folder"), ("/private/var/folders/ab", "a folder above $TMPDIR"), ("/", "/")] {
+            assert!(text(&p, &Files::Folder, &Network::Open, Path::new(cwd), m, None).unwrap().ends_with(&open_tail("")), "the folder is {what}");
+        }
+        assert!(text(&p, &Files::Folder, &Network::Open, Path::new("/private/tmp/w"), m, None).unwrap().ends_with(&open_tail("/private/tmp/w")), "a folder inside a temp folder is the pane's own");
         assert_eq!(t(Files::Folder, Network::None, None), format!("{head}{folder}{}", closed("*")));
         let dots = "(deny file-write* (regex #\"^/Users/u/\\.[^/]\") (subpath \"/Users/u/Library\") (subpath \"/Users/u/bin\"))\n\
              (allow file-write* (subpath \"/private/var/folders/ab/T\") (subpath \"/private/tmp\") (subpath \"/private/var/folders\") (subpath \"/Users/u/Library/Caches\"))\n";
@@ -1182,7 +1222,7 @@ mod tests {
         let nerd: Vec<PathBuf> = ["sock", "psock", "xsock"].map(|e| d.join(format!("elsewhere/test.{e}"))).to_vec();
         let p = Places { nerd: nerd.clone(), ..places(&d) };
         let profile = text(&p, &Files::Folder, &Network::Open, &d.join("work"), Path::new("/tmp/none.msock"), None).unwrap();
-        let deny = profile.lines().find(|l| l.starts_with("(deny network-outbound")).expect("the folder pane's socket rule");
+        let deny = profile.lines().find(|l| l.starts_with("(deny network-outbound (regex")).expect("the folder pane's socket rule");
         for s in &nerd {
             assert!(deny.contains(&format!("(literal \"{}\")", s.display())), "{s:?} in {deny}");
         }
@@ -1622,7 +1662,21 @@ mod tests {
         owners.extend([tmux.join("default"), zellij.join("s"), zellij_here.join("s")]);
         owners.extend(codex.iter().cloned());
         let (other, mine) = (base.join("run/com.apple.launchd.x/Other"), base.join("tmp/nm2/tmux-1/default"));
-        let _l: Vec<_> = [&own, &msock, &daemon, &other, &mine, &near].into_iter().chain(&owners).map(|p| {
+        // The pane's folder, its own temp folder, the profile's shared temp folder and this Mac's, a known place inside a pane's folder (`home/.local`).
+        let (work, temp, shared, podman) = (base.join("work/w.sock"), base.join("tmp/nm2/pymp-1/listener"), base.join("tmp/x.sock"), base.join("home/.local/share/containers/podman/p.sock"));
+        struct Unlink(PathBuf);
+        impl Drop for Unlink {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_file(&self.0);
+            }
+        }
+        let real = Unlink(std::env::temp_dir().join(format!("nt-s5-{}.sock", std::process::id())));
+        let moved = base.join("tmp/moved.sock");
+        // Folders holding a socket in the shared temp folders; sockets in HOME, git's credential cache and gpg-agent's folder, and one beside them.
+        let (held, held_tmp) = (base.join("tmp/hold/s.sock"), PathBuf::from(format!("/private/tmp/nt-s5-{}-hold/s.sock", std::process::id())));
+        let _hold = Clear(vec![held_tmp.parent().unwrap().to_path_buf()]);
+        let (at_home, cred, gpg, cache) = (base.join("home/x.sock"), base.join("home/.cache/git/credential/socket"), base.join("home/.gnupg/S.gpg-agent"), base.join("home/.cache/c.sock"));
+        let _l: Vec<_> = [&own, &msock, &daemon, &other, &mine, &near, &work, &temp, &shared, &podman, &real.0, &moved, &held, &held_tmp, &at_home, &cred, &gpg, &cache].into_iter().chain(&owners).map(|p| {
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
             std::os::unix::net::UnixListener::bind(p).unwrap()
         }).collect();
@@ -1640,9 +1694,15 @@ mod tests {
             let connect = |p: &Path| sandboxed(&profile, &format!("/usr/bin/perl -MIO::Socket::UNIX -e 'IO::Socket::UNIX->new(Peer => \"{}\") or exit 1'", p.display()));
             let Some(rc) = connect(&msock) else { return };
             assert_eq!(rc, 0, "the msock: {files:?} {network:?}");
-            if network != Network::Open {
-                assert_ne!(connect(&own), Some(0), "nerd.sock: {files:?} {network:?}");
+            let open = network == Network::Open;
+            for (p, what) in [(&own, "an unnamed socket in /private/tmp"), (&shared, "one in the shared temp folder"), (&real.0, "one in this Mac's temp folder")] {
+                assert_ne!(connect(p), Some(0), "{what}: {files:?} {network:?}");
             }
+            for (p, what) in [(&work, "a socket in the pane's folder"), (&temp, "one in its own temp folder"), (&PathBuf::from("/private/var/run/mDNSResponder"), "name lookups")] {
+                assert_eq!(connect(p) == Some(0), open, "{what}: {files:?} {network:?}");
+            }
+            let syslog = "/usr/bin/perl -MIO::Socket::UNIX -e 'IO::Socket::UNIX->new(Type => SOCK_DGRAM, Peer => \"/private/var/run/syslog\") or exit 1'";
+            assert_eq!(sandboxed(&profile, syslog) == Some(0), open, "syslog: {files:?} {network:?}");
             assert_ne!(connect(&daemon), Some(0), "Codex's daemon: {files:?} {network:?}");
             for p in &owners {
                 assert_ne!(connect(p), Some(0), "{p:?}: {files:?} {network:?}");
@@ -1650,15 +1710,23 @@ mod tests {
             let short = Path::new("/tmp").join(codex[0].strip_prefix("/private/tmp").unwrap());
             assert_ne!(connect(&short), Some(0), "Codex's daemon as /tmp spells it: {files:?} {network:?}");
             assert_ne!(connect(&control), Some(0), "Codex's daemon through its control link: {files:?} {network:?}");
-            if network == Network::Open {
-                assert_eq!(connect(&near), Some(0), "a socket in a folder whose name only starts like Codex's");
+            if open {
+                assert_ne!(connect(&near), Some(0), "a socket in a folder whose name only starts like Codex's");
                 let ln = sandboxed(&profile, &format!("/bin/ln '{}' '{}'", codex[0].display(), base.join("work/hc").display()));
                 assert_ne!(ln, Some(0), "a hard link to Codex's daemon");
                 if base.join("work/hc").exists() {
                     assert_ne!(connect(&base.join("work/hc")), Some(0), "a hard link to Codex's daemon that was made");
                 }
-                assert_eq!(connect(&other), Some(0), "another socket beside launchd's agent: {files:?} {network:?}");
+                assert_ne!(connect(&other), Some(0), "another socket beside launchd's agent: {files:?} {network:?}");
                 assert_eq!(connect(&mine), Some(0), "the pane's own tmux: {files:?} {network:?}");
+                let own_one = format!("/usr/bin/perl -MIO::Socket::UNIX -e '$l = IO::Socket::UNIX->new(Local => $ARGV[0], Listen => 1) or exit 1; IO::Socket::UNIX->new(Peer => $ARGV[0]) or exit 2; unlink $ARGV[0] or exit 3' '{}'", base.join("work/b.sock").display());
+                assert_eq!(sandboxed(&profile, &own_one), Some(0), "a socket of its own made, reached and removed in its folder");
+                let mv = sandboxed(&profile, &format!("/bin/mv '{}' '{}'", moved.display(), base.join("work/moved.sock").display()));
+                assert!(mv != Some(0) && moved.exists(), "a socket from the shared temp folder moved into the pane's folder");
+                let around = text(&places, &files, &network, &base.join("home/.local"), &msock, None).unwrap();
+                assert_ne!(sandboxed(&around, &format!("/usr/bin/perl -MIO::Socket::UNIX -e 'IO::Socket::UNIX->new(Peer => \"{}\") or exit 1'", podman.display())), Some(0), "podman's socket inside the pane's folder");
+                let mv = sandboxed(&around, &format!("/bin/mv '{}' '{}'", podman.display(), base.join("home/.local/p.sock").display()));
+                assert!(mv != Some(0) && podman.exists(), "podman's socket moved elsewhere in the pane's folder");
                 assert_ne!(connect(&base.join("work/l")), Some(0), "a link in the pane's folder to Docker's socket");
                 assert_ne!(connect(&base.join("tmp/nm2/l/default")), Some(0), "a link in the pane's own tmux folder to tmux's");
                 let ln = sandboxed(&profile, &format!("/bin/ln '{}' '{}'", base.join("home/.docker/run/docker.sock").display(), base.join("work/h").display()));
@@ -1666,6 +1734,42 @@ mod tests {
                 if base.join("work/h").exists() {
                     assert_ne!(connect(&base.join("work/h")), Some(0), "a hard link to Docker's socket that was made anyway");
                 }
+                let ln = sandboxed(&profile, &format!("/bin/ln '{}' '{}'", shared.display(), base.join("work/hs").display()));
+                assert!(ln != Some(0) || connect(&base.join("work/hs")) != Some(0), "a hard link to an unnamed socket in the shared temp folder");
+                // A folder holding another program's socket stays where it is, so its socket stays out of reach.
+                for (from, to) in [(base.join("tmp/hold"), base.join("work/hold")), (base.join("tmp/hold"), base.join("tmp/nm2/hold")), (held_tmp.parent().unwrap().to_path_buf(), base.join("work/hold2"))] {
+                    let mv = sandboxed(&profile, &format!("/bin/mv '{}' '{}'", from.display(), to.display()));
+                    assert!(mv != Some(0) && from.join("s.sock").exists() && connect(&to.join("s.sock")) != Some(0), "{from:?} moved to {to:?}");
+                }
+                // With this Mac's temp folder as the shared one: a script's bare `mktemp -d` folder is removed; a folder of another program's stays put,
+                // except one named as bare `mktemp -d` names its folders, which a program that keeps a socket in it leaves open to a pane (the ceiling).
+                let real_tmp = canon(&std::env::temp_dir());
+                let here = text(&Places { tmp: real_tmp.clone(), outer: vec![base.join("kitty/k.sock")], ..self::places(&base) }, &files, &network, &base.join("work"), &msock, None).unwrap();
+                assert_eq!(sandboxed(&here, "d=$(/usr/bin/mktemp -d) && touch \"$d/f\" && rm -rf \"$d\" && test ! -e \"$d\""), Some(0), "a script's mktemp -d folder removed");
+                let (keep, named) = (real_tmp.join(format!("nt-s5-{}-hold", std::process::id())), real_tmp.join(format!("tmp.nt{:08}", std::process::id() % 100_000_000)));
+                let _gone = Clear(vec![keep.clone(), named.clone()]);
+                let _held: Vec<_> = [&keep, &named].iter().map(|d| {
+                    std::fs::create_dir_all(d).unwrap();
+                    std::os::unix::net::UnixListener::bind(d.join("s")).unwrap()
+                }).collect();
+                let mv = sandboxed(&here, &format!("/bin/mv '{}' '{}'", keep.display(), base.join("work/kept").display()));
+                assert!(mv != Some(0) && keep.join("s").exists(), "another program's folder right in the temp folder");
+                let mv = sandboxed(&here, &format!("/bin/mv '{}' '{}'", named.display(), base.join("work/named").display()));
+                assert_eq!(mv, Some(0), "the limit: a folder named as mktemp -d names them moves");
+                let tidy = format!("d=$(TMPDIR='{0}' /usr/bin/mktemp -d) && echo x > \"$d/f\" && rm -rf \"$d\" && mkdir '{1}/w' && rm -r '{1}/w'", base.join("tmp/nm2").display(), base.join("work").display());
+                assert_eq!(sandboxed(&profile, &tidy), Some(0), "a folder made and removed in its own temp folder and its folder");
+                // A real name lookup, wherever this Mac can make one.
+                let lookup = "/usr/bin/perl -MSocket=getaddrinfo -e '($e) = getaddrinfo(\"example.com\", \"443\"); exit($e ? 1 : 0)'";
+                if std::process::Command::new("/bin/sh").args(["-c", lookup]).status().is_ok_and(|s| s.success()) {
+                    assert_eq!(sandboxed(&profile, lookup), Some(0), "a name looked up");
+                }
+                // A pane whose folder holds HOME or a temp folder reaches no socket in it; git's credential cache and gpg-agent stay closed in a folder around them.
+                for (cwd, sock) in [(base.join("home"), &at_home), (base.clone(), &work), (base.join("home/.cache"), &cred), (base.join("home/.gnupg"), &gpg)] {
+                    let around = text(&places, &files, &network, &cwd, &msock, None).unwrap();
+                    assert_ne!(sandboxed(&around, &format!("/usr/bin/perl -MIO::Socket::UNIX -e 'IO::Socket::UNIX->new(Peer => \"{}\") or exit 1'", sock.display())), Some(0), "{sock:?} from a pane at {cwd:?}");
+                }
+                let around = text(&places, &files, &network, &base.join("home/.cache"), &msock, None).unwrap();
+                assert_eq!(sandboxed(&around, &format!("/usr/bin/perl -MIO::Socket::UNIX -e 'IO::Socket::UNIX->new(Peer => \"{}\") or exit 1'", cache.display())), Some(0), "another socket in that folder");
             }
             if files == Files::Folder {
                 let nm1 = base.join("tmp/nm1");
@@ -1769,8 +1873,26 @@ mod tests {
         let mux = mux_dir(Path::new("/var/folders/gf/p1wr_45n3wj77wg3x5dnpx1r0000gn/T/"), 99998).display().to_string();
         let n = |k: usize| "x".repeat(k);
         // tmux resolves its folder first; sun_path holds 104 bytes with its NUL.
-        for (what, path) in [("tmux", format!("/private{mux}/tmux-4294967295/{}", n(20))), ("screen", format!("{mux}/s/99998.ttys999.{}", n(24))), ("Zellij", format!("{mux}/contract_version_1/{}", n(20)))] {
+        let python = format!("{mux}/pymp-{}/listener-{}", n(8), n(8));
+        for (what, path) in [("tmux", format!("/private{mux}/tmux-4294967295/{}", n(20))), ("screen", format!("{mux}/s/99998.ttys999.{}", n(24))), ("Zellij", format!("{mux}/contract_version_1/{}", n(20))), ("Python", python)] {
             assert!(path.len() < 104, "{what}: {} bytes: {path}", path.len());
+        }
+    }
+
+    #[test]
+    fn own_temp_names_only_a_folder_panes_temp_folder() {
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let env = vec![("TMPDIR".to_string(), "/v/T/".to_string())];
+        let folder = s(&["/n", "--pane-exec", "--pane", "3", "--network", "open", "--files", "folder", "--cwd", "/w", "--", "/bin/zsh"]);
+        assert_eq!(own_temp(&folder, &env, 41), Some(PathBuf::from("/v/T/nm41")));
+        assert_eq!(own_temp(&folder, &[], 41), Some(tmp_dir().join("nm41")), "the broker's own TMPDIR, as the wrapper inherits it");
+        for (what, argv) in [
+            ("an open pane", s(&["/bin/zsh", "--files", "folder"])),
+            ("Everything", s(&["/n", "--pane-exec", "--pane", "3", "--files", "everything", "--", "/bin/zsh"])),
+            ("only the program's own arguments", s(&["/n", "--pane-exec", "--pane", "3", "--files", "everything", "--", "x", "--files", "folder"])),
+            ("a value, not a flag", s(&["/n", "--pane-exec", "--cwd", "--files", "folder", "x", "--"])),
+        ] {
+            assert_eq!(own_temp(&argv, &env, 41), None, "{what}");
         }
     }
 
