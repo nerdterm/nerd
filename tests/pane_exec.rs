@@ -312,6 +312,38 @@ fn a_folder_pane_with_open_network_has_a_temp_folder_of_its_own_and_reaches_only
     assert!(!other.0.join("w").exists());
 }
 
+/// What Codex and Gemini write as they start: their shared files in the home folder stay read-only.
+#[test]
+fn codex_and_gemini_can_start_in_a_folder_pane_but_not_write_what_other_sessions_read() {
+    let setup = |dir: &Path| {
+        std::fs::create_dir_all(dir.join("home/.codex")).unwrap();
+        std::fs::write(dir.join("home/.codex/state_5.sqlite"), "shared").unwrap();
+    };
+    let script = "echo \"codex-home ${CODEX_SQLITE_HOME}/ ${HOMEBREW_TEMP}/\" > out\n\
+         echo x > \"$CODEX_SQLITE_HOME/state_5.sqlite\"; echo \"codex-own $?\" >> out\n\
+         echo x 2>/dev/null > \"$HOME/.codex/state_5.sqlite\"; echo \"codex-shared $?\" >> out\n\
+         G=\"$HOME/.gemini\"\n\
+         mkdir \"$G/projects.json.lock\" && echo '{}' > \"$G/projects.json.1.tmp\" && mv \"$G/projects.json.1.tmp\" \"$G/projects.json\" && rmdir \"$G/projects.json.lock\"; echo \"gemini-registry $?\" >> out\n\
+         echo x > \"$G/.state.json.1.tmp\" && mv \"$G/.state.json.1.tmp\" \"$G/state.json\" && echo id > \"$G/installation_id\"; echo \"gemini-state $?\" >> out\n\
+         cat \"$G/history/work/.project_root\" >> out; echo >> out\n\
+         mkdir \"$G/history/other\" 2>/dev/null; echo \"gemini-new-history $?\" >> out\n\
+         echo x 2>/dev/null > \"$G/history/work/.project_root\"; echo \"gemini-marker $?\" >> out\n\
+         echo > done\n";
+    let pane = Pane::start_with("codex-gemini", &["--files", "folder", "--network", "open"], script, &[], setup);
+    pane.wait_for("done");
+    // Gemini keeps the case of the path (here /Users/...).
+    let work = pane.dir.join("work").to_string_lossy().into_owned();
+    assert_ne!(work, work.to_lowercase(), "a folder with capitals in its path");
+    let mux = format!("{}/", pane.mux.as_ref().unwrap().display());
+    assert_eq!(
+        pane.wait_for("out"),
+        format!("codex-home {mux} {mux}\ncodex-own 0\ncodex-shared 1\ngemini-registry 0\ngemini-state 0\n{work}\ngemini-new-history 1\ngemini-marker 1\n"),
+        "stderr: {}",
+        pane.read("stderr")
+    );
+    assert_eq!(std::fs::read_to_string(pane.dir.join("home/.codex/state_5.sqlite")).unwrap(), "shared");
+}
+
 #[test]
 fn a_providers_folder_pane_names_its_tmux_folder_in_the_parent() {
     let script = "echo \"$TMUX_TMPDIR $TMPDIR\" > out\n\

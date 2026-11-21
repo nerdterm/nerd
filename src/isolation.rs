@@ -375,6 +375,86 @@ pub fn make_agent_folders(data: Vec<PathBuf>, home: &Path) {
     }
 }
 
+/// Gemini claims `~/.gemini/history/<slug>` with an owner file for each folder it runs in and runs git there, so a pane may not write it: made here, before the profile, for every such pane (Gemini starts later, from its shell).
+/// ceiling: follows Gemini 0.67's project registry; a Gemini that names these folders otherwise stops at ~/.gemini/history in such a pane, and following its new rule here is the way past.
+/// ceiling: made for the pane's folder only, so Gemini started in a folder below it stops at ~/.gemini/history; making it when the pane's shell changes folder is the way past.
+fn gemini_history(home: &Path, cwd: &Path) -> std::io::Result<()> {
+    let g = home.join(".gemini");
+    if !g.is_dir() {
+        return Ok(());
+    }
+    // Gemini's form on macOS: the real path, case kept; owner files are compared exactly.
+    let real = std::fs::canonicalize(cwd)?;
+    let me = real.to_string_lossy().into_owned();
+    let bases = [g.join("tmp"), g.join("history")];
+    // None: no owner; Err: unreadable, which Gemini takes as another's.
+    let owner = |d: &Path| match small(&d.join(".project_root"), 4096) {
+        Ok(s) => Ok(Some(s.trim().to_string())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
+    };
+    let free = |slug: &str| bases.iter().all(|b| owner(&b.join(slug)).is_ok_and(|o| o.is_none_or(|o| o == me)));
+    let form = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-');
+    let reg: serde_json::Value = match small(&g.join("projects.json"), 1 << 20) {
+        Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => serde_json::Value::Null,
+        Err(_) => return Ok(()),
+    };
+    // As Gemini: one name not of its form and the whole registry counts as empty.
+    let projects = reg.get("projects").and_then(|p| p.as_object()).filter(|p| p.values().all(|v| v.as_str().is_some_and(form))).cloned().unwrap_or_default();
+    let mapped = projects.get(&me).and_then(|v| v.as_str()).filter(|s| free(s)).map(String::from);
+    let found = || {
+        for b in &bases {
+            for e in std::fs::read_dir(b).into_iter().flatten().flatten().take(10_000) {
+                match owner(&e.path()) {
+                    Ok(Some(o)) if o == me => return Some(e.file_name().to_string_lossy().into_owned()).filter(|s| form(s)),
+                    Ok(_) => {}
+                    // Gemini stops looking in a folder at the first owner file it cannot read.
+                    Err(_) => break,
+                }
+            }
+        }
+        None
+    };
+    let slug = match mapped.or_else(found) {
+        Some(s) => s,
+        None => {
+            let name = real.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+            let base: String = name.split(|c: char| !c.is_ascii_lowercase() && !c.is_ascii_digit()).filter(|w| !w.is_empty()).collect::<Vec<_>>().join("-");
+            let base = if base.is_empty() { "project".to_string() } else { base };
+            let taken: BTreeSet<&str> = projects.iter().filter(|(k, _)| **k != me).filter_map(|(_, v)| v.as_str()).collect();
+            match (0..10_000).map(|n| if n == 0 { base.clone() } else { format!("{base}-{n}") }).find(|c| !taken.contains(c.as_str()) && free(c)) {
+                Some(s) => s,
+                None => return Ok(()),
+            }
+        }
+    };
+    let d = g.join("history").join(&slug);
+    match std::fs::symlink_metadata(&d) {
+        Ok(m) if !m.file_type().is_dir() => return Ok(()),
+        Ok(_) => {}
+        Err(_) => std::fs::create_dir_all(&d)?,
+    }
+    if owner(&d)?.is_none() {
+        std::fs::OpenOptions::new().write(true).create_new(true).open(d.join(".project_root"))?.write_all(me.as_bytes())?;
+    }
+    Ok(())
+}
+
+/// A regular file of at most `max` bytes, opened without following a link or waiting on a pipe: a pane may have planted either.
+fn small(p: &Path, max: u64) -> std::io::Result<String> {
+    use std::io::Read as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let f = std::fs::OpenOptions::new().read(true).custom_flags(nix::libc::O_NOFOLLOW | nix::libc::O_NONBLOCK).open(p)?;
+    let m = f.metadata()?;
+    if !m.is_file() || m.len() > max {
+        return Err(other(format!("{} is not a small regular file", p.display())));
+    }
+    let mut s = String::new();
+    f.take(max).read_to_string(&mut s)?;
+    Ok(s)
+}
+
 fn rules(kind: &str, ps: impl IntoIterator<Item = PathBuf>) -> Result<String, String> {
     raw_rules(kind, ps.into_iter().map(|p| canon(&p)))
 }
@@ -701,6 +781,8 @@ pub fn pane_exec_main(args: &[String]) -> std::io::Result<()> {
             Ok(()) => {
                 // The slash ends it as macOS's own TMPDIR does: some programs append a name without one.
                 cmd.env("TMPDIR", format!("{}/", mux.display())).env("TMUX_TMPDIR", &mux).env("ZELLIJ_SOCKET_DIR", &mux).env("SCREENDIR", mux.join("s")).env("HOMEBREW_TEMP", &mux);
+                // Codex opens databases of its own here: those in ~/.codex, which its other sessions read, stay read-only to the pane.
+                cmd.env("CODEX_SQLITE_HOME", &mux);
                 Some(mux)
             }
             Err(e) => {
@@ -711,6 +793,11 @@ pub fn pane_exec_main(args: &[String]) -> std::io::Result<()> {
         _ => None,
     };
     let data = if files == Files::Folder { Places::here(&plugins, mux.as_deref()).map(|p| p.data).unwrap_or_default() } else { Vec::new() };
+    if files == Files::Folder
+        && let Some(home) = crate::paths::home()
+    {
+        let _ = gemini_history(&home, &cwd);
+    }
     let network = match need("--network") {
         "open" => Network::Open,
         "none" => Network::None,
@@ -1877,6 +1964,85 @@ mod tests {
         for (what, path) in [("tmux", format!("/private{mux}/tmux-4294967295/{}", n(20))), ("screen", format!("{mux}/s/99998.ttys999.{}", n(24))), ("Zellij", format!("{mux}/contract_version_1/{}", n(20))), ("Python", python)] {
             assert!(path.len() < 104, "{what}: {} bytes: {path}", path.len());
         }
+    }
+
+    #[test]
+    fn geminis_history_folder_is_made_for_the_panes_folder_as_gemini_would_name_it() {
+        let d = scratch("gemini");
+        let (home, g) = (d.join("home"), d.join("home/.gemini"));
+        let owner = |slug: &str| std::fs::read_to_string(g.join("history").join(slug).join(".project_root")).ok();
+        // Gemini keeps the path's case and compares owners exactly.
+        let me = |p: &Path| Some(p.to_string_lossy().into_owned());
+        let (work, other) = (d.join("MyWork"), d.join("Other Work!"));
+        std::fs::create_dir_all(&work).unwrap();
+        std::fs::create_dir_all(&other).unwrap();
+        gemini_history(&home, &work).unwrap();
+        assert_eq!(owner("mywork"), me(&work), "a new folder: its name, lower-cased");
+        gemini_history(&home, &work).unwrap();
+        let twin = d.join("twin/MyWork");
+        std::fs::create_dir_all(&twin).unwrap();
+        gemini_history(&home, &twin).unwrap();
+        assert_eq!(owner("mywork-1"), me(&twin), "a name another folder owns: the next");
+        gemini_history(&home, &other).unwrap();
+        assert_eq!(owner("other-work"), me(&other), "Gemini's slug form");
+        // The registry's name is kept unless another folder owns it.
+        let (kept, stolen, plain) = (d.join("Kept"), d.join("Stolen"), d.join("Plain"));
+        for p in [&kept, &stolen, &plain] {
+            std::fs::create_dir_all(p).unwrap();
+        }
+        let reg = |entries: &[(&Path, &str)]| {
+            let m: serde_json::Map<String, serde_json::Value> = entries.iter().map(|(p, s)| (p.to_string_lossy().into_owned(), serde_json::Value::from(*s))).collect();
+            std::fs::write(g.join("projects.json"), serde_json::json!({ "projects": m }).to_string()).unwrap();
+        };
+        reg(&[(&kept, "k-9"), (&stolen, "mywork")]);
+        gemini_history(&home, &kept).unwrap();
+        gemini_history(&home, &stolen).unwrap();
+        assert_eq!((owner("k-9"), owner("mywork"), owner("stolen")), (me(&kept), me(&work), me(&stolen)));
+        // One name not of Gemini's form and Gemini reads the whole registry as empty.
+        reg(&[(&plain, "p-2"), (&d.join("x"), "../../x")]);
+        gemini_history(&home, &plain).unwrap();
+        assert_eq!((owner("plain"), owner("p-2"), d.join("x").exists()), (me(&plain), None, false));
+        let none = scratch("no-gemini");
+        std::fs::remove_dir_all(none.join("home/.gemini")).unwrap();
+        gemini_history(&none.join("home"), &none.join("work")).unwrap();
+        assert!(!none.join("home/.gemini").exists(), "no Gemini, nothing made");
+        let _ = std::fs::remove_dir_all(&d);
+        let _ = std::fs::remove_dir_all(&none);
+    }
+
+    /// What a pane plants in Gemini's folders, read outside its sandbox: no wait on a pipe, no endless read, a link not followed.
+    #[test]
+    fn geminis_files_a_pane_planted_cannot_stall_or_mislead_the_wrapper() {
+        let d = scratch("gemini-planted");
+        let (home, g) = (d.join("home"), d.join("home/.gemini"));
+        let run = |cwd: PathBuf| {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let home = home.clone();
+            std::thread::spawn(move || tx.send(gemini_history(&home, &cwd).is_ok()).unwrap());
+            rx.recv_timeout(std::time::Duration::from_secs(10)).expect("the wrapper does not wait")
+        };
+        let fifo = |p: &Path| assert!(std::process::Command::new("/usr/bin/mkfifo").arg(p).status().unwrap().success());
+        for (slug, how) in [("pipe", "fifo"), ("zero", "link"), ("big", "big")] {
+            let dir = g.join("tmp").join(slug);
+            std::fs::create_dir_all(&dir).unwrap();
+            let f = dir.join(".project_root");
+            match how {
+                "fifo" => fifo(&f),
+                "link" => std::os::unix::fs::symlink("/dev/zero", &f).unwrap(),
+                _ => std::fs::write(&f, "x".repeat(5000)).unwrap(),
+            }
+            let cwd = d.join(slug);
+            std::fs::create_dir_all(&cwd).unwrap();
+            assert!(run(cwd.clone()), "{how}");
+            let made = g.join("history").join(format!("{slug}-1/.project_root"));
+            assert_eq!(std::fs::read_to_string(&made).ok(), Some(cwd.to_string_lossy().into_owned()), "{how}: an owner file not read is another's, as Gemini takes it");
+        }
+        fifo(&g.join("projects.json"));
+        let cwd = d.join("reg");
+        std::fs::create_dir_all(&cwd).unwrap();
+        assert!(run(cwd), "a registry that is a pipe");
+        assert!(!g.join("history/reg").exists(), "nothing made from a registry not read");
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

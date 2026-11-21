@@ -22,7 +22,7 @@
       "value": ["--resume", "-r"],
       "flag": []
     },
-    "data": ["~/.gemini/tmp", "~/.gemini/state.json", "~/.gemini/projects.json"],
+    "data": ["~/.gemini/tmp", "~/.gemini/state.json*", "~/.gemini/.state.json*", "~/.gemini/projects.json*", "~/.gemini/installation_id"],
     "network": { "hosts": ["generativelanguage.googleapis.com", "oauth2.googleapis.com", "accounts.google.com", "cloudcode-pa.googleapis.com"], "ports": [443] },
     "own_sandbox": "unset SEATBELT_PROFILE"
   }
