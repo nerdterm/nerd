@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.23.0](https://github.com/nerdterm/nerd/compare/v0.22.0...v0.23.0) (2026-11-21)
+
+
+### Added
+
+* the file tree shows hidden files by default, with tree_hidden in config.json ([#202](https://github.com/nerdterm/nerd/issues/202)) ([be5b10d](https://github.com/nerdterm/nerd/commit/be5b10d92264b22f8d992e141ce39341f9877c46)), closes [#201](https://github.com/nerdterm/nerd/issues/201)
+
+
+### Fixed
+
+* a pane whose folder is the home folder cannot write go.work, package.json or Claude Code's instruction files there ([#210](https://github.com/nerdterm/nerd/issues/210)) ([5a600af](https://github.com/nerdterm/nerd/commit/5a600afce2b92f826d0fc5d12291c647cba81289))
+* a This-folder-only pane cannot plant Cargo, rustup, Homebrew or ~/.local programs that run later ([#205](https://github.com/nerdterm/nerd/issues/205)) ([f15ea11](https://github.com/nerdterm/nerd/commit/f15ea118e465a7ee30880119cfc6ec265db9e4f5))
+* a This-folder-only pane cannot reach or replace Codex's daemon sockets ([#200](https://github.com/nerdterm/nerd/issues/200)) ([ee6a0a2](https://github.com/nerdterm/nerd/commit/ee6a0a279d609a3eb3c5dfa3ec47a07f53a92c94))
+* install.sh works in the install folder, where no isolated pane can write ([#198](https://github.com/nerdterm/nerd/issues/198)) ([728ffe1](https://github.com/nerdterm/nerd/commit/728ffe12114c5c3ebc916f8ad50beedbfcdb8b80))
+* nerd does not type into a Codex approval question, and a changed resume line is confirmed first ([#204](https://github.com/nerdterm/nerd/issues/204)) ([925a148](https://github.com/nerdterm/nerd/commit/925a148c628893d6b151dbf120d7068e60626961))
+* the gates run the tests where no isolated pane can write ([#209](https://github.com/nerdterm/nerd/issues/209)) ([b54843a](https://github.com/nerdterm/nerd/commit/b54843ad627f779867d660283e12f51c81d20807))
+* the Homebrew upgrade and the release scripts work where no isolated pane can write ([#206](https://github.com/nerdterm/nerd/issues/206)) ([8f05b6f](https://github.com/nerdterm/nerd/commit/8f05b6f1f639a13f0d1090c13871054beb3722e7))
+* the session note says whose words a message holds, and extensions speak only from inside a pane ([#203](https://github.com/nerdterm/nerd/issues/203)) ([994804a](https://github.com/nerdterm/nerd/commit/994804a482036558ce236ef8f4dc2c0aa742330f))
+
 ## [0.22.0](https://github.com/nerdterm/nerd/compare/v0.21.0...v0.22.0) (2026-11-11)
 
 
