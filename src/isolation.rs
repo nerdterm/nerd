@@ -303,12 +303,13 @@ fn fresh_mux(mux: &Path, uid: u32) -> std::io::Result<()> {
     b.create(mux.join("s"))
 }
 
-/// Under HOME, run later by a shell, git, ssh, an editor, tmux, a package manager or toolchain from its cache, launchd, LaunchServices or `defaults`, or ahead on PATH:
+/// Under HOME, run later by a shell, git, ssh, an editor, tmux, a package manager or toolchain from its cache, launchd, LaunchServices or `defaults`, ahead on PATH, or read as instructions by an agent:
 /// never writable, even when the pane's folder is HOME itself.
 const RUN_LATER: &[&str] = &[".zshrc", ".zprofile", ".zshenv", ".zlogin", ".zlogout", ".bashrc", ".bash_profile", ".bash_login", ".bash_logout", ".profile", ".gitconfig", ".netrc", ".npmrc", ".cargo/config.toml", ".cargo/config", "rust-toolchain", "rust-toolchain.toml", "Cargo.toml", ".local/rust-toolchain", ".local/rust-toolchain.toml", ".local/Cargo.toml",
+    "go.work", "package.json", "CLAUDE.md", "CLAUDE.local.md", "AGENTS.md",
     ".cargo/env", ".cargo/env.fish", ".cargo/env.nu", ".cargo/env.tcsh", ".cargo/env.xsh", ".cargo/env.ps1", ".cargo/credentials.toml", ".cargo/credentials", ".rustup/settings.toml", ".vimrc", ".tmux.conf", ".emacs", ".wezterm.lua"];
 // ceiling: a denylist, so a cache that runs code and is not named here stays writable; an allowlist of the agents' own caches under ~/Library/Caches is the way past.
-// ceiling: Cargo's and rustup's settings are named only in HOME and ~/.local, so a pane whose folder holds projects (~/dev) may still put them above those projects; denying them in every folder above a project is the way past.
+// ceiling: Cargo's and rustup's settings, go.work, package.json and Claude Code's instruction files are named only in HOME (Cargo's and rustup's in ~/.local too), so a pane whose folder holds projects (~/dev) may still put them above those projects; denying them in every folder above a project is the way past.
 // ceiling: Cargo's and rustup's own files are named under ~/.cargo and ~/.rustup, so a `CARGO_HOME` or `RUSTUP_HOME` set elsewhere is not covered; reading the variables is the way past.
 const RUN_LATER_DIRS: &[&str] = &[
     ".config/git", ".config/fish", "Library/LaunchAgents", "Applications", ".ssh", ".aws", ".gnupg", ".docker", ".kube", ".azure", ".config/gh", ".config/gcloud", ".cargo/bin", ".local/bin", ".local/.cargo",
@@ -868,7 +869,7 @@ mod tests {
              (subpath \"/Users/u/.homebrew\") (subpath \"/Users/u/.config/homebrew\") \
              (subpath \"/Users/u/.claude/shell-snapshots\") (subpath \"/Users/u/.claude/session-env\") (subpath \"/Users/u/.codex/shell_snapshots\") (subpath \"/Users/u/.codex/tmp\") (subpath \"/Users/u/.codex/.tmp\") (subpath \"/Users/u/.gemini/tmp/bin\") (subpath \"/Users/u/.gemini/history\") (subpath \"/Users/u/.local/share/opencode/snapshot\") (subpath \"/Users/u/.claude/tasks\") \
              (subpath \"/Users/u/.config/ghostty\") (subpath \"/Users/u/Library/Application Support/com.mitchellh.ghostty\") (subpath \"/Users/u/.config/kitty\") (subpath \"/Users/u/.config/wezterm\") (subpath \"/Users/u/Library/Application Support/iTerm2/DynamicProfiles\") (subpath \"/Users/u/.claude/hooks\") \
-             (literal \"/Users/u/.local/bin/nerd\") (literal \"/Users/u/.zshrc\") (literal \"/Users/u/.zprofile\") (literal \"/Users/u/.zshenv\") (literal \"/Users/u/.zlogin\") (literal \"/Users/u/.zlogout\") (literal \"/Users/u/.bashrc\") (literal \"/Users/u/.bash_profile\") (literal \"/Users/u/.bash_login\") (literal \"/Users/u/.bash_logout\") (literal \"/Users/u/.profile\") (literal \"/Users/u/.gitconfig\") (literal \"/Users/u/.netrc\") (literal \"/Users/u/.npmrc\") (literal \"/Users/u/.cargo/config.toml\") (literal \"/Users/u/.cargo/config\") (literal \"/Users/u/rust-toolchain\") (literal \"/Users/u/rust-toolchain.toml\") (literal \"/Users/u/Cargo.toml\") (literal \"/Users/u/.local/rust-toolchain\") (literal \"/Users/u/.local/rust-toolchain.toml\") (literal \"/Users/u/.local/Cargo.toml\") \
+             (literal \"/Users/u/.local/bin/nerd\") (literal \"/Users/u/.zshrc\") (literal \"/Users/u/.zprofile\") (literal \"/Users/u/.zshenv\") (literal \"/Users/u/.zlogin\") (literal \"/Users/u/.zlogout\") (literal \"/Users/u/.bashrc\") (literal \"/Users/u/.bash_profile\") (literal \"/Users/u/.bash_login\") (literal \"/Users/u/.bash_logout\") (literal \"/Users/u/.profile\") (literal \"/Users/u/.gitconfig\") (literal \"/Users/u/.netrc\") (literal \"/Users/u/.npmrc\") (literal \"/Users/u/.cargo/config.toml\") (literal \"/Users/u/.cargo/config\") (literal \"/Users/u/rust-toolchain\") (literal \"/Users/u/rust-toolchain.toml\") (literal \"/Users/u/Cargo.toml\") (literal \"/Users/u/.local/rust-toolchain\") (literal \"/Users/u/.local/rust-toolchain.toml\") (literal \"/Users/u/.local/Cargo.toml\") (literal \"/Users/u/go.work\") (literal \"/Users/u/package.json\") (literal \"/Users/u/CLAUDE.md\") (literal \"/Users/u/CLAUDE.local.md\") (literal \"/Users/u/AGENTS.md\") \
              (literal \"/Users/u/.cargo/env\") (literal \"/Users/u/.cargo/env.fish\") (literal \"/Users/u/.cargo/env.nu\") (literal \"/Users/u/.cargo/env.tcsh\") (literal \"/Users/u/.cargo/env.xsh\") (literal \"/Users/u/.cargo/env.ps1\") (literal \"/Users/u/.cargo/credentials.toml\") (literal \"/Users/u/.cargo/credentials\") (literal \"/Users/u/.rustup/settings.toml\") (literal \"/Users/u/.vimrc\") (literal \"/Users/u/.tmux.conf\") (literal \"/Users/u/.emacs\") (literal \"/Users/u/.wezterm.lua\") (literal \"/Users/u/.claude/settings.json\") (literal \"/Users/u/.1p/agent.sock\") \
              (regex #\"^/private/tmp/nerd-[0-9]+(/|$)\") (regex #\"^/private/tmp/cc-socks\") (regex #\"^/private/var/folders/ab/T/cc-socks\") (regex #\"^/Users/u/\\.[^/]+/projects/[^/]+/memory(/|$)\") (regex #\"^/Users/u/\\.codex/[^/]*\\.sqlite\") (regex #\"^/Users/u/\\.qwen/projects/[^/]+/workflows(/|$)\"))\n\
              (deny file-write-unlink {above} {parents})\n\
@@ -1432,7 +1433,7 @@ mod tests {
     }
 
     #[test]
-    fn folder_only_cannot_plant_cargo_or_rustup_settings_above_projects_but_a_project_keeps_its_own() {
+    fn folder_only_cannot_plant_project_files_above_projects_but_a_project_keeps_its_own() {
         let d = scratch("cargo");
         let home = d.join("home");
         for dir in [".local", ".cargo", ".rustup/toolchains", ".config"] {
@@ -1440,7 +1441,11 @@ mod tests {
         }
         // On a case-insensitive volume rustup finds `Rust-Toolchain.TOML` as `rust-toolchain.toml`, so the other spelling must be refused too.
         let folded = std::fs::write(d.join("case"), "").is_ok() && d.join("CASE").exists();
-        let at_home: &[&str] = if folded { &["rust-toolchain.toml", "rust-toolchain", "Cargo.toml", "Rust-Toolchain.TOML"] } else { &["rust-toolchain.toml", "rust-toolchain", "Cargo.toml"] };
+        let at_home: &[&str] = if folded {
+            &["rust-toolchain.toml", "rust-toolchain", "Cargo.toml", "Rust-Toolchain.TOML", "go.work", "package.json", "CLAUDE.md", "CLAUDE.local.md", "AGENTS.md", "claude.md"]
+        } else {
+            &["rust-toolchain.toml", "rust-toolchain", "Cargo.toml", "go.work", "package.json", "CLAUDE.md", "CLAUDE.local.md", "AGENTS.md"]
+        };
         let mut bad = Vec::new();
         for (cwd, names) in [
             ("home", at_home),
@@ -1470,10 +1475,22 @@ mod tests {
             }
         }
         assert!(home.join(".local").is_dir() && !home.join(".local/.cargo").exists() && !home.join("x").exists());
+        // A pane whose folder holds HOME: the same files, and HOME itself stays in place.
+        let above = text(&places(&d), &Files::Folder, &Network::None, &d, Path::new("/tmp/none.msock"), None).unwrap();
+        for name in at_home {
+            if sandboxed(&above, &format!("cd '{}' && echo x > 'home/{name}'", d.display())) == Some(0) || std::fs::symlink_metadata(home.join(name)).is_ok() {
+                bad.push(format!("{name} written from above home"));
+                let _ = std::fs::remove_file(home.join(name));
+            }
+        }
+        if sandboxed(&above, &format!("cd '{}' && mv home h2", d.display())) == Some(0) {
+            bad.push("home renamed from above".to_string());
+        }
+        assert!(home.is_dir());
         assert!(bad.is_empty(), "written where a later build reads it: {bad:#?}");
         let profile = text(&places(&d), &Files::Folder, &Network::None, &d.join("work"), Path::new("/tmp/none.msock"), None).unwrap();
-        let own = format!("cd '{}/work' && mkdir -p .cargo && echo x > .cargo/config.toml && echo x > rust-toolchain.toml && echo x > Cargo.toml", d.display());
-        assert_eq!(sandboxed(&profile, &own), Some(0), "a project's own Cargo and rustup settings");
+        let own = format!("cd '{}/work' && mkdir -p .cargo && echo x > .cargo/config.toml && echo x > rust-toolchain.toml && echo x > Cargo.toml && echo x > go.work && echo x > package.json && echo x > CLAUDE.md && echo x > CLAUDE.local.md && echo x > AGENTS.md", d.display());
+        assert_eq!(sandboxed(&profile, &own), Some(0), "a project's own Cargo, rustup, Go, npm and agent files");
         let _ = std::fs::remove_dir_all(&d);
     }
 
