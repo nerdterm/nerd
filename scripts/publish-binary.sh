@@ -63,7 +63,7 @@ main() {
     tmp="$work/t"
     fresh="$tmp/home"
     mkdir -m 700 "$tmp" "$fresh"
-    # These four take the temp folder to be the system's and run no program from it; another like them stops the run.
+    # These four take the temp folder to be the system's and run no program from it; another like them stops the run. scripts/gates.sh keeps a copy of the list.
     sys="agents::tests::a_plugins_executable_half_is_checked_before_it_can_run agents::tests::a_plugins_profile_denies_by_default_and_names_what_it_allows
         agents::tests::what_a_plugin_can_do_comes_from_its_manifest_and_only_new_kinds_are_new
         isolation::tests::folder_only_keeps_agents_settings_and_what_runs_later_even_when_the_folder_is_home"
