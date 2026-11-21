@@ -41,6 +41,7 @@ const ALLOW: &[(&str, &str, &str, &str, &str, &str)] = &[
     // pane: programs in panes are yours; these are the doors nerd opens into them.
     ("src/app/lifecycle.rs", "spawn_pane", "pty-spawn", "& argv", "pane", "the pane a pane-open below names"),
     ("src/isolation.rs", "pane_exec_main", "spawn", "program", "pane", "becomes the pane's program once its profile is applied"),
+    ("src/isolation.rs", "text", "dns-socket", "", "pane", "a This-folder-only pane with open network looks up names through macOS's DNS socket"),
     ("src/app/commands.rs", "split", "pane-open", "shell_argv ()", "pane", "a shell you split off"),
     ("src/app/commands.rs", "new_tab_in", "pane-open", "shell_argv ()", "pane", "a shell in a new tab"),
     ("src/app/commands.rs", "open_tab", "pane-open", "argv", "pane", "the viewer an open_tab below names"),
