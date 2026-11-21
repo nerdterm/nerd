@@ -11,6 +11,10 @@
       "value": ["--session", "-s"],
       "flag": ["--continue", "-c"]
     },
+    "blocked_text": ["△ Permission required"],
+    "idle_text": ["  ┃"],
+    "busy_text": ["esc interrupt", "⬝"],
+    "busy_at": "below",
     "data": ["~/.local/share/opencode/log", "~/.local/share/opencode/storage", "~/.local/share/opencode/opencode.db*"],
     "network": { "hosts": ["opencode.ai", "models.dev", "api.anthropic.com", "console.anthropic.com", "api.openai.com", "auth.openai.com", "chatgpt.com", "generativelanguage.googleapis.com"], "ports": [443] }
   }

@@ -1,0 +1,31 @@
+cursor 29 0 hidden size 100x30
+   chown root:root
+   "/private/tmp/claude-501/-Users-person-dev-projects-nerd/00000000-0000-0000-0000-000000000000/scr
+   atchpad/build-typing"
+
+ℹ Skipping project agents due to untrusted folder. To enable, ensure that the project root is
+  trusted.
+✕ Automatic update failed. Please try updating manually:
+
+  npm install -g @google/gemini-cli@0.70.0
+
+
+ℹ Gemini CLI update available! 0.67.0 → 0.70.0
+  Installed with npm. Attempting to automatically update now...
+
+ ╭────────────────────────────────────────────────────────────────────────────────────────────────╮
+ │                                                                                                │
+ │ Do you trust the files in this folder?                                                         │
+ │                                                                                                │
+ │ Trusting a folder allows Gemini CLI to load its local configurations, including custom         │
+ │ commands, hooks, MCP servers, agent skills, and settings. These configurations could execute   │
+ │ code on your behalf or change the behavior of the CLI.                                         │
+ │                                                                                                │
+ │                                                                                                │
+ │ ● 1. Trust folder (proj)                                                                       │
+ │   2. Trust parent folder (build-typing)                                                        │
+ │   3. Don't trust                                                                               │
+ │                                                                                                │
+ ╰────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+

@@ -1,0 +1,31 @@
+cursor 25 3 hidden size 40x30
+│ 22                               │
+│ 23                               │
+│ 24                               │
+│ 25                               │
+│ 26                               │
+│ 27                               │
+│ 28                               │
+│ 29                               │
+│ 30                               │
+╰──────────────────────────────────╯
+
+✦ Finished counting from 1 to 30 with
+  1-second intervals.
+▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄
+ > Think about the number 7 for a
+   while, then reply with one short
+   sentence about it.
+▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+
+
+ ⠹ Thinking... (esc to cancel, 1s)
+────────────────────────────────────────
+ Shift+Tab to accept edits
+
+▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄
+ >   Type your message or @path/to/file
+▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+ workspace               sandbox
+ /private/.../proj       no sandbox   …
+

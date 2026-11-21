@@ -1,0 +1,31 @@
+cursor 3 7 hidden size 100x30
+ [Current]  Sessions   Issues   Pull requests   Gists
+
+│  ╰─╯╰─╯  Copilot v1.0.107 uses AI.  │  Use the tabs above to explore your sessions and pull r… │ ┃
+│  █ ▘▝ █  Check for mistakes.        │  /init — Initialize Copilot instructions for this repos… │ ┃
+│   ▔▔▔▔                              │  /model — Switch models across providers, or use Copilo… │ ┃
+│                                                                                                │ ┃
+╰────────────────────────────────────────────────────────────────────────────────────────────────╯ ┃
+                                                                                                   ┃
+╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Confirm folder trust                                                                             │
+│ ──────────────────────────────────────────────────────────────────────────────────────────────── │
+│ ╭──────────────────────────────────────────────────────────────────────────────────────────────╮ │
+│ │ /private/tmp/claude-501/-Users-person-dev-projects-nerd/00000000-0000-0000-0000-000000000000 │ │
+│ │ /scratchpad/build-typing/proj                                                                │ │
+│ ╰──────────────────────────────────────────────────────────────────────────────────────────────╯ │
+│                                                                                                  │
+│ Copilot can read files in this folder and, with your permission, edit them or run code and shell │
+│ commands. It will remember your permissions for the rest of this session.                        │
+│                                                                                                  │
+│ Git commands run in this folder may use configuration from the enclosing repository and execute  │
+│ programs configured by that repository.                                                          │
+│                                                                                                  │
+│ Do you trust the files in this folder?                                                           │
+│                                                                                                  │
+│ ❯ 1. Yes                                                                                         │
+│   2. Yes, and remember this folder for future sessions                                           │
+│   3. No (Esc)                                                                                    │
+│                                                                                                  │
+│ ↑/↓ to navigate · enter to select · esc to cancel                                                │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯

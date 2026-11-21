@@ -24,6 +24,9 @@
       "value": ["--resume"],
       "flag": ["--continue"]
     },
+    "idle_text": ["❯"],
+    "busy_text": ["ctrl+c interrupt"],
+    "busy_at": "below",
     "data": ["~/.copilot/session-state", "~/.copilot/logs", "~/.copilot/sidebar-sessions-state", "~/.copilot/command-history-state.json", "~/.copilot/open-sessions-state.json", "~/.copilot/session-store.db*"],
     "network": { "hosts": ["api.githubcopilot.com", "api.individual.githubcopilot.com", "api.business.githubcopilot.com", "api.enterprise.githubcopilot.com", "github.com", "api.github.com"], "ports": [443] }
   }

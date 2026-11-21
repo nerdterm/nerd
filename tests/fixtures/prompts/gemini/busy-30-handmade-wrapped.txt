@@ -1,0 +1,31 @@
+cursor 25 3 hidden size 30x30
+│ 23
+│ 24
+│ 25
+│ 26
+│ 27
+│ 28
+│ 29
+│ 30
+╰─────────────────────────────
+
+✦ Finished counting from 1 to
+  1-second intervals.
+▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄
+ > Think about the number 7 fo
+   while, then reply with one
+   sentence about it.
+▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+
+
+ ⠹ Thinking... (esc to
+   cancel, 1s)
+──────────────────────────────
+ Shift+Tab to accept edits
+
+▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄
+ >   Type your message or @pat
+▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+ workspace               sandb
+ /private/.../proj       no sa
+

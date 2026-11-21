@@ -1,0 +1,31 @@
+cursor 22 5 shown size 40x30
+
+     Counted 1 to 30 with a 1-second
+     pause between numbers.
+
+     ▣  Build · Big Pickle · 36.6s
+
+  ┃
+  ┃  Use your read tool to read the
+  ┃  file /etc/hosts and tell me how
+  ┃  many lines it has.
+  ┃
+
+     → Read /etc/hosts
+
+  ┃
+  ┃  Write a 300 word story about a
+  ┃  lighthouse.
+  ┃
+
+     ▣  Build · Big Pickle
+
+  ┃
+  ┃
+  ┃
+  ┃  Build · Big Pickle OpenCode
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+   ⬝⬝⬝⬝⬝⬝⬝⬝  esc   14.7K (7ctrl+p
+             interr        commands
+             upt
+

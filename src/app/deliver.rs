@@ -9,7 +9,7 @@ use serde_json::json;
 use super::App;
 use crate::agents::{MailForm, MailVia};
 use crate::layout::PaneId;
-use crate::mail::{Hold, Message, State, Via};
+use crate::mail::{Hold, Message, NOT_SUBMITTED, State, Via, WAITING_FOR_INBOX, WAITING_FOR_PROMPT};
 use crate::policy::{self, Action, Mode};
 use crate::term::AgentState;
 
@@ -21,12 +21,15 @@ const INBOX_TIMEOUT: Duration = Duration::from_secs(5);
 const CR_AFTER: Duration = Duration::from_millis(150);
 const SUBMIT_CHECK: Duration = Duration::from_secs(2);
 const OWNER_QUIET: Duration = Duration::from_secs(10);
+/// A typed message whose Enter is held this long while its agent sits idle in front stays in the input, not sent.
+const HOLD_MAX: Duration = Duration::from_secs(30);
 /// A pane whose hand-over failed is not tried again on every tick.
 const RETRY: Duration = Duration::from_secs(5);
 const CURRENT_FOR: Duration = Duration::from_secs(2);
 /// The step note of a message about to be pasted: a restart finds it pasted and not submitted.
 const TYPING: &str = "typing hand-over";
-const NOT_SUBMITTED: &str = "typed, not submitted";
+/// How much of a typed message's last line, blanks left out, must end at the cursor for the input to count as kept.
+const TAIL: usize = 12;
 
 /// `socket_fdinfo` (sys/proc_info.h): `psi.soi_kind`, and `psi.soi_proto.pri_un.unsi_addr.ua_sun.sun_path`
 /// (`struct un_sockinfo`: two u64 handles, then a `sockaddr_un`, whose path follows its length and family bytes).
@@ -50,9 +53,14 @@ struct Hand {
     at: Instant,
     idle: Option<Instant>,
     claimed: Option<Instant>,
-    /// Typed: a question showed after the paste, and whether the owner typed into the pane since.
+    /// Typed: a question showed or the idle prompt left after the paste, and whether the owner typed into the pane since.
     asked: bool,
     typed_over: bool,
+    /// Typed: the prompt's row before the paste, and how many rows the text can take.
+    prompt: (u16, u16),
+    /// Typed: the end of the text's last line, blanks left out, and whether the cursor was hidden before the paste.
+    tail: String,
+    hidden: bool,
 }
 
 #[derive(Default)]
@@ -219,18 +227,28 @@ impl App {
                 if h.at.elapsed() < CR_AFTER {
                     return Some(h);
                 }
-                h.typed_over |= self.mail.owner_typed.is_some_and(|(p, t)| p == pane && t > h.at);
-                // A question that came up after the paste would take this carriage return as its answer: held while it shows.
-                if state == AgentState::Blocked || self.pane(pane).is_some_and(|p| p.term.shows_question()) {
-                    if !h.asked {
-                        crate::log::warn(&format!("pane {pane}: a question came up before a typed message was submitted"));
-                    }
-                    h.asked = true;
+                h.typed_over |= self.mail.owner_typed.get(&pane).is_some_and(|t| *t > h.at);
+                // A question after the paste would take this carriage return as its answer: held while one shows or the prompt is gone.
+                let question = state == AgentState::Blocked || self.pane(pane).is_some_and(|p| p.term.shows_question());
+                let held = question || !self.kept_input(pane, &h);
+                if held && !h.asked {
+                    let what = if question { "a question came up" } else { "the agent's prompt left the screen" };
+                    crate::log::warn(&format!("pane {pane}: {what} before a typed message was submitted"));
+                }
+                h.asked |= held;
+                let idle = matches!(state, AgentState::Idle | AgentState::Done);
+                // Whatever holds it, an idle agent's input is not kept from the next message for ever.
+                let expired = held && idle && h.at.elapsed() >= HOLD_MAX;
+                if expired {
+                    crate::log::warn(&format!("pane {pane}: a typed message waited {} s for its prompt and was left in the input", HOLD_MAX.as_secs()));
+                }
+                let front = || self.pane(pane).is_some_and(|p| p.agent.as_deref().is_some_and(|a| p.pty.agent_in_front(a)));
+                // An agent that left will not bring its prompt back.
+                if held && !expired && front() {
                     return Some(h);
                 }
                 // Once it is gone, Enter only into the input as nerd left it; never typed again, or it would be there twice.
-                let front = || self.pane(pane).is_some_and(|p| p.agent.as_deref().is_some_and(|a| p.pty.agent_in_front(a)));
-                if h.asked && (h.typed_over || !matches!(state, AgentState::Idle | AgentState::Done) || !front()) {
+                if h.asked && (h.typed_over || !idle || expired || !front()) {
                     crate::log::warn(&format!("pane {pane}: a typed message was not submitted"));
                     self.handed(&h.id, Via::Typed, Some(NOT_SUBMITTED.into()));
                     return None;
@@ -311,24 +329,74 @@ impl App {
             }
             return true;
         }
-        let owner = self.mail.owner_typed.is_some_and(|(p, t)| p == pane && t.elapsed() < OWNER_QUIET);
-        let asked = self.pane(pane).is_some_and(|p| p.term.shows_question());
-        if !matches!(state, AgentState::Idle | AgentState::Done) || owner || asked || !self.pane(pane).is_some_and(|p| p.pty.agent_in_front(agent)) {
+        if self.pane(pane).is_some_and(|p| p.term.shows_question()) {
+            return false;
+        }
+        let Some(row) = self.idle_prompt(pane) else { return self.wait_for_prompt(pane, agent, m) };
+        let owner = self.mail.owner_typed.get(&pane).is_some_and(|t| t.elapsed() < OWNER_QUIET);
+        if !matches!(state, AgentState::Idle | AgentState::Done) || owner || !self.pane(pane).is_some_and(|p| p.pty.agent_in_front(agent)) {
             return false;
         }
         self.mail.set(&m.id, State::Delivered, None, Some(TYPING.into()));
         let one_line = if self.pane(pane).is_some_and(|p| p.term.screen().bracketed_paste()) { framed } else { one_line(&framed) };
+        // The rows the text can take in the input, each line wrapped at the pane's width past a prompt of a few cells, and two to spare.
+        let (rows, cols) = self.pane(pane).map_or((1, 1), |p| p.term.screen().size());
+        let span = one_line.split('\n').map(|l| (unicode_width::UnicodeWidthStr::width(l) + 4) / cols.max(1) as usize + 1).sum::<usize>() + 2;
+        let span = span.min(rows as usize) as u16;
+        let last: Vec<char> = one_line.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or_default().chars().filter(|c| !c.is_whitespace()).collect();
+        let tail: String = last[last.len().saturating_sub(TAIL)..].iter().collect();
+        let hidden = self.pane(pane).is_some_and(|p| p.term.screen().hide_cursor());
         if !self.paste_into(pane, &one_line) {
             self.requeue(&m.id, "the pane closed");
             return true;
         }
         self.mail.delivery.type_next.remove(&m.id);
         self.start(pane, &m.id, Way::Typed(false));
+        if let Some(h) = self.mail.delivery.hands.get_mut(&pane) {
+            (h.prompt, h.tail, h.hidden) = ((row, span), tail, hidden);
+        }
         true
     }
 
+    /// How the pane's agent draws its idle prompt; none for an agent whose manifest names none.
+    fn prompt_of(&self, pane: PaneId) -> Option<crate::agents::Agent> {
+        let a = self.pane(pane)?.agent.as_deref().and_then(crate::agents::get)?.agent;
+        (!a.idle_text.is_empty()).then_some(a)
+    }
+
+    /// The row of the pane's agent's idle prompt, shown with an empty input.
+    fn idle_prompt(&self, pane: PaneId) -> Option<u16> {
+        let a = self.prompt_of(pane)?;
+        self.pane(pane)?.term.idle_prompt(&looks(&a))
+    }
+
+    /// The input a message was typed into is still there, whatever the message holds: the cursor shown or hidden as
+    /// before the paste, and the prompt mark still read, or the message's own end at the cursor (an input too short
+    /// for it scrolls the mark away; a dialog that replaced it does not end with the message).
+    fn kept_input(&self, pane: PaneId, h: &Hand) -> bool {
+        let (Some(a), Some(p)) = (self.prompt_of(pane), self.pane(pane)) else { return false };
+        let (row, span) = h.prompt;
+        p.term.screen().hide_cursor() == h.hidden && (p.term.kept_prompt(&looks(&a), row, span) || p.term.ends_at_cursor(&h.tail))
+    }
+
+    /// Every queued message of `m`'s pair stays until the prompt shows; each record and daemon.log say why, once.
+    fn wait_for_prompt(&mut self, pane: PaneId, agent: &str, m: &Message) -> bool {
+        let note = if crate::agents::get(agent).is_some_and(|a| !a.agent.idle_text.is_empty()) { WAITING_FOR_PROMPT } else { WAITING_FOR_INBOX };
+        let pair: Vec<String> = self
+            .mail
+            .msgs
+            .iter()
+            .filter(|x| x.state == State::Queued && x.to.pane() == Some(pane) && x.from.name() == m.from.name() && x.waiting_note() != Some(note))
+            .map(|x| x.id.clone())
+            .collect();
+        for id in &pair {
+            self.mail.set(id, State::Queued, None, Some(note.into()));
+        }
+        !pair.is_empty()
+    }
+
     fn start(&mut self, pane: PaneId, id: &str, way: Way) {
-        self.mail.delivery.hands.insert(pane, Hand { id: id.to_string(), way, at: Instant::now(), idle: None, claimed: None, asked: false, typed_over: false });
+        self.mail.delivery.hands.insert(pane, Hand { id: id.to_string(), way, at: Instant::now(), idle: None, claimed: None, asked: false, typed_over: false, prompt: (0, 0), tail: String::new(), hidden: false });
     }
 
     fn hook_current(&mut self, agent: &str) -> bool {
@@ -360,6 +428,11 @@ impl App {
         }
         None
     }
+}
+
+/// How the agent draws its prompt, from its manifest.
+fn looks(a: &crate::agents::Agent) -> crate::term::Prompt<'_> {
+    crate::term::Prompt { idle: &a.idle_text, busy: &a.busy_text, placeholder: &a.placeholder_text, hides_cursor: a.hides_cursor, busy_at: a.busy_at }
 }
 
 /// Without bracketed paste every newline would submit a line of its own and a tab would press Tab: one line, no tabs.
@@ -551,10 +624,16 @@ mod tests {
         read(&crate::session::state_dir().join("daemon.log"))
     }
 
+    /// Codex's input prompt at idle, the cursor in it.
+    fn prompt(app: &mut App) {
+        app.pane_mut(2).unwrap().term.feed("\u{203a} ".as_bytes());
+    }
+
     #[test]
     fn typing_pastes_then_sends_cr_after_150_ms() {
         with_app("typing", "codex", AgentState::Idle, |app, _, typed| {
             let id = queue(app);
+            prompt(app);
             let framed = crate::mail::framed(&rec(app, &id)).replace('\n', " \u{23ce} ");
             assert!(app.tick_deliver());
             assert_eq!(read_until(typed, |s| s.len() >= framed.len()), framed);
@@ -587,7 +666,7 @@ mod tests {
         });
         with_app("question-prose", "codex", AgentState::Idle, |app, _, typed| {
             let id = queue(app);
-            ask(app, "Do you want me to continue?");
+            ask(app, "Do you want me to continue?\r\n\u{203a} ");
             assert!(app.tick_deliver(), "prose without a numbered choice is not a question");
             assert!(read_until(typed, |s| s.contains(&id)).contains(&id));
         });
@@ -597,6 +676,7 @@ mod tests {
     fn a_question_after_the_paste_holds_its_carriage_return_and_a_pasted_message_is_never_queued_again() {
         with_app("question-after", "codex", AgentState::Idle, |app, _, typed| {
             let id = queue(app);
+            prompt(app);
             assert!(app.tick_deliver());
             let pasted = read_until(typed, |s| s.contains(&id));
             ask(app, "\r\nDo you want to proceed?\r\n\u{276f} 1. Yes\r\n  2. No");
@@ -606,13 +686,14 @@ mod tests {
             assert_eq!(read(typed), pasted, "no carriage return into the question");
             assert_eq!(rec(app, &id).via, None, "not handed before its carriage return");
             // The question is answered and goes: the carriage return follows.
-            app.pane_mut(2).unwrap().term.feed(b"\x1b[2J\x1b[H");
+            app.pane_mut(2).unwrap().term.feed("\x1b[2J\x1b[H\u{203a} ".as_bytes());
             app.tick_deliver();
             assert!(read_until(typed, |s| s.ends_with('\r')).ends_with('\r'));
             assert_eq!(rec(app, &id).via, Some(Via::Typed));
         });
         with_app("question-stays", "codex", AgentState::Idle, |app, _, typed| {
             let id = queue(app);
+            prompt(app);
             assert!(app.tick_deliver());
             let pasted = read_until(typed, |s| s.contains(&id));
             ask(app, "\r\nDo you want to proceed?\r\n\u{276f} 1. Yes\r\n  2. No");
@@ -625,9 +706,9 @@ mod tests {
             assert!(log().contains("pane 2: a question came up before a typed message was submitted"), "{}", log());
             assert!(app.mail.delivery.hands.contains_key(&2), "still held");
             // The owner answers it in the pane; the question goes.
-            app.mail.owner_typed = Some((2, Instant::now()));
+            app.mail.owner_typed.insert(2, Instant::now());
             app.tick_deliver();
-            app.pane_mut(2).unwrap().term.feed(b"\x1b[2J\x1b[H");
+            app.pane_mut(2).unwrap().term.feed("\x1b[2J\x1b[H\u{203a} ".as_bytes());
             app.tick_deliver();
             std::thread::sleep(Duration::from_millis(60));
             assert_eq!(read(typed), pasted, "no carriage return after the owner typed");
@@ -640,6 +721,7 @@ mod tests {
         for case in ["not idle", "the shell in front"] {
             with_app(&format!("question-{}", case.replace(' ', "-")), "codex", AgentState::Idle, |app, _, typed| {
                 let id = queue(app);
+                prompt(app);
                 assert!(app.tick_deliver());
                 let pasted = read_until(typed, |s| s.contains(&id));
                 ask(app, "\r\nDo you want to proceed?\r\n\u{276f} 1. Yes\r\n  2. No");
@@ -651,7 +733,7 @@ mod tests {
                     let front = app.pane(2).unwrap().pty.foreground().unwrap();
                     app.pane_mut(2).unwrap().pty.child_pid = Some(front as u32);
                 }
-                app.pane_mut(2).unwrap().term.feed(b"\x1b[2J\x1b[H");
+                app.pane_mut(2).unwrap().term.feed("\x1b[2J\x1b[H\u{203a} ".as_bytes());
                 app.tick_deliver();
                 std::thread::sleep(Duration::from_millis(60));
                 assert_eq!(read(typed), pasted, "no carriage return: {case}");
@@ -739,6 +821,7 @@ mod tests {
     fn the_shell_in_front_is_never_typed_into() {
         with_app("shell-front", "codex", AgentState::Idle, |app, _, typed| {
             let id = queue(app);
+            prompt(app);
             let front = app.pane(2).unwrap().pty.foreground().expect("the terminal has a foreground");
             // the agent left a moment ago: the probe still names it, and the shell has the terminal back
             app.pane_mut(2).unwrap().pty.child_pid = Some(front as u32);
@@ -756,6 +839,7 @@ mod tests {
         for front in ["less", "vim", "claude"] {
             with_front(&format!("other-front-{front}"), "codex", front, AgentState::Idle, |app, _, typed| {
                 let id = queue(app);
+                prompt(app);
                 assert!(!app.tick_deliver(), "{front}");
                 std::thread::sleep(Duration::from_millis(60));
                 assert_eq!((read(typed), rec(app, &id).state), (String::new(), State::Queued), "{front}");
@@ -793,6 +877,7 @@ mod tests {
                     app.pane_mut(2).unwrap().term.feed(b"\x1b[?2004h");
                 }
                 let id = queue_text(app, "line one\nline two");
+                prompt(app);
                 let m = rec(app, &id);
                 let want = if bracketed {
                     format!("\x1b[200~{}\x1b[201~", crate::mail::framed(&m))
@@ -822,11 +907,12 @@ mod tests {
     fn the_owner_typing_holds_a_typed_message_for_10_s() {
         with_app("owner", "codex", AgentState::Idle, |app, _, typed| {
             let id = queue(app);
-            app.mail.owner_typed = Some((2, Instant::now()));
+            prompt(app);
+            app.mail.owner_typed.insert(2, Instant::now());
             assert!(!app.tick_deliver());
             std::thread::sleep(Duration::from_millis(50));
             assert_eq!((read(typed), rec(app, &id).state), (String::new(), State::Queued));
-            app.mail.owner_typed = Some((2, Instant::now().checked_sub(Duration::from_secs(11)).unwrap()));
+            app.mail.owner_typed.insert(2, Instant::now().checked_sub(Duration::from_secs(11)).unwrap());
             assert!(app.tick_deliver());
             assert!(read_until(typed, |s| s.contains(&id)).contains(&id));
         });
@@ -868,6 +954,7 @@ mod tests {
         with_app("takeback", "codex", AgentState::Idle, |app, home, typed| {
             install_hook(home, ".codex", "codex");
             let id = queue(app);
+            prompt(app);
             app.tick_deliver();
             let out = crate::mail::mailbox(2).join(format!("{id}.out"));
             assert!(out.exists());
@@ -1030,5 +1117,373 @@ mod tests {
             let m = rec(app, &pasted);
             assert_eq!((m.state.clone(), m.via, notes(&m).last().unwrap().1.as_deref()), (State::Delivered, Some(Via::Typed), Some("typed, not submitted")), "pasted already: never typed twice");
         });
+    }
+
+    /// A screen kept in tests/fixtures/prompts: a line `cursor ROW COL shown|hidden size COLSxROWS`, then the rows as
+    /// `tmux capture-pane -p` printed them from the agent's own run.
+    fn fixture(path: &Path) -> crate::term::Term {
+        let text = std::fs::read_to_string(path).unwrap();
+        let (head, screen) = text.split_once('\n').unwrap();
+        let w: Vec<&str> = head.split(' ').collect();
+        let (row, col): (u16, u16) = (w[1].parse().unwrap(), w[2].parse().unwrap());
+        let (cols, rows) = w[5].split_once('x').unwrap();
+        let (cols, rows): (u16, u16) = (cols.parse().unwrap(), rows.parse().unwrap());
+        let mut t = crate::term::Term::new(cols, rows, 100);
+        for (i, line) in screen.lines().take(rows as usize).enumerate() {
+            t.feed(format!("\x1b[{};1H{line}", i + 1).as_bytes());
+        }
+        t.feed(format!("\x1b[{};{}H{}", row + 1, col + 1, if w[3] == "hidden" { "\x1b[?25l" } else { "" }).as_bytes());
+        t
+    }
+
+    #[test]
+    fn each_agents_captured_screens_are_typed_into_only_at_its_idle_prompt() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/prompts");
+        let mut agents: Vec<_> = std::fs::read_dir(&root).unwrap().flatten().filter(|e| e.path().is_dir()).map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        agents.sort();
+        assert!(agents.len() >= 7, "{agents:?}");
+        for agent in agents {
+            let recorded = !crate::agents::get(&agent).unwrap().agent.idle_text.is_empty();
+            let mut files: Vec<_> = std::fs::read_dir(root.join(&agent)).unwrap().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "txt")).collect();
+            files.sort();
+            assert!(files.iter().any(|f| f.file_name().unwrap().to_string_lossy().starts_with("idle-")), "{agent}: an idle screen");
+            for file in files {
+                let name = file.file_stem().unwrap().to_string_lossy().into_owned();
+                // a draft of the person's in the input is never typed after
+                let want = recorded && name.starts_with("idle-") && !name.contains("half-typed");
+                // whatever a hook says: the screen alone decides
+                with_app(&format!("fixture-{agent}-{name}"), &agent, AgentState::Idle, |app, _, typed| {
+                    let p = app.pane_mut(2).unwrap();
+                    p.term = fixture(&file);
+                    p.term.set_blocked_text(crate::agents::blocked_text(Some(&agent)));
+                    // with no hook the screen alone says whether it asks
+                    let asking = p.term.state() == AgentState::Blocked;
+                    if ["idle-", "busy-", "home-"].iter().any(|k| name.starts_with(k)) {
+                        assert!(!asking, "{agent}/{name}: not asking");
+                    }
+                    if (agent == "opencode" && name.starts_with("question-approval")) || (agent == "gemini" && name.starts_with("question-free-text")) {
+                        assert!(asking, "{agent}/{name}: its dialog reads as asking");
+                    }
+                    p.term.set_hook_state(Some(AgentState::Idle));
+                    if name.starts_with("idle-") {
+                        assert!(!p.term.shows_question(), "{agent}/{name}: no numbered choice of a question");
+                    }
+                    if (name == "question-approval" && agent != "opencode") || (name == "question-trust" && ["copilot", "gemini"].contains(&agent.as_str())) {
+                        assert!(p.term.shows_question(), "{agent}/{name}: its numbered choice is known");
+                    }
+                    let a = crate::agents::get(&agent).unwrap().agent;
+                    assert_eq!(p.term.idle_prompt(&looks(&a)).is_some(), want, "{agent}/{name}: the prompt alone decides, not the question test");
+                    if name.starts_with("question-") {
+                        assert!(p.term.idle_prompt(&crate::term::Prompt { busy: &[], ..looks(&a) }).is_none(), "{agent}/{name}: the question took the cursor out of the prompt");
+                    }
+                    let id = queue(app);
+                    app.tick_deliver();
+                    if want {
+                        assert!(read_until(typed, |s| s.contains(&id)).contains(&id), "{agent}/{name}: typed at its idle prompt");
+                    } else {
+                        std::thread::sleep(Duration::from_millis(60));
+                        assert_eq!((read(typed), rec(app, &id).state), (String::new(), State::Queued), "{agent}/{name}: never typed");
+                    }
+                });
+            }
+        }
+    }
+
+    #[test]
+    fn a_message_waits_for_the_prompt_mid_turn_says_so_once_and_goes_in_when_the_prompt_is_back() {
+        with_app("mid-turn", "codex", AgentState::Idle, |app, _, typed| {
+            let id = queue(app);
+            let next = queue_text(app, "and then Y");
+            app.pane_mut(2).unwrap().term.feed("\u{2022} Working (3s \u{2022} esc to interrupt)\r\n\r\n\u{203a} ".as_bytes());
+            assert!(app.tick_deliver(), "the record says why it waits");
+            assert!(!app.tick_deliver(), "once");
+            std::thread::sleep(Duration::from_millis(60));
+            for id in [&id, &next] {
+                let m = rec(app, id);
+                assert_eq!((m.state.clone(), m.waiting_note()), (State::Queued, Some(WAITING_FOR_PROMPT)), "every message of the pair says why");
+                let why = |l: &&str| l.contains(&format!("message {id} ")) && l.ends_with(": queued (waiting for its prompt)");
+                assert_eq!(log().lines().filter(why).count(), 1, "one line says why: {}", log());
+            }
+            assert_eq!(read(typed), "");
+            let m = rec(app, &id);
+            assert_eq!(m.since(), m.created, "a note is not a new state: the 24 h a queued message waits do not start again");
+            // the turn ends: the busy line goes, the prompt stays
+            app.pane_mut(2).unwrap().term.feed("\x1b[2J\x1b[H\u{203a} ".as_bytes());
+            assert!(app.tick_deliver());
+            assert!(read_until(typed, |s| s.contains(&id)).contains(&id));
+            assert_eq!(rec(app, &id).waiting_note(), None);
+        });
+    }
+
+    #[test]
+    fn an_agent_with_no_idle_prompt_recorded_is_never_typed_into() {
+        for agent in ["pi", "amp"] {
+            with_app(&format!("no-prompt-{agent}"), agent, AgentState::Idle, |app, _, typed| {
+                let id = queue(app);
+                app.pane_mut(2).unwrap().term.feed("> \u{203a} \u{276f} ".as_bytes());
+                assert!(app.tick_deliver());
+                for _ in 0..3 {
+                    assert!(!app.tick_deliver());
+                }
+                std::thread::sleep(Duration::from_millis(60));
+                let m = rec(app, &id);
+                assert_eq!((read(typed), m.state.clone(), m.waiting_note()), (String::new(), State::Queued, Some(WAITING_FOR_INBOX)), "{agent}");
+                assert_eq!(log().matches(": queued (waiting for nerd inbox)").count(), 1, "{}", log());
+            });
+        }
+    }
+
+    #[test]
+    fn a_draft_of_the_persons_in_the_input_is_never_typed_after() {
+        with_app("draft", "codex", AgentState::Idle, |app, _, typed| {
+            let id = queue(app);
+            app.pane_mut(2).unwrap().term.feed("\u{203a} MYDRAFT half typed words".as_bytes());
+            app.tick_deliver();
+            std::thread::sleep(Duration::from_millis(60));
+            assert_eq!((read(typed), rec(app, &id).waiting_note()), (String::new(), Some(WAITING_FOR_PROMPT)));
+            // the person sends or clears it: the input is empty again
+            app.pane_mut(2).unwrap().term.feed("\x1b[2K\r\u{203a} ".as_bytes());
+            app.tick_deliver();
+            assert!(read_until(typed, |s| s.contains(&id)).contains(&id));
+        });
+    }
+
+    #[test]
+    fn typing_into_another_pane_keeps_the_10_s_for_this_one() {
+        with_app("owner-two-panes", "codex", AgentState::Idle, |app, _, typed| {
+            let id = queue(app);
+            prompt(app);
+            app.mail.owner_typed.insert(2, Instant::now());
+            app.mail.owner_typed.insert(1, Instant::now());
+            assert!(!app.tick_deliver());
+            std::thread::sleep(Duration::from_millis(60));
+            assert_eq!((read(typed), rec(app, &id).state), (String::new(), State::Queued));
+        });
+    }
+
+    #[test]
+    fn a_typed_message_whose_own_text_has_blank_lines_or_busy_words_is_submitted() {
+        for (tag, text) in [("paragraphs", "first paragraph\n\nsecond paragraph"), ("busy-words", "press esc to interrupt it\n\nthen go on")] {
+            with_app(&format!("own-text-{tag}"), "codex", AgentState::Idle, |app, _, typed| {
+                let t = &mut app.pane_mut(2).unwrap().term;
+                t.feed(b"\x1b[?2004h");
+                t.feed("\x1b[20;1H\u{203a} ".as_bytes());
+                let id = queue_text(app, text);
+                assert!(app.tick_deliver());
+                read_until(typed, |s| s.contains("\x1b[201~"));
+                // Codex draws the pasted text in its input, the input grown upward
+                let drawn = crate::mail::framed(&rec(app, &id)).replace('\n', "\r\n  ");
+                app.pane_mut(2).unwrap().term.feed(format!("\x1b[2J\x1b[16;1H\u{203a} {drawn}").as_bytes());
+                std::thread::sleep(CR_AFTER + Duration::from_millis(20));
+                app.tick_deliver();
+                assert!(read_until(typed, |s| s.ends_with('\r')).ends_with('\r'), "{tag}: {}", app.pane(2).unwrap().term.screen().live_contents());
+                assert_eq!(rec(app, &id).via, Some(Via::Typed), "{tag}");
+            });
+        }
+    }
+
+    #[test]
+    fn a_typed_message_holding_a_file_tree_and_a_separator_is_submitted() {
+        let text = format!("files:\n\u{2514}\u{2500}\u{2500} a.rs\n{}\nend", "\u{2500}".repeat(60));
+        // each agent's mark and the indent it draws continuation rows with
+        for (agent, mark, indent) in [("codex", "\u{203a} ", "  "), ("claude", "\u{276f} ", "  "), ("gemini", " > ", "   ")] {
+            with_app(&format!("own-tree-{agent}"), agent, AgentState::Idle, |app, _, typed| {
+                let t = &mut app.pane_mut(2).unwrap().term;
+                t.feed(b"\x1b[?2004h");
+                // the same shape in the conversation above does not stop the prompt being read before the paste
+                t.feed(format!("{mark}{}\r\n\r\n\x1b[20;1H{mark}", text.replace('\n', &format!("\r\n{indent}"))).as_bytes());
+                let id = queue_text(app, &text);
+                assert!(app.tick_deliver(), "{agent}");
+                read_until(typed, |s| s.contains("\x1b[201~"));
+                let drawn = crate::mail::framed(&rec(app, &id)).replace('\n', &format!("\r\n{indent}"));
+                app.pane_mut(2).unwrap().term.feed(format!("\x1b[2J\x1b[14;1H{mark}{drawn}").as_bytes());
+                std::thread::sleep(CR_AFTER + Duration::from_millis(20));
+                app.tick_deliver();
+                assert!(read_until(typed, |s| s.ends_with('\r')).ends_with('\r'), "{agent}: {}", app.pane(2).unwrap().term.screen().live_contents());
+                assert_eq!(rec(app, &id).via, Some(Via::Typed), "{agent}");
+            });
+        }
+    }
+
+    #[test]
+    fn a_held_carriage_return_ends_once_an_idle_agent_waited_long_enough() {
+        with_app("hold-bound", "codex", AgentState::Idle, |app, _, typed| {
+            let id = queue(app);
+            prompt(app);
+            assert!(app.tick_deliver());
+            let pasted = read_until(typed, |s| s.contains(&id));
+            app.pane_mut(2).unwrap().term.feed(b"\x1b[2J\x1b[HWhich colour?\r\n> ");
+            std::thread::sleep(CR_AFTER + Duration::from_millis(20));
+            app.tick_deliver();
+            assert!(app.mail.delivery.hands.contains_key(&2), "held");
+            app.mail.delivery.hands.get_mut(&2).unwrap().at = Instant::now().checked_sub(HOLD_MAX + Duration::from_millis(1)).unwrap();
+            app.tick_deliver();
+            std::thread::sleep(Duration::from_millis(60));
+            assert_eq!(read(typed), pasted, "never a carriage return");
+            assert_eq!(notes(&rec(app, &id)).last().and_then(|n| n.1.clone()).as_deref(), Some("typed, not submitted"));
+            assert!(log().contains("pane 2: a typed message waited 30 s for its prompt and was left in the input"), "{}", log());
+            assert!(!app.mail.delivery.hands.contains_key(&2), "the pane takes mail again");
+        });
+    }
+
+    #[test]
+    fn opencodes_permission_dialog_is_never_typed_into_wherever_its_cursor_sits() {
+        let file = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/prompts/opencode/question-approval-cursor-in-dialog.txt");
+        with_app("opencode-dialog", "opencode", AgentState::Idle, |app, _, typed| {
+            let p = app.pane_mut(2).unwrap();
+            p.term = fixture(&file);
+            p.term.feed(b"\x1b[?25h");
+            p.term.set_blocked_text(crate::agents::blocked_text(Some("opencode")));
+            p.term.set_hook_state(None);
+            assert_eq!(p.term.state(), AgentState::Blocked, "the dialog reads as asking");
+            let id = queue(app);
+            assert!(!app.tick_deliver());
+            std::thread::sleep(Duration::from_millis(60));
+            assert_eq!((read(typed), rec(app, &id).state), (String::new(), State::Queued));
+        });
+    }
+
+    #[test]
+    fn a_message_a_hook_did_not_take_is_typed_only_at_the_prompt() {
+        with_app("takeback-no-prompt", "codex", AgentState::Idle, |app, home, typed| {
+            install_hook(home, ".codex", "codex");
+            let id = queue(app);
+            app.tick_deliver();
+            app.tick_deliver();
+            std::thread::sleep(TAKE_BACK + Duration::from_millis(100));
+            assert!(app.tick_deliver());
+            assert_eq!(rec(app, &id).events.last().unwrap().note.as_deref(), Some("the hook did not take it"));
+            app.tick_deliver();
+            std::thread::sleep(Duration::from_millis(60));
+            assert_eq!((read(typed), rec(app, &id).waiting_note()), (String::new(), Some(WAITING_FOR_PROMPT)), "taken back, and waiting for the prompt");
+            prompt(app);
+            app.tick_deliver();
+            assert!(read_until(typed, |s| s.contains(&id)).contains(&id), "typed once the prompt shows");
+        });
+    }
+
+    #[test]
+    fn the_carriage_return_waits_while_the_prompt_is_gone_after_the_paste() {
+        with_app("prompt-left", "codex", AgentState::Idle, |app, _, typed| {
+            let id = queue(app);
+            prompt(app);
+            assert!(app.tick_deliver());
+            let pasted = read_until(typed, |s| s.contains(&id));
+            // a form of the agent's that nerd does not know, drawn in a box as the captured ones are: the cursor leaves the prompt
+            app.pane_mut(2).unwrap().term.feed("\r\n\r\n\u{256d}\u{2500}\u{2500}\u{256e}\r\n\u{2502} Which colour do you prefer?\r\n\u{2502} > ".as_bytes());
+            std::thread::sleep(CR_AFTER + Duration::from_millis(20));
+            app.tick_deliver();
+            std::thread::sleep(Duration::from_millis(60));
+            assert_eq!(read(typed), pasted, "no carriage return into the form");
+            assert!(log().contains("pane 2: the agent's prompt left the screen before a typed message was submitted"), "{}", log());
+            app.pane_mut(2).unwrap().term.feed("\x1b[2J\x1b[H\u{203a} ".as_bytes());
+            app.tick_deliver();
+            assert!(read_until(typed, |s| s.ends_with('\r')).ends_with('\r'));
+            assert_eq!(rec(app, &id).via, Some(Via::Typed));
+        });
+        with_app("prompt-left-agent-gone", "codex", AgentState::Idle, |app, _, typed| {
+            let id = queue(app);
+            prompt(app);
+            assert!(app.tick_deliver());
+            let pasted = read_until(typed, |s| s.contains(&id));
+            app.pane_mut(2).unwrap().term.feed(b"\x1b[2J\x1b[H$ ");
+            let front = app.pane(2).unwrap().pty.foreground().unwrap();
+            app.pane_mut(2).unwrap().pty.child_pid = Some(front as u32);
+            std::thread::sleep(CR_AFTER + Duration::from_millis(20));
+            app.tick_deliver();
+            std::thread::sleep(Duration::from_millis(60));
+            assert_eq!(read(typed), pasted, "no carriage return into the shell");
+            assert_eq!(notes(&rec(app, &id)).last().and_then(|n| n.1.clone()).as_deref(), Some("typed, not submitted"));
+            assert!(!app.mail.delivery.hands.contains_key(&2), "the pane takes mail again");
+        });
+    }
+
+    #[test]
+    fn opencodes_busy_words_inside_a_typed_message_do_not_hold_its_enter() {
+        with_app("opencode-own-words", "opencode", AgentState::Idle, |app, _, typed| {
+            let t = &mut app.pane_mut(2).unwrap().term;
+            t.feed(b"\x1b[?2004h\x1b[21;1H  \xe2\x94\x83  Build \xc2\xb7 Big Pickle OpenCode\x1b[22;1H   ~/proj\x1b[20;1H  \xe2\x94\x83  ");
+            let id = queue_text(app, "please esc interrupt nothing \u{2b1d}\n\nsecond");
+            assert!(app.tick_deliver());
+            read_until(typed, |s| s.contains("\x1b[201~"));
+            // OpenCode draws every row of its input behind its frame, the input grown upward
+            let rows: Vec<String> = crate::mail::framed(&rec(app, &id)).lines().map(|l| format!("  \u{2503}  {}", l.chars().take(70).collect::<String>())).collect();
+            let t = &mut app.pane_mut(2).unwrap().term;
+            t.feed(b"\x1b[16;1H\x1b[J");
+            t.feed(format!("{}\x1b[21;1H  \u{2503}  Build \u{b7} Big Pickle OpenCode\x1b[22;1H   ~/proj\x1b[19;13H", rows.join("\r\n")).as_bytes());
+            std::thread::sleep(CR_AFTER + Duration::from_millis(20));
+            app.tick_deliver();
+            assert!(read_until(typed, |s| s.ends_with('\r')).ends_with('\r'), "{}", app.pane(2).unwrap().term.screen().live_contents());
+            assert_eq!(rec(app, &id).via, Some(Via::Typed));
+        });
+    }
+
+    /// Claude Code idle in a 31-column pane, as a live check showed it: the input between two rules, the footer below.
+    fn small_claude(app: &mut App) {
+        let rule = "\u{2500}".repeat(30);
+        let mut t = crate::term::Term::new(31, 20, 100);
+        t.feed(format!("\x1b[?2004h\u{23fa} PONG\r\n\x1b[15;1H{rule}\r\n\u{276f} \r\n{rule}\r\n  [STATUS]   Fable 5.2 (med\u{2026}\r\n  \u{23f5}\u{23f5} auto mode on\x1b[16;3H").as_bytes());
+        let p = app.pane_mut(2).unwrap();
+        p.term = t;
+        p.term.set_blocked_text(crate::agents::blocked_text(Some("claude")));
+    }
+
+    #[test]
+    fn a_message_taller_than_the_input_is_submitted_when_its_end_is_at_the_cursor() {
+        with_app("scrolled-input", "claude", AgentState::Idle, |app, _, typed| {
+            small_claude(app);
+            let id = queue_text(app, "case11d: reply with only PONG11D");
+            assert!(app.tick_deliver());
+            read_until(typed, |s| s.contains("\x1b[201~"));
+            // the input scrolled: its mark is gone, a "more" line above the message's last rows, the cursor after them
+            let mut rows: Vec<String> = Vec::new();
+            for line in crate::mail::framed(&rec(app, &id)).lines() {
+                let cs: Vec<char> = line.chars().collect();
+                rows.extend(cs.chunks(29).map(|c| format!("  {}", c.iter().collect::<String>())));
+            }
+            let last = &rows[rows.len() - 4..];
+            let rule = "\u{2500}".repeat(30);
+            let col = last[3].chars().count() + 1;
+            let screen = format!("\x1b[2J\x1b[1;1H\u{23fa} PONG\x1b[11;1H\u{2500}\u{2500}\u{2500} \u{2191} 3 more {}\r\n{}\r\n{rule}\r\n  [STATUS]   Fable 5.2 (med\u{2026}\r\n  \u{23f5}\u{23f5} auto mode on\x1b[15;{col}H", "\u{2500}".repeat(17), last.join("\r\n"));
+            app.pane_mut(2).unwrap().term.feed(screen.as_bytes());
+            std::thread::sleep(CR_AFTER + Duration::from_millis(20));
+            app.tick_deliver();
+            assert!(read_until(typed, |s| s.ends_with('\r')).ends_with('\r'), "{}", app.pane(2).unwrap().term.screen().live_contents());
+            assert_eq!(rec(app, &id).via, Some(Via::Typed));
+        });
+        with_app("scrolled-input-dialog", "claude", AgentState::Idle, |app, _, typed| {
+            small_claude(app);
+            let id = queue_text(app, "case11e: reply with only PONG11E");
+            assert!(app.tick_deliver());
+            let pasted = read_until(typed, |s| s.contains("\x1b[201~"));
+            // a view the agent drew over its input, cursor shown, its row not ending with the message
+            app.pane_mut(2).unwrap().term.feed(b"\x1b[2J\x1b[1;1HWhich colour?\r\n\r\n> ");
+            std::thread::sleep(CR_AFTER + Duration::from_millis(20));
+            app.tick_deliver();
+            std::thread::sleep(Duration::from_millis(60));
+            assert_eq!(read(typed), pasted, "held");
+            assert_eq!(rec(app, &id).via, None);
+        });
+    }
+
+    #[test]
+    fn a_closed_pane_leaves_no_time_the_owner_typed_behind() {
+        with_app("owner-closed", "codex", AgentState::Idle, |app, _, _| {
+            app.mail.owner_typed.insert(2, Instant::now());
+            app.mail.owner_typed.insert(1, Instant::now());
+            app.drop_pane(2, None);
+            assert!(app.pane(2).is_none());
+            assert_eq!(app.mail.owner_typed.keys().copied().collect::<Vec<_>>(), [1]);
+        });
+    }
+
+    #[test]
+    fn a_dialogs_words_said_in_prose_do_not_mark_the_pane_as_asking() {
+        for (agent, words) in [("opencode", "Next: Permission required for the tests"), ("gemini", "I can Answer Questions about it")] {
+            let mut t = crate::term::Term::new(80, 24, 0);
+            t.set_blocked_text(crate::agents::blocked_text(Some(agent)));
+            t.feed(words.as_bytes());
+            assert_ne!(t.state(), AgentState::Blocked, "{agent}");
+        }
     }
 }

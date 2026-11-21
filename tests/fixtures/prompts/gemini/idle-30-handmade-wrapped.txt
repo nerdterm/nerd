@@ -1,0 +1,31 @@
+cursor 24 3 hidden size 30x30
+ ▝▜▄
+   ▝▜▄
+  ▗▟▀
+ ▝▀
+
+ Gemini CLI v0.67.0
+
+ Authenticated with gemini-api
+
+
+Tips for getting started:
+1. Create GEMINI.md files to c
+your interactions
+2. /help for more information
+3. Ask coding questions, edit
+run commands
+4. Be specific for the best re
+
+
+
+──────────────────────────────
+ Shift+Tab to accept edits
+
+▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄
+ >   Type your message or
+     @path/to/file
+▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+ workspace               sandb
+ /private/.../proj       no sa
+

@@ -276,6 +276,21 @@ pub struct Agent {
     /// Screen text that means the agent asks the human, for panes whose hook says nothing.
     #[serde(default)]
     pub blocked_text: Vec<String>,
+    /// How its own input prompt's row starts at idle; nerd types a message only while one shows at the cursor.
+    #[serde(default)]
+    pub idle_text: Vec<String>,
+    /// Screen text shown only while it works, whatever else shows.
+    #[serde(default)]
+    pub busy_text: Vec<String>,
+    /// What its empty input shows, in a colour nerd cannot tell from typed text.
+    #[serde(default)]
+    pub placeholder_text: Vec<String>,
+    /// It draws a cursor of its own and hides the terminal's, at idle too.
+    #[serde(default)]
+    pub hides_cursor: bool,
+    /// Where it draws the status line `busy_text` is read from.
+    #[serde(default)]
+    pub busy_at: crate::term::BusyAt,
     /// How a message from nerd reaches it.
     #[serde(default)]
     pub mail: Option<Mail>,
@@ -814,6 +829,10 @@ pub fn validate(m: &Manifest, others: &[Manifest]) -> Result<(), String> {
     if let Some(bad) = a.strip.value.iter().chain(&a.strip.flag).chain(&a.blocked_text).find(|s| !text(s)) {
         return Err(format!("{bad:?} must be one line"));
     }
+    // a blank mark would match every row, and a blank busy text every screen
+    if let Some(bad) = a.idle_text.iter().chain(&a.busy_text).chain(&a.placeholder_text).find(|s| !text(s) || s.trim().is_empty()) {
+        return Err(format!("{bad:?} must be one line of up to 128 bytes with something besides blanks"));
+    }
     validate_mail(m)
 }
 
@@ -1338,7 +1357,10 @@ mod tests {
     fn an_agent_without_its_own_prompt_text_is_read_by_claudes() {
         let claude = get("claude").unwrap().agent.blocked_text;
         assert_eq!(blocked_text(Some("claude")), claude);
-        assert_eq!(blocked_text(Some("gemini")), claude, "a manifest without blocked_text");
+        assert_eq!(blocked_text(Some("copilot")), claude, "a manifest without blocked_text");
+        assert_eq!(blocked_text(Some("gemini")), ["\u{25cf} 1.", "\u{2502} Answer Questions"], "Gemini's own, as its boxes draw them");
+        assert_eq!(blocked_text(Some("qwen")), ["\u{203a} 1."], "Qwen's own");
+        assert_eq!(blocked_text(Some("opencode")), ["\u{25b3} Permission required"], "OpenCode's own, as its dialog draws it");
         assert_eq!(
             blocked_text(Some("codex")),
             [
@@ -1354,6 +1376,34 @@ mod tests {
         );
         assert_eq!(blocked_text(Some("amp")), claude, "an agent known by name only");
         assert!(blocked_text(None).is_empty(), "a shell is never asked a question");
+    }
+
+    #[test]
+    fn an_agent_names_its_idle_prompt_only_where_a_capture_showed_one() {
+        for (a, idle) in [("claude", "\u{276f}"), ("codex", "\u{203a}"), ("gemini", " >"), ("qwen", ">"), ("opencode", "  \u{2503}"), ("copilot", "\u{276f}")] {
+            let m = get(a).unwrap().agent;
+            assert_eq!((m.idle_text, m.busy_text.is_empty()), (vec![idle.to_string()], false), "{a}");
+        }
+        for a in ["pi", "cursor"] {
+            assert!(get(a).unwrap().agent.idle_text.is_empty(), "{a}: none, so never typed into");
+        }
+        use crate::term::BusyAt;
+        for (a, at) in [("claude", BusyAt::Below), ("copilot", BusyAt::Below), ("opencode", BusyAt::Below), ("codex", BusyAt::Above), ("gemini", BusyAt::AboveRule), ("qwen", BusyAt::AboveRule)] {
+            assert_eq!(get(a).unwrap().agent.busy_at, at, "{a}: where its status line is drawn");
+        }
+        assert!(validate(&fake(serde_json::json!({ "idle_text": [">"], "busy_at": "above_rule" })), &builtins()).is_ok());
+        assert!(get("gemini").unwrap().agent.hides_cursor, "Gemini draws its own cursor");
+        assert!(builtins().iter().filter(|m| m.name != "gemini").all(|m| !m.agent.hides_cursor));
+        for bad in [
+            serde_json::json!({ "idle_text": ["a\nb"] }),
+            serde_json::json!({ "busy_text": [""] }),
+            serde_json::json!({ "idle_text": ["   "] }),
+            serde_json::json!({ "placeholder_text": [" \t"] }),
+            serde_json::json!({ "busy_text": ["x".repeat(129)] }),
+        ] {
+            assert!(refused(bad.clone()).contains("with something besides blanks"), "{bad}");
+        }
+        assert!(validate(&fake(serde_json::json!({ "idle_text": [" > "], "busy_text": ["esc to cancel"], "placeholder_text": ["Ask"], "hides_cursor": true })), &builtins()).is_ok());
     }
 
     #[test]

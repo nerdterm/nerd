@@ -1,0 +1,31 @@
+cursor 27 2 shown size 100x30
+ [Current]  Sessions   Issues   Pull requests   Gists
+
+╭────────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                                                                │
+│  ╭─╮╭─╮                             │  Getting started                                         │
+│  ╰─╯╰─╯  Copilot v1.0.107 uses AI.  │  Use the tabs above to explore your sessions and pull r… │
+│  █ ▘▝ █  Check for mistakes.        │  /init — Initialize Copilot instructions for this repos… │
+│   ▔▔▔▔                              │  /model — Switch models across providers, or use Copilo… │
+│                                                                                                │
+╰────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+ ● MCP Servers reloaded: 1 server connected
+
+ ❯ Reply with the single word: ready                                                         18:07
+
+ ● Copilot Fusion selected MAI Code 2 Flash because it was the best choice out of the models
+   available in your plan.
+
+ ● ready
+
+
+
+
+
+
+ /private/tmp/claude-501/-Users-person-dev-projects-nerd/.../proj            
+────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ ← open sidebar · Interactive · Manual Approval · / commands      Copilot Fusion → mai-code-2-flash

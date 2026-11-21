@@ -22,6 +22,12 @@
       "value": ["--resume", "-r"],
       "flag": []
     },
+    "blocked_text": ["● 1.", "│ Answer Questions"],
+    "idle_text": [" >"],
+    "busy_text": ["(esc to cancel"],
+    "busy_at": "above_rule",
+    "placeholder_text": ["Type your message or @path/to/file"],
+    "hides_cursor": true,
     "data": ["~/.gemini/tmp", "~/.gemini/state.json*", "~/.gemini/.state.json*", "~/.gemini/projects.json*", "~/.gemini/installation_id"],
     "network": { "hosts": ["generativelanguage.googleapis.com", "oauth2.googleapis.com", "accounts.google.com", "cloudcode-pa.googleapis.com"], "ports": [443] },
     "own_sandbox": "unset SEATBELT_PROFILE"

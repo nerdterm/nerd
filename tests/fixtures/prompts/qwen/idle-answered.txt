@@ -1,0 +1,31 @@
+cursor 18 2 shown size 100x30
+
+   ▄▄▄▄▄▄  ▄▄     ▄▄ ▄▄▄▄▄▄▄ ▄▄▄    ▄▄   ┌───────────────────────────────────────────────────────┐
+  ██╔═══██╗██║    ██║██╔════╝████╗  ██║  │ >_ Qwen Code (v0.27.0)                                │
+  ██║   ██║██║ █╗ ██║█████╗  ██╔██╗ ██║  │                                                       │
+  ██║▄▄ ██║██║███╗██║██╔══╝  ██║╚██╗██║  │ provider | model                                     │
+  ╚██████╔╝╚███╔███╔╝███████╗██║ ╚████║  │ /private/.../scratchpad/build-typing/proj             │
+   ╚══▀▀═╝  ╚══╝╚══╝ ╚══════╝╚═╝  ╚═══╝  └───────────────────────────────────────────────────────┘
+
+  Tips: Add a QWEN.md file to give Qwen Code persistent project context.
+  ●︎ Read context files: ~/.qwen/output-language.md
+
+  > Reply with the single word: ready
+
+  ∴︎ Thought briefly (click or ctrl+o to expand)
+
+  ◆︎ ready
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+>   Type your message or @path/to/file
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  ➜ proj · model
+  Auto mode (shift + tab to cycle)
+
+
+
+
+
+
+
+

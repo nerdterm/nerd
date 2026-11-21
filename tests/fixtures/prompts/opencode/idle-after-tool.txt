@@ -1,0 +1,31 @@
+cursor 23 5 shown size 100x30
+  ┃
+  ┃  $ for i in $(seq 1 30); do echo "$i"; sleep 1; done
+  ┃
+  ┃  1
+  ┃  2
+  ┃  3
+  ┃  4
+  ┃  5
+  ┃  6
+  ┃  7
+  ┃  8
+  ┃  9
+  ┃  10
+  ┃  …
+  ┃
+  ┃  Click to expand
+  ┃
+
+     Counted 1 to 30 with a 1-second pause between numbers.
+
+     ▣  Build · Big Pickle · 36.6s
+
+  ┃
+  ┃
+  ┃
+  ┃  Build · Big Pickle OpenCode
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+   /private/tmp/claude-501/-Users-person-dev-projects-nerd/00000000-0000-    14.6K (7%ctrl+p
+   0000-0000-000000000000/scratchpad/build-typing/proj                                commands
+

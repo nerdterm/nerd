@@ -1158,7 +1158,7 @@ mod tests {
         let pane = agent_pane(&app, 1, Default::default());
         app.spaces[0].tabs[0].panes.insert(1, pane);
         app.pane_type("cd /tmp\n");
-        assert_eq!(app.mail.owner_typed.map(|(p, _)| p), Some(1));
+        assert!(app.mail.owner_typed.contains_key(&1));
     }
 
     #[test]

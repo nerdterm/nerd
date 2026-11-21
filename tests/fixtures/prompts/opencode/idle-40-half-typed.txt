@@ -1,0 +1,31 @@
+cursor 17 20 shown size 40x30
+
+     Counted 1 to 30 with a 1-second
+     pause between numbers.
+
+     ▣  Build · Big Pickle · 36.6s
+
+  ┃
+  ┃  Use your read tool to read the
+  ┃  file /etc/hosts and tell me how
+  ┃  many lines it has.
+  ┃
+
+     → Read /etc/hosts
+
+     ▣  Build · Big Pickle
+
+  ┃
+  ┃  half typed text
+  ┃
+  ┃  Build · Big Pickle OpenCode
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+   /private/tmp/claude-14.7K  ctrl+p
+   501/-Users-person-         commands
+   dev-projects-nerd/
+   00000000-0000-0000-
+   0000-000000000000/
+   scratchpad/build-
+   typing/proj
+
+

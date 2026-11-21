@@ -1,0 +1,31 @@
+cursor 25 1 hidden size 100x30
+[38;5;174m▝▜[48;5;16m█████[49m█▀[39m  [38;5;246mFable 5.2[39m
+[38;5;174m ▝▝   ▝▝ [39m  [38;5;246m/…/00000000-0000-0000-0000-000000000000/scratchpad/build-typing/proj[39m
+
+
+[38;5;246m[48;5;237m❯ [38;5;231mAnswer in English. Reply with the single word: ready[39m
+
+[38;5;231m[49m⏺[39m ready
+
+[38;5;246m✻[39m [38;5;246mChurned for 1s · done 6:12 PM[39m
+
+[38;5;246m[48;5;237m❯ [38;5;231mCount slowly to 30 using the shell: a loop that prints each number with sleep 1 between them.[39m
+
+[38;5;246m[49m [39m Counting from 1 to 30 with one-second pauses
+[38;5;246m  ⎿  $ for i in $(seq 1 30); do echo $i; sleep 1; done[39m
+
+[38;5;153m────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m [1m[38;5;153mBash command[0m
+ [1mTip: auto mode handles these prompts for you — choose "switch to auto mode" below[0m
+ [38;5;246mCount from 1 to 30 with one-second pauses[39m
+[38;5;239m╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+[39m for i in $(seq 1 30); do echo $i; sleep 1; done
+[38;5;239m╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+[39m A variable in this command can't be checked before it runs
+
+ Do you want to proceed?
+ [38;5;153m❯[39m [38;5;246m1. [38;5;153mYes[39m
+   [38;5;246m2. [39mYes, and switch to auto mode[38;5;246m · auto mode handles these prompts for you[39m
+   [38;5;246m3. [39mNo
+
+ [38;5;246mEsc to cancel · Tab to amend[39m

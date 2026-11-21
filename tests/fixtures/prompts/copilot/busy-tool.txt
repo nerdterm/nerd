@@ -1,0 +1,31 @@
+cursor 27 2 shown size 100x30
+ [1m[97m[44m[Current][0m  Sessions  [2m Issues [0m [2m Pull requests [0m  Gists
+
+[2m[90m│[0m                                                                                                [2m[90m│[0m ┃
+[2m[90m│[0m [34m ╭─╮╭─╮[39m                             [2m[90m│[0m  [1m[34mGetting started[0m                                         [2m[90m│[0m [37m┃
+[2m[90m│[0m [34m ╰─╯╰─╯[39m  Copilot v1.0.107 uses AI.  [2m[90m│[0m  Use the tabs above to explore your sessions and pull r… [2m[90m│[0m [37m┃
+[2m[90m│[0m [35m █ [96m▘▝[35m █[39m  Check for mistakes.        [2m[90m│[0m  /init — Initialize Copilot instructions for this repos… [2m[90m│[0m [37m┃
+[2m[90m│[0m [35m  ▔▔▔▔ [39m                             [2m[90m│[0m  /model — Switch models across providers, or use Copilo… [2m[90m│[0m [37m┃
+[2m[90m│[0m                                                                                                [2m[90m│[0m [37m┃
+[2m[90m╰────────────────────────────────────────────────────────────────────────────────────────────────╯[0m [37m┃
+[39m                                                                                                   [37m┃
+[39m [34m●[39m MCP Servers reloaded: 1 server connected                                                        [37m┃
+[39m                                                                                                   [37m┃
+[39m ❯ Reply with the single word: ready                                                         18:07 [37m┃
+[39m                                                                                                   [37m┃
+[39m [34m●[39m Copilot Fusion selected MAI Code 2 Flash because it was the best choice out of the models       [37m┃
+[39m   available in your plan.                                                                         [37m┃
+[39m                                                                                                   [37m┃
+[39m [34m●[39m ready                                                                                           [37m┃
+[39m                                                                                                   [37m┃
+[39m ❯ Count slowly to 30 using the shell: a loop that prints each number with sleep 1 between   18:07 [37m┃
+[39m   them.                                                                                           [37m┃
+[39m                                                                                                   [37m┃
+[39m ○ [1mShell [0mCount slowly from 1 to 30 6 lines…                                                    12s [37m┃
+[39m   for i in $(seq 1 30); do printf '%d\n' "$i"; [ "$i" -eq 30 ] || sleep 1; done                   [37m┃
+[39m                                                                                                   [37m┃
+[39m /private/tmp/claude-501/-Users-person-dev-projects-nerd/.../proj            
+[2m────────────────────────────────────────────────────────────────────────────────────────────────────
+[0m❯
+[2m────────────────────────────────────────────────────────────────────────────────────────────────────
+[0m [34m●[39m [94mW[34morki[94mng[39m · 174 B [1mctrl+c[0m interrupt                               Copilot Fusion → mai-code-2-flash

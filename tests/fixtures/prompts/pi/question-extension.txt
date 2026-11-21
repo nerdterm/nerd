@@ -1,0 +1,31 @@
+cursor 28 99 hidden size 100x30
+ Took 10.1s
+
+
+ 1–10, one second apart.
+
+
+ Run exactly this shell command: rm -rf ./nothing-here-dir
+
+
+
+ $ rm -rf ./nothing-here-dir (timeout 30s)
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ ⚠️ permission-gate: «recursive delete»
+
+   rm -rf ./nothing-here-dir
+
+ Run it?
+
+ → No
+   Yes
+
+ ↑↓ navigate  enter select  escape/ctrl+c cancel
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+/private/tmp/claude-501/-Users-person-dev-projects-nerd/00000000-0000-0000-0000-000000000000/scra...
+
+mcp: unconfigured

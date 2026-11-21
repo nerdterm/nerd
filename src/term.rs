@@ -114,7 +114,8 @@ fn shows(t: &str, text: &str) -> bool {
 // ceiling: an option whose description or label runs past 5 rows hides its list; a longer walk, bounded by the blank row, is the way past.
 fn nearest_option<'a>(rows: impl Iterator<Item = &'a &'a str>) -> Option<u32> {
     rows.take(6).take_while(|r| !r.trim().is_empty()).find_map(|r| {
-        let (n, rest) = r.trim_start().split_once('.')?;
+        // a list drawn in a box (Gemini's, Copilot's) starts its rows with the box's side
+        let (n, rest) = r.trim_start_matches(|c: char| c.is_whitespace() || c == '\u{2502}').split_once('.')?;
         if rest.is_empty() || rest.starts_with(' ') { n.parse().ok() } else { None }
     })
 }
@@ -205,6 +206,75 @@ thread_local! {
     pub static CONTENTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub static SGR: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub static LINES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How an agent's idle input prompt looks, as its manifest records it.
+#[derive(Default)]
+pub struct Prompt<'a> {
+    pub idle: &'a [String],
+    pub busy: &'a [String],
+    pub placeholder: &'a [String],
+    /// It draws a cursor of its own and hides the terminal's, at idle too.
+    pub hides_cursor: bool,
+    pub busy_at: BusyAt,
+}
+
+/// Where an agent draws the status line that says it works, so its conversation's words are not taken for it.
+#[derive(serde::Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BusyAt {
+    /// From BUSY_ABOVE rows above the prompt to the bottom, the input left out: a manifest that does not say.
+    #[default]
+    Anywhere,
+    /// Below the input (Claude Code, Copilot, OpenCode).
+    Below,
+    /// The nearest row with text above the prompt (Codex).
+    Above,
+    /// The row just above the rule over the input (Gemini, Qwen).
+    AboveRule,
+}
+
+/// How far above its prompt an agent draws what says it works, with room to spare: Gemini's line, 5 rows up at 40 columns, is the farthest captured.
+const BUSY_ABOVE: u16 = 8;
+/// A placeholder cut at a narrow pane's edge counts from this many characters: a draft that short and that alike is not one.
+// ceiling: a draft typed as the first 8 or more characters of the agent's placeholder reads as an empty input; the placeholder's colour is the way past.
+const PLACEHOLDER_CUT: usize = 8;
+/// A busy entry cut at the pane's edge counts from this many characters (`esc…`): reading busy where it is not only waits.
+const BUSY_CUT: usize = 3;
+/// How many rows a status line above a rule may wrap over (Qwen's takes 3 at 40 columns).
+const STATUS_ROWS: usize = 3;
+/// The narrowest pane nerd types into.
+const TYPED_COLS: usize = 30;
+
+/// `s` without its blanks.
+fn squash(s: &str) -> String {
+    s.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+/// A rule drawn across: `─` only.
+fn rule(row: &str, cols: usize) -> bool {
+    across(row, cols, "─")
+}
+
+/// A run of `chars` from the left edge over most of the row: a pasted line, drawn indented in the input, is never one.
+fn across(row: &str, cols: usize, chars: &str) -> bool {
+    row.chars().take_while(|c| chars.contains(*c)).count() * 4 >= cols * 3
+}
+
+/// A row that draws a box's top or bottom in column 0 or 1, or a rule across from the left edge.
+fn border(row: &str, cols: usize) -> bool {
+    let corner = |c: Option<char>| c.is_some_and(|c| "╭╰┌└╔╚".contains(c));
+    let mut cs = row.chars();
+    let first = cs.next();
+    corner(first) || (first == Some(' ') && corner(cs.next())) || across(row, cols, "─━═▀▄╌")
+}
+
+/// A busy entry `b` in `row`, or cut by the pane's edge: the row ends in `…` after at least BUSY_CUT of its characters,
+/// starting a word ("desc…" is not "esc…").
+fn shows_busy(row: &str, b: &str) -> bool {
+    let cut = row.trim_end().strip_suffix('…');
+    let starts_word = |t: &str, k: usize| t.strip_suffix(&b.chars().take(k).collect::<String>()).is_some_and(|before| before.is_empty() || before.ends_with([' ', '(', '\u{b7}']));
+    row.contains(b) || cut.is_some_and(|t| (BUSY_CUT..b.chars().count()).any(|k| starts_word(t, k)))
 }
 
 /// How long a silence makes a pane count as idle.
@@ -701,6 +771,102 @@ impl Term {
             let live = self.screen().live_contents();
             numbered().any(|t| shows(t, &live))
         }
+    }
+
+    /// The row of the agent's idle input prompt, shown empty on the live screen: the nearest row from the cursor's up to a
+    /// blank one starts with an `idle` entry, nothing but dim text or a placeholder follows it up to the cursor, the cursor
+    /// is shown unless the agent hides it, and no `busy` entry shows around the prompt. A question takes the cursor away.
+    // ceiling: a prompt at a column that moves with the width (OpenCode's start screen) never matches; an entry matched after leading blanks is the way past.
+    pub fn idle_prompt(&self, p: &Prompt) -> Option<u16> {
+        let (cursor, _) = self.screen().cursor_position();
+        let (row, len) = self.prompt_mark(p, cursor, cursor + 1, false)?;
+        let typed: String = (row..=cursor).flat_map(|r| self.cells(r).into_iter().skip(if r == row { len } else { 0 })).filter(|c| !c.1).map(|c| c.0).collect();
+        let typed = squash(&typed);
+        let empty = typed.is_empty() || p.placeholder.iter().any(|x| self.placeholder(&squash(x), typed.clone(), cursor));
+        (empty && !self.busy(p, row, row, cursor)).then_some(row)
+    }
+
+    /// Whether `typed`, blanks left out, is the placeholder `x`: whole, wrapped onto the rows below the cursor, or cut at
+    /// the pane's edge (a `…` after it) once it is long enough not to pass for a short draft.
+    fn placeholder(&self, x: &str, mut typed: String, cursor: u16) -> bool {
+        let rows = self.term.grid().screen_lines() as u16;
+        for r in cursor + 1..rows {
+            let next = squash(&row_text(&self.term, Line(r as i32)).0);
+            let more = format!("{typed}{next}");
+            if typed == x || next.is_empty() || !x.starts_with(more.trim_end_matches('…')) {
+                break;
+            }
+            typed = more;
+        }
+        let t = typed.trim_end_matches('…');
+        t == x || (t.chars().count() >= PLACEHOLDER_CUT && x.starts_with(t))
+    }
+
+    /// After a paste of up to `span` rows into the prompt that was at `row`: the prompt is still there. The pasted text
+    /// cannot change the answer: its blank rows are walked over, and the rows it can take are left out of the busy search.
+    pub fn kept_prompt(&self, p: &Prompt, row: u16, span: u16) -> bool {
+        let (cursor, _) = self.screen().cursor_position();
+        self.prompt_mark(p, cursor, span + 1, true)
+            .is_some_and(|(r, _)| r <= row + span && r + span >= row && cursor <= r + span && !self.busy(p, r, r.min(row.saturating_sub(span)), cursor))
+    }
+
+    /// Whether `tail`, blanks left out, ends at the cursor: on its row before it, wrapped from up to two rows above.
+    pub fn ends_at_cursor(&self, tail: &str) -> bool {
+        let (row, col) = self.screen().cursor_position();
+        let cells = &self.term.grid()[Line(row as i32)];
+        let before: String = cells[..].iter().take(col as usize).filter(|c| !c.flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)).map(ch).collect();
+        let above: String = (row.saturating_sub(2)..row).map(|r| row_text(&self.term, Line(r as i32)).0).collect();
+        !tail.is_empty() && squash(&(above + &before)).ends_with(tail)
+    }
+
+    /// The nearest row from `from` up, at most `limit` rows, that starts with an `idle` entry, and the entry's length in
+    /// cells; `through_blank` walks past blank rows. None while the cursor is hidden, unless the agent always hides it.
+    fn prompt_mark(&self, p: &Prompt, from: u16, limit: u16, through_blank: bool) -> Option<(u16, usize)> {
+        let cols = self.term.grid().columns();
+        // ceiling: a pane narrower than TYPED_COLS is never typed into, for a status line cut there may lose its busy words; captures at those widths are the way past.
+        if cols < TYPED_COLS || (!p.hides_cursor && self.screen().hide_cursor()) {
+            return None;
+        }
+        for r in (0..=from).rev().take(limit as usize) {
+            let t = row_text(&self.term, Line(r as i32)).0;
+            // a box or a rule ends the input: an older prompt row above it is history
+            if (!through_blank && t.trim().is_empty()) || border(&t, cols) {
+                return None;
+            }
+            if let Some(i) = p.idle.iter().find(|i| t.starts_with(i.as_str())) {
+                return Some((r, i.chars().count()));
+            }
+        }
+        None
+    }
+
+    /// A `busy` entry on the row where the agent draws its status (`busy_at`): conversation text holding the same words is not that row.
+    // ceiling: the agent's own last line above its input (`above`, `above_rule`), or any of its words near the prompt (no `busy_at`), holding a busy entry reads as busy until more is printed.
+    // ceiling: the status line is read where the captured version draws it (Claude Code 2.1.330 below the input, Codex 0.167.0 the nearest row above); a version that draws it elsewhere, or Codex's queued input between status and prompt, leaves only the agent's state to say it works; captures of that version are the way past.
+    /// `mark` is the prompt's row; `top..=cursor` the rows the input may take, a paste's too.
+    fn busy(&self, p: &Prompt, mark: u16, top: u16, cursor: u16) -> bool {
+        let (rows, cols) = (self.term.grid().screen_lines() as u16, self.term.grid().columns());
+        let text = |r: u16| row_text(&self.term, Line(r as i32)).0;
+        // the rows a status line takes, joined where it wraps
+        let holds = |rs: Vec<u16>| {
+            let joined = rs.iter().map(|r| text(*r).trim().to_string()).collect::<Vec<_>>().join(" ");
+            p.busy.iter().any(|b| joined.contains(b.as_str()) || rs.iter().any(|r| shows_busy(&text(*r), b)))
+        };
+        match p.busy_at {
+            BusyAt::Below => holds((cursor + 1..rows).collect()),
+            BusyAt::Above => (0..mark).rev().find(|r| !text(*r).trim().is_empty()).is_some_and(|r| holds(vec![r])),
+            BusyAt::AboveRule => (0..mark).rev().take(BUSY_ABOVE as usize).find(|r| rule(&text(*r), cols)).is_some_and(|rule| {
+                let block: Vec<u16> = (0..rule).rev().take(STATUS_ROWS).take_while(|r| !text(*r).trim().is_empty()).collect();
+                holds(block.into_iter().rev().collect())
+            }),
+            BusyAt::Anywhere => (top.saturating_sub(BUSY_ABOVE)..rows).filter(|r| !(top.min(mark)..=cursor).contains(r)).any(|r| holds(vec![r])),
+        }
+    }
+
+    /// A live row's characters, each with whether it is drawn dim, without wide characters' second halves.
+    fn cells(&self, r: u16) -> Vec<(char, bool)> {
+        let row = &self.term.grid()[Line(r as i32)];
+        row[..].iter().filter(|c| !c.flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)).map(|c| (ch(c), c.flags.contains(Flags::DIM))).collect()
     }
 
     /// Base state disregarding "seen": what's visible on screen and by timing.
@@ -1683,6 +1849,69 @@ mod tests {
         t.set_blocked_text(vec!["Do you want".into()]);
         t.tick_state();
         assert_eq!(CONTENTS.with(|c| c.get()), 1, "an agent's prompt is still read");
+    }
+
+    #[test]
+    fn the_idle_prompt_is_an_empty_input_where_the_cursor_is() {
+        let (idle, busy, placeholder) = (["\u{203a}".to_string()], ["esc to interrupt".to_string()], ["Ask anything".to_string()]);
+        let p = Prompt { idle: &idle, busy: &busy, placeholder: &placeholder, hides_cursor: false, busy_at: BusyAt::Anywhere };
+        let term = |bytes: &str| {
+            let mut t = Term::new(40, 20, 0);
+            t.feed(bytes.as_bytes());
+            t
+        };
+        assert_eq!(term("\n\u{203a} ").idle_prompt(&p), Some(1), "the cursor in the empty prompt");
+        assert_eq!(term("\u{203a} \x1b[2mrun the tests\x1b[0m\x1b[1;3H").idle_prompt(&p), Some(0), "a dim suggestion is not typed text");
+        assert_eq!(term("\u{203a} Ask anything\x1b[1;3H").idle_prompt(&p), Some(0), "the placeholder");
+        assert_eq!(term("\u{203a} half typed").idle_prompt(&p), None, "a draft of the person's");
+        assert_eq!(term("\u{203a} a draft long enough to wrap over the edge of the row").idle_prompt(&p), None, "a wrapped draft");
+        assert_eq!(term("\u{203a} earlier\r\n\r\nWhich colour?\r\n> ").idle_prompt(&p), None, "a form below a blank row");
+        assert_eq!(term(" \u{203a} 1. Yes").idle_prompt(&p), None, "a row that starts elsewhere");
+        assert_eq!(term("\u{203a} \x1b[5;1H").idle_prompt(&p), None, "the cursor on a blank row");
+        assert_eq!(term("\u{203a} \x1b[?25l").idle_prompt(&p), None, "a hidden cursor");
+        assert_eq!(term("\u{203a} \x1b[?25l").idle_prompt(&Prompt { hides_cursor: true, ..p }), Some(0), "unless the agent always hides it");
+        assert_eq!(term("Working (esc to interrupt)\r\n\r\n\u{203a} ").idle_prompt(&p), None, "busy above the prompt");
+        assert_eq!(term("said: esc to interrupt\r\n\n\n\n\n\n\n\n\n\n\u{203a} ").idle_prompt(&p), Some(10), "words far above are not the agent's status");
+        assert_eq!(term("said: esc to interrupt\r\n\n\n\n\n\n\n\n\u{203a} ").idle_prompt(&p), None, "words 8 rows above may be");
+        assert_eq!(term("\u{203a} ").idle_prompt(&Prompt::default()), None, "no idle text: never");
+        // after a paste of two paragraphs that names the busy text, the prompt stays where it was
+        let pasted = term("\n\n\u{203a} [message] esc to interrupt\r\n\r\n  second paragraph");
+        assert!(pasted.kept_prompt(&p, 2, 4));
+        assert!(!pasted.kept_prompt(&p, 2, 1), "not past the rows the paste can take");
+        assert!(!term("\n\n\u{203a} [message]\r\nWorking (esc to interrupt)\r\n\r\nWhich colour?\r\n> ").kept_prompt(&p, 2, 2), "a form below the input");
+        let boxed = "\n\n\u{203a} an older prompt\r\n\u{256d}\u{2500}\u{2500}\u{256e}\r\n\u{2502} Which colour?\r\n\u{2502} > ";
+        assert!(!term(boxed).kept_prompt(&p, 6, 10), "a box ends the walk: the prompt above it is history");
+        // busy words in the conversation are not the agent's status line, wherever the agent draws that
+        let at = |busy_at| Prompt { busy_at, ..p };
+        let said = "\u{203a} you said esc to interrupt\r\n\u{2022} done\r\n\r\n";
+        assert_eq!(term(&format!("{said}\u{2500}\u{2500}\r\n\u{203a} \r\n\u{2500}\u{2500}\r\n  footer\x1b[5;3H")).idle_prompt(&at(BusyAt::Below)), Some(4), "below: the conversation above");
+        assert_eq!(term(&format!("{said}\u{2500}\u{2500}\r\n\u{203a} \r\n\u{2500}\u{2500}\r\n  mode \u{b7} esc to interrupt\x1b[5;3H")).idle_prompt(&at(BusyAt::Below)), None, "below: the footer");
+        assert_eq!(term(&format!("{said}\u{203a} ")).idle_prompt(&at(BusyAt::Above)), Some(3), "above: the last line is not busy");
+        assert_eq!(term(&format!("{said}\u{2022} Working (1s \u{2022} esc to interrupt)\r\n\r\n\u{203a} ")).idle_prompt(&at(BusyAt::Above)), None, "above: the working line");
+        let rule = "\u{2500}".repeat(40);
+        assert_eq!(term(&format!("{said}{rule}\r\n\u{203a} ")).idle_prompt(&at(BusyAt::AboveRule)), Some(4), "above the rule: a blank row");
+        assert_eq!(term(&format!("{said}  .. thinking (1s \u{b7} esc to interrupt)\r\n{rule}\r\n\u{203a} ")).idle_prompt(&at(BusyAt::AboveRule)), None, "above the rule: the spinner");
+        assert_eq!(term(&format!("\r\n  .. thinking (1s \u{b7} esc to\r\n  interrupt)\r\n{rule}\r\n\u{203a} ")).idle_prompt(&at(BusyAt::AboveRule)), None, "above the rule: wrapped over two rows");
+        // a status line cut at a narrow pane's edge still says busy; a narrower pane is never typed into
+        assert_eq!(term("\u{203a} \r\n\r\n  mode \u{b7} esc t\u{2026}\x1b[1;3H").idle_prompt(&at(BusyAt::Below)), None, "cut");
+        assert_eq!(term("\u{203a} \r\n\r\n  mode \u{b7} esc to i\u{2026}\x1b[1;3H").idle_prompt(&at(BusyAt::Below)), None, "cut later");
+        assert_eq!(term("\u{203a} \r\n\r\n  a long desc\u{2026}\x1b[1;3H").idle_prompt(&at(BusyAt::Below)), Some(0), "a cut word that only ends like it");
+        assert!(shows_busy("(esc\u{2026}", "(esc to cancel") && !shows_busy("  electr\u{2026}", "esc to cancel"));
+        assert_eq!(term("\u{2022} Working (1s \u{2022} esc\u{2026}\r\n\r\n\u{203a} ").idle_prompt(&at(BusyAt::Above)), None, "cut after 3 letters");
+        let mut narrow_pane = Term::new(29, 10, 0);
+        narrow_pane.feed("\u{203a} ".as_bytes());
+        assert_eq!(narrow_pane.idle_prompt(&p), None, "29 columns");
+        // a pasted file tree or separator, drawn indented in the input, is not a box or a rule
+        let tree = format!("\n\n\u{203a} [message]\r\n  \u{2514}\u{2500}\u{2500} a.rs\r\n  {}\r\n  end", "\u{2500}".repeat(30));
+        assert!(term(&tree).kept_prompt(&p, 2, 5), "the walk goes past the message's own lines");
+        assert!(!term(&format!("\n\n\u{203a} [message]\r\n{rule}\r\n  end")).kept_prompt(&p, 2, 5), "a rule from the left edge across ends it");
+        assert!(!term("\n\n\u{203a} [message]\r\n \u{2570}\u{2500}\u{2500}\u{256f}\r\n  end").kept_prompt(&p, 2, 5), "a corner in column 1 ends it");
+        // a placeholder wrapped or cut by a narrow pane is still the empty input
+        let wide = ["Type your message or @path/to/file".to_string()];
+        let narrow = Prompt { placeholder: &wide, ..p };
+        assert_eq!(term("\u{203a}  Type your message or\r\n   @path/to/file\x1b[1;3H").idle_prompt(&narrow), Some(0), "wrapped");
+        assert_eq!(term("\u{203a}  Type your message or @pa\u{2026}\x1b[1;3H").idle_prompt(&narrow), Some(0), "cut");
+        assert_eq!(term("\u{203a} Type").idle_prompt(&narrow), None, "a short draft that starts like it is a draft");
     }
 
     #[test]

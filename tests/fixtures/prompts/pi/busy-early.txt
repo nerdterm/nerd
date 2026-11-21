@@ -1,0 +1,31 @@
+cursor 25 0 hidden size 100x30
+
+[38;2;205;154;34m────────────────────────────────────────────────────────────────────────────────────────────────────
+[39m [1m[38;2;205;154;34mPackage Updates Available[0m
+ [38;2;157;165;169mPackage updates are available. Run [38;2;167;152;215mpi update --extensions[39m
+ [38;2;157;165;169mPackages:[39m
+ - pi-web-access
+ - visual-explainer
+[38;2;205;154;34m────────────────────────────────────────────────────────────────────────────────────────────────────
+
+[39m [38;2;205;154;34mWarning: MCP servers need attention:
+[39m [38;2;205;154;34m  jev: failed: Failed to resolve MCP server "jev" env "TYPESAFE_API_KEY" from shell command:
+[39m [38;2;205;154;34msecurity find-generic-password -ws typesafe-api-key
+[39m [38;2;205;154;34mRun /mcp to fix.[39m
+
+[48;2;33;59;73m
+ [38;2;222;224;225mReply with the single word: ready[39m
+
+
+[49m ready
+
+[48;2;33;59;73m
+ [38;2;222;224;225mCount slowly to 30 using the shell: a loop that prints each number with sleep 1 between them.[39m
+
+
+[38;2;151;118;229m[49m── ⠹[39m [38;2;151;118;229mWorking ───────────────────────────────────────────────────────────────────────────────────────
+[7m[39m [0m
+[38;2;151;118;229m────────────────────────────────────────────────────────────────────────────────────────────────────
+[38;2;126;136;142m/private/tmp/claude-501/-Users-person-dev-projects-nerd/00000000-0000-0000-0000-000000000000/scra...
+
+[39mmcp: unconfigured

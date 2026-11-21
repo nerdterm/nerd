@@ -94,8 +94,8 @@ fn line(v: Value) -> String {
 pub struct MailState {
     /// Live records, oldest id first.
     pub msgs: Vec<Message>,
-    /// The last key or paste the owner sent, and to which pane.
-    pub owner_typed: Option<(PaneId, Instant)>,
+    /// When the owner last sent a key or a paste to each pane.
+    pub owner_typed: HashMap<PaneId, Instant>,
     pub(super) delivery: super::deliver::Delivery,
     store: Option<Store>,
     /// When each record entered its state; TTLs run on this clock, not the wall's.
