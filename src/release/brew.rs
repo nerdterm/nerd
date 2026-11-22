@@ -204,36 +204,92 @@ fn brew_env(prefix: &Path, temp: &Path) -> Vec<(String, std::ffi::OsString)> {
     env
 }
 
-/// `cmd` in a process group of its own, its output in files in `dir`; past `limit`, TERM to that group, then KILL to
-/// the group and every process still under it. `Ok((succeeded, stdout, stderr))`.
+/// The signal that told this run to stop, or 0; and brew's process group while one runs.
+static STOPPED: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+static GROUP: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+/// The broker kills this run 250 ms after its TERM: brew's group is killed inside that.
+const TERM_GRACE: Duration = Duration::from_millis(100);
+
+/// Signal-safe: brew is in a group of its own, so the signal that stops this run is passed on to it.
+#[cfg(not(test))]
+extern "C" fn on_stop(sig: nix::libc::c_int) {
+    let errno = nix::errno::Errno::last_raw();
+    let group = GROUP.load(std::sync::atomic::Ordering::SeqCst);
+    if group > 0 {
+        // SAFETY: kill is async-signal-safe; the group is the child's this run started last, cleared as it is reaped.
+        unsafe { nix::libc::kill(-group, nix::libc::SIGTERM) };
+    }
+    STOPPED.store(sig, std::sync::atomic::Ordering::SeqCst);
+    nix::errno::Errno::set_raw(errno);
+}
+
+fn stopped() -> Option<(i32, String)> {
+    let sig = STOPPED.load(std::sync::atomic::Ordering::SeqCst);
+    (sig != 0).then(|| (sig, format!("was stopped with nerd (signal {sig})")))
+}
+
+/// The three signals that stop this run go to `on_stop`, once. Not in the unit tests' binary, which Control + C must
+/// still end; tests/release.rs runs it in the real one.
+#[cfg(not(test))]
+fn listen() {
+    use nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet, Signal, sigaction};
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        for sig in [Signal::SIGTERM, Signal::SIGINT, Signal::SIGHUP] {
+            // SAFETY: the handler only calls kill and stores atomics.
+            let _ = unsafe { sigaction(sig, &SigAction::new(SigHandler::Handler(on_stop), SaFlags::SA_RESTART, SigSet::empty())) };
+        }
+    });
+}
+
+/// `cmd` in a process group of its own, its output in files in `dir`; past `limit`, or when this run is told to stop,
+/// TERM to that group, then KILL to the group and every process still under it. `Ok((succeeded, stdout, stderr))`.
 fn run(mut cmd: Command, limit: Duration, dir: &Path) -> Result<(bool, String, String), String> {
+    #[cfg(not(test))]
+    listen();
+    if let Some((_, why)) = stopped() {
+        return Err(why);
+    }
     let (o, e) = (dir.join("out"), dir.join("err"));
     let file = |p: &Path| std::fs::File::create(p).map_err(|e| format!("{}: {e}", p.display()));
     cmd.stdout(file(&o)?).stderr(file(&e)?).process_group(0);
     let mut child = cmd.spawn().map_err(|e| format!("did not start: {e}"))?;
+    GROUP.store(child.id() as i32, std::sync::atomic::Ordering::SeqCst);
     let start = Instant::now();
-    loop {
-        if let Some(s) = child.try_wait().map_err(|e| e.to_string())? {
-            let read = |p: &Path| String::from_utf8_lossy(&std::fs::read(p).unwrap_or_default()).into_owned();
-            return Ok((s.success(), read(&o), read(&e)));
+    let done = loop {
+        if let Some((sig, why)) = stopped() {
+            // ceiling: after a TERM Homebrew's rescue is cut to 100 ms, and on a busy Mac the broker's KILL can still come first, leaving the formula to the next run's recovery; the way past is a longer grace in the broker for the release run.
+            stop(&mut child, if sig == nix::libc::SIGTERM { TERM_GRACE } else { GRACE });
+            break Err(why);
+        }
+        match child.try_wait() {
+            Ok(Some(s)) => {
+                GROUP.store(0, std::sync::atomic::Ordering::SeqCst);
+                let read = |p: &Path| String::from_utf8_lossy(&std::fs::read(p).unwrap_or_default()).into_owned();
+                break Ok((s.success(), read(&o), read(&e)));
+            }
+            Ok(None) => {}
+            Err(e) => break Err(e.to_string()),
         }
         if start.elapsed() >= limit {
-            stop(&mut child);
-            return Err(format!("did not finish in {} s and was stopped; a build Homebrew started may still be running", limit.as_secs()));
+            stop(&mut child, GRACE);
+            break Err(format!("did not finish in {} s and was stopped; a build Homebrew started may still be running", limit.as_secs()));
         }
         std::thread::sleep(Duration::from_millis(50));
-    }
+    };
+    GROUP.store(0, std::sync::atomic::Ordering::SeqCst);
+    done
 }
 
-fn stop(child: &mut std::process::Child) {
+fn stop(child: &mut std::process::Child, grace: Duration) {
     use nix::sys::signal::{Signal, kill, killpg};
     use nix::unistd::Pid;
     let group = Pid::from_raw(child.id() as i32);
     let _ = killpg(group, Signal::SIGTERM);
     let t = Instant::now();
     let mut gone = false;
-    while !gone && t.elapsed() < GRACE {
-        std::thread::sleep(Duration::from_millis(50));
+    while !gone && t.elapsed() < grace {
+        std::thread::sleep(Duration::from_millis(20));
         gone = child.try_wait().ok().flatten().is_some();
     }
     // Only while it is unreaped is its pid still its own: what left its group is found as its descendants.
