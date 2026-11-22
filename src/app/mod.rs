@@ -4039,6 +4039,7 @@ mod tests {
         let (text, _) = frame(&mut app);
         assert!(text.contains("needs a terminal: ssh asks for a password or a host key"), "the machine's row says what ssh needs: {text}");
         assert!(!text.contains("ssh to studio failed"), "and does not call it a failure: {text}");
+        assert!(text.contains("failed).") && !text.contains("failed.)"), "ssh's own full stop is not kept inside the brackets: {text}");
         let Overlay::Confirm(c, _) = app.open_remote("studio", Some("1"), false) else { panic!("the command to copy") };
         assert_eq!(c.title, "Open a server", "the machine was reached; only the window cannot be opened");
         app.update_available = true;
