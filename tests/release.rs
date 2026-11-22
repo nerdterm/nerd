@@ -361,6 +361,65 @@ fn a_homebrew_nerd_from_nerd_s_tap_is_upgraded_by_its_own_brew_with_nerd_s_formu
 }
 
 #[test]
+fn a_homebrew_upgrade_told_to_stop_takes_brew_with_it_and_puts_the_formula_back() {
+    let e = Env::new("brew-stopped");
+    let nerd = e.brewed();
+    let root = e.home.parent().unwrap().to_path_buf();
+    let stand_in = root.join("sandbox-exec");
+    let tap = root.join("prefix/Library/Taps/nerdterm/homebrew-tap");
+    let brew = root.join("prefix/bin/brew");
+    // The upgrade ignores TERM and never ends: only a KILL to its group stops it.
+    let text = std::fs::read_to_string(&brew).unwrap().replace("upgrade) ", &format!("upgrade) trap '' TERM; echo $$ > '{}/brew.pid'; while :; do sleep 1; done; ", root.display()));
+    std::fs::write(&brew, text).unwrap();
+    e.archive_noting_runs();
+    std::fs::write(e.state().join("release-install"), TAG).unwrap();
+    let mut run = Command::new(&nerd)
+        .args(["--check-update", "--install", "--window"])
+        .env("HOME", &e.home)
+        .env("NERD_TEST_CURL", e.served.parent().unwrap().join("curl"))
+        .env("SERVED", &e.served)
+        .env("NERD_TEST_RELEASE_KEYS", std::fs::read_to_string(e.served.parent().unwrap().join("main.pub")).unwrap())
+        .env("NERD_TEST_BREW", &stand_in)
+        .env_remove("NERD_STATE_DIR")
+        .env_remove("NERD_SOCKET")
+        .env_remove("NERD_INSTANCE")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let within = |what: &str, done: &mut dyn FnMut() -> bool| {
+        let t = std::time::Instant::now();
+        while !done() {
+            assert!(t.elapsed() < std::time::Duration::from_secs(30), "{what}");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    };
+    let pid_file = root.join("brew.pid");
+    within("brew upgrade never started", &mut || std::fs::read_to_string(&pid_file).is_ok_and(|s| s.ends_with('\n')));
+    let brew_pid: i32 = std::fs::read_to_string(&pid_file).unwrap().trim().parse().unwrap();
+    // A failed check below leaves neither the stand-in nor the run behind.
+    struct Ended(i32, u32);
+    impl Drop for Ended {
+        fn drop(&mut self) {
+            for target in [format!("-{}", self.0), self.1.to_string()] {
+                let _ = Command::new("/bin/kill").args(["-KILL", "--", &target]).stderr(Stdio::null()).status();
+            }
+        }
+    }
+    let _ended = Ended(brew_pid, run.id());
+    let alive = |pid: i32| Command::new("/bin/kill").args(["-0", &pid.to_string()]).stderr(Stdio::null()).status().unwrap().success();
+    assert!(alive(brew_pid));
+
+    assert!(Command::new("/bin/kill").args(["-TERM", &run.id().to_string()]).status().unwrap().success());
+    within("the run did not end", &mut || run.try_wait().unwrap().is_some());
+    within("brew outlived the run", &mut || !alive(brew_pid));
+    assert!(e.said()["Failed"].as_str().unwrap().contains("brew upgrade: was stopped with nerd (signal 15)"), "{}", e.said());
+    assert_eq!(std::fs::read_to_string(tap.join("Formula/nerd.rb")).unwrap(), "class Nerd < Formula\nend\n", "the tap's own formula back");
+    assert!(!e.state().join("release-brew-formula").exists(), "put back by this run, not left for the next");
+}
+
+#[test]
 fn a_homebrew_upgrade_takes_only_a_signed_archive_of_nerd_alone() {
     let e = Env::new("brew-refused");
     let nerd = e.brewed();
