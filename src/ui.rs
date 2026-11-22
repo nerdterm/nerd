@@ -244,7 +244,17 @@ pub fn draw(f: &mut Frame, app: &App, view: &mut ViewState, geometry: &[crate::a
         let marked = menu_marked(app);
         let button = draw_menu(f.buffer_mut(), menu.x, menu.y, marked, &theme);
         let (waiting, mail, spaces) = sidebar_data(app);
-        let hits = crate::sidebar::draw(f.buffer_mut(), side, &waiting, &mail, &spaces, app.focus == crate::app::Focus::Sidebar, &theme);
+        let hits = crate::sidebar::draw(f.buffer_mut(), side, &waiting, &mail, &spaces, app.focus == crate::app::Focus::Sidebar, view.sidebar_scroll, std::mem::take(&mut view.sidebar_reveal), &theme);
+        view.sidebar_scroll = hits.scroll;
+        view.hits.sidebar_list = hits.list;
+        view.sidebar_order = hits
+            .order
+            .iter()
+            .map(|r| match *r {
+                crate::sidebar::Row::Space(i) => crate::app::SidebarSel::Space(i),
+                crate::sidebar::Row::Pane(id) => crate::app::SidebarSel::Pane(id),
+            })
+            .collect();
         view.hits.sidebar_rows = hits.panes;
         view.hits.sidebar_spaces = hits.spaces;
         view.hits.sidebar_group_toggles = hits.group_toggles;
@@ -271,12 +281,14 @@ pub fn draw(f: &mut Frame, app: &App, view: &mut ViewState, geometry: &[crate::a
         view.sidebar_mail = hits.mail;
         view.hits.sidebar_spaces = hits.spaces;
         view.hits.sidebar_toggle = hits.toggle;
+        view.sidebar_order.clear();
         // the whole rail width is the target here: the rail is narrow and the strokes sit alone on it
         view.hits.sidebar_menu = Some(Rect { x: rail.x, width: w.max(button.width), ..button });
         view.hits.menu_at = Some((rail.x, top.y));
     } else {
         fx.screen.extend(place_logo(app, view, None));
         view.sidebar_mail.clear();
+        view.sidebar_order.clear();
     }
 
     // Over the panes' top right corner, below the top row: the menu button and the tabs stay in reach.

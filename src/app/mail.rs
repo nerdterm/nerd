@@ -1011,7 +1011,8 @@ impl App {
         let wall = crate::hook::now();
         let named = self.named_panes();
         let card = |n: &NamedPane| Card { name: n.name.clone(), pane: Some(n.pane), tab: n.tab.clone(), agent: n.agent.clone(), uid: n.uid, isolation: n.isolation.clone() };
-        let order: Vec<usize> = if self.view.hits.sidebar_spaces.is_empty() { (0..self.spaces.len()).collect() } else { self.view.hits.sidebar_spaces.iter().map(|(_, i)| *i).collect() };
+        let listed = self.space_order();
+        let order: Vec<usize> = if listed.is_empty() { (0..self.spaces.len()).collect() } else { listed };
         let mut columns: Vec<MailColumn> = order
             .iter()
             .filter_map(|i| self.spaces.get(*i))

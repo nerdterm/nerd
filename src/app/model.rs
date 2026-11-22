@@ -478,9 +478,15 @@ impl App {
         self.dirty = true;
     }
 
+    /// The spaces in the order the sidebar lists them, the ones scrolled out of view included.
+    pub(super) fn space_order(&self) -> Vec<usize> {
+        let listed: Vec<usize> = self.view.sidebar_order.iter().filter_map(|r| if let SidebarSel::Space(i) = r { Some(*i) } else { None }).collect();
+        if listed.is_empty() { self.view.hits.sidebar_spaces.iter().map(|(_, i)| *i).collect() } else { listed }
+    }
+
     /// The space drawn right above (`-1`) or below (`1`) this one, as the sidebar shows them.
     pub(super) fn space_neighbour(&self, index: usize, step: isize) -> Option<usize> {
-        let order: Vec<usize> = self.view.hits.sidebar_spaces.iter().map(|(_, i)| *i).collect();
+        let order = self.space_order();
         let at = order.iter().position(|i| *i == index)?;
         order.get(at.checked_add_signed(step)?).copied()
     }
