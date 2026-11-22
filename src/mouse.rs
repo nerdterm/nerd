@@ -18,6 +18,8 @@ pub struct Hits {
     pub sidebar_rows: Vec<(Rect, PaneId)>,
     /// Rows of the top block: spaces.
     pub sidebar_spaces: Vec<(Rect, usize)>,
+    /// The spaces list's area: the wheel over it scrolls the list.
+    pub sidebar_list: Option<Rect>,
     /// The ▸/▾ arrow on a worktree group's parent.
     pub sidebar_group_toggles: Vec<(Rect, usize)>,
     pub sidebar_new: Option<Rect>,
@@ -71,6 +73,7 @@ impl Hits {
         self.segments.clear();
         self.sidebar_rows.clear();
         self.sidebar_spaces.clear();
+        self.sidebar_list = None;
         self.sidebar_group_toggles.clear();
         self.sidebar_new = None;
         self.sidebar_menu = None;
@@ -123,6 +126,8 @@ pub enum Action {
     OpenMenu(u16, u16),
     /// Scrolling a pane's own scrollback.
     Scroll { id: PaneId, lines: isize },
+    /// The wheel over the sidebar's spaces list: rows down, or up when negative.
+    SidebarScroll(isize),
     /// Bytes ready to send to the program; also carries focus to `id`, with no separate action for it.
     ToChild { id: PaneId, bytes: Vec<u8> },
     /// Always emitted on Ctrl+click, whether a link is there or not; the caller checks via `links::link_at`
@@ -202,6 +207,11 @@ impl Router {
             self.has_selection = false;
             self.dropped = true;
         }
+        if let (Some(up), Some(list)) = (wheel_up(ev.kind), hits.sidebar_list)
+            && hit(list, ev.column, ev.row)
+        {
+            return Action::SidebarScroll(if up { -(WHEEL_LINES as isize) } else { WHEEL_LINES as isize });
+        }
         // Sidebar buttons and rows are checked first: they sit on top of an area panes would otherwise intercept.
         if matches!(ev.kind, MouseEventKind::Down(MouseButton::Left)) {
             let (x, y) = (ev.column, ev.row);
@@ -243,6 +253,7 @@ impl Router {
         if let Some(from) = self.drag.space {
             match ev.kind {
                 MouseEventKind::Drag(_) => {
+                    // ceiling: a space is dragged only among the rows in view; scrolling the list while a drag nears its edge is the way past.
                     let over = hits.sidebar_spaces.iter().find(|(r, _)| hit(*r, ev.column, ev.row));
                     return match over {
                         Some(&(_, to)) if to != from => {
@@ -853,6 +864,15 @@ mod tests {
             Action::FocusPane(id) => assert_eq!(id, 1),
             other => panic!("expected focus, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn the_wheel_over_the_spaces_list_scrolls_it_and_nothing_under_it() {
+        let mut r = router(false, WheelRouting::Scrollback);
+        r.hits.sidebar_list = Some(Rect::new(1, 8, 28, 10));
+        assert!(matches!(r.route(ev(MouseEventKind::ScrollDown, 5, 9)), Action::SidebarScroll(n) if n > 0));
+        assert!(matches!(r.route(ev(MouseEventKind::ScrollUp, 5, 17)), Action::SidebarScroll(n) if n < 0));
+        assert!(matches!(r.route(ev(MouseEventKind::ScrollDown, 35, 9)), Action::Scroll { .. }), "beside the list, the pane's");
     }
 
     #[test]

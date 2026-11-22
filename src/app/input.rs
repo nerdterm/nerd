@@ -429,6 +429,7 @@ impl App {
                     return;
                 }
                 let at = self.sidebar_sel.and_then(|sel| rows.iter().position(|r| *r == sel));
+                self.view.sidebar_reveal = matches!(k.code, KeyCode::Up | KeyCode::Down);
                 match k.code {
                     KeyCode::Up => self.sidebar_sel = Some(rows[at.map_or(0, |i| i.saturating_sub(1))]),
                     KeyCode::Down => self.sidebar_sel = Some(rows[at.map_or(0, |i| (i + 1).min(rows.len() - 1))]),
@@ -457,9 +458,16 @@ impl App {
         }
     }
 
-    /// Every sidebar row the keys can sit on, in the order they were drawn. Taken from the same
-    /// hit map the mouse uses, so the two can never disagree about what is on screen.
+    /// Every sidebar row the keys can sit on, in the order they were drawn: the needs-you rows from the
+    /// hit map the mouse uses, the spaces list whole, so the keys reach the rows scrolled out of view.
     fn sidebar_rows(&self) -> Vec<SidebarSel> {
+        if !self.view.sidebar_order.is_empty() {
+            let top = self.view.hits.sidebar_list.map_or(0, |l| l.y);
+            let mut rows: Vec<SidebarSel> = self.view.hits.sidebar_rows.iter().filter(|(r, _)| r.y < top).map(|(_, id)| SidebarSel::Pane(*id)).collect();
+            let more: Vec<SidebarSel> = self.view.sidebar_order.iter().copied().filter(|r| !rows.contains(r)).collect();
+            rows.extend(more);
+            return rows;
+        }
         let hits = &self.view.hits;
         let mut rows: Vec<(u16, SidebarSel)> = hits
             .sidebar_spaces
@@ -504,6 +512,7 @@ impl App {
             self.sidebar_sel = here
                 .filter(|h| rows.contains(h))
                 .or_else(|| rows.first().copied());
+            self.view.sidebar_reveal = true;
         }
         self.focus = f;
         self.dirty = true;
@@ -876,6 +885,11 @@ impl App {
                     }
                     self.save_cfg_soon();
                 }
+            }
+            Action::SidebarScroll(lines) => {
+                // The frame clamps it to the list's end.
+                self.view.sidebar_scroll = (self.view.sidebar_scroll as isize + lines).clamp(0, u16::MAX as isize) as u16;
+                self.dirty = true;
             }
             Action::Scroll { id, lines } => {
                 if let Some(p) = self.tab_mut().and_then(|t| t.panes.get_mut(&id))

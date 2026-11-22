@@ -288,6 +288,12 @@ pub struct ViewState {
     pub dialog: DialogView,
     /// The sidebar's needs-you rows for mail, by message id: a click opens Messages on it.
     pub sidebar_mail: Vec<(Rect, String)>,
+    /// Rows of the sidebar's spaces list scrolled off its top.
+    pub sidebar_scroll: u16,
+    /// The keys moved the sidebar's selection: the next frame brings its row into view.
+    pub sidebar_reveal: bool,
+    /// Every row of the spaces list in drawing order, the ones out of view included.
+    pub sidebar_order: Vec<SidebarSel>,
 }
 
 /// Tabs in one space: as many as the number keys switch to.

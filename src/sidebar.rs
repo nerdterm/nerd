@@ -139,6 +139,19 @@ pub struct Hits {
     pub subagent_rows: Vec<(Rect, PaneId, String)>,
     /// A mail row, by message id: a click opens the Messages window on it.
     pub mail: Vec<(Rect, String)>,
+    /// The spaces list's own area: the wheel over it scrolls the list.
+    pub list: Option<Rect>,
+    /// Rows scrolled off the top, as drawn: never past the list's end.
+    pub scroll: u16,
+    /// Every space and pane row in drawing order, the ones out of view included.
+    pub order: Vec<Row>,
+}
+
+/// A row of the spaces list the keys can sit on.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Row {
+    Space(usize),
+    Pane(PaneId),
 }
 
 /// The collapsed sidebar's width: a border, a mark between two spaces, a border.
@@ -153,7 +166,9 @@ const TERMINAL: &str = "\u{203a}";
 
 /// Two blocks: `needs you`, always the same height, and `spaces`. Rows move only when the human acts.
 /// `keys`: the sidebar has the keyboard, so its frame and titles are lit.
-pub fn draw(buf: &mut Buffer, area: Rect, waiting: &[Waiting], mail: &[MailRow], spaces: &[SpaceNode], keys: bool, theme: &Theme) -> Hits {
+/// `scroll`: rows of the spaces list scrolled off its top; `reveal`: bring the selected row into view.
+#[allow(clippy::too_many_arguments)]
+pub fn draw(buf: &mut Buffer, area: Rect, waiting: &[Waiting], mail: &[MailRow], spaces: &[SpaceNode], keys: bool, scroll: u16, reveal: bool, theme: &Theme) -> Hits {
     let mut hits = Hits::default();
     if area.width < 12 || area.height < 4 {
         return hits;
@@ -226,6 +241,57 @@ pub fn draw(buf: &mut Buffer, area: Rect, waiting: &[Waiting], mail: &[MailRow],
     hits.toggle = Some(toggle);
     y += 1;
 
+    // The list is drawn whole on a sheet of its own and the part in view is copied in: it scrolls when it is taller than its room.
+    let room = rows.bottom.saturating_sub(y);
+    let tall = spaces.iter().map(|s| 2 + s.panes.len() + s.panes.iter().map(|p| p.subagents.len()).sum::<usize>()).sum::<usize>().clamp(1, u16::MAX as usize) as u16;
+    let mut sheet = Buffer::empty(Rect::new(area.x, 0, area.width, tall));
+    let on_sheet = Rows { bottom: tall, full: Rect { y: 0, height: tall, ..inner }, ..rows };
+    let mut all = Hits::default();
+    let (used, chosen) = list(&mut sheet, &on_sheet, spaces, &mut all, theme);
+    let mut scroll = scroll.min(used.saturating_sub(room));
+    if let (true, Some(at)) = (reveal, chosen) {
+        scroll = scroll.min(at).max((at + 1).saturating_sub(room));
+    }
+    let shown = room.min(used - scroll);
+    for dy in 0..shown {
+        for x in inner.x..inner.right() {
+            // The sheet has no ground of its own: a cell it left unpainted keeps the frame's colours.
+            let (from, to) = (&sheet[(x, scroll + dy)], &mut buf[(x, y + dy)]);
+            let (fg, bg) = (to.fg, to.bg);
+            *to = from.clone();
+            if to.fg == Color::Reset {
+                to.fg = fg;
+            }
+            if to.bg == Color::Reset {
+                to.bg = bg;
+            }
+        }
+    }
+    let faint = Style::new().fg(theme.muted);
+    if scroll > 0 {
+        buf.set_string(plus.x.saturating_sub(2), spaces_title, "\u{2191}", faint);
+    }
+    if used > scroll + shown {
+        buf.set_string(area.right().saturating_sub(4), area.bottom() - 1, "\u{2193}", faint);
+    }
+    let seen = |r: Rect| (r.y >= scroll && r.y < scroll + shown).then(|| Rect { y: r.y - scroll + y, ..r });
+    let mut order: Vec<(u16, Row)> = all.spaces.iter().map(|(r, i)| (r.y, Row::Space(*i))).chain(all.panes.iter().map(|(r, id)| (r.y, Row::Pane(*id)))).collect();
+    order.sort_by_key(|(at, _)| *at);
+    order.dedup_by_key(|(at, _)| *at);
+    hits.order = order.into_iter().map(|(_, row)| row).collect();
+    hits.spaces.extend(all.spaces.into_iter().filter_map(|(r, i)| Some((seen(r)?, i))));
+    hits.group_toggles.extend(all.group_toggles.into_iter().filter_map(|(r, i)| Some((seen(r)?, i))));
+    hits.panes.extend(all.panes.into_iter().filter_map(|(r, id)| Some((seen(r)?, id))));
+    hits.subagent_toggles.extend(all.subagent_toggles.into_iter().filter_map(|(r, id)| Some((seen(r)?, id))));
+    hits.subagent_rows.extend(all.subagent_rows.into_iter().filter_map(|(r, id, sub)| Some((seen(r)?, id, sub))));
+    hits.list = Some(Rect { y, height: room, ..inner });
+    hits.scroll = scroll;
+    hits
+}
+
+/// The spaces and their panes from the sheet's top: the rows used, and the selected row's.
+fn list(buf: &mut Buffer, rows: &Rows, spaces: &[SpaceNode], hits: &mut Hits, theme: &Theme) -> (u16, Option<u16>) {
+    let (mut y, mut used, mut chosen) = (0, 0, None);
     for (i, kind) in group_order(spaces) {
         if y >= rows.bottom {
             break;
@@ -258,18 +324,21 @@ pub fn draw(buf: &mut Buffer, area: Rect, waiting: &[Waiting], mail: &[MailRow],
             _ => None,
         };
         if let Some(p) = solo {
-            name_end = rows.count(buf, name_end + 1, y, p, &mut hits, theme);
+            name_end = rows.count(buf, name_end + 1, y, p, hits, theme);
         }
         rows.right_label(buf, y, name_end + 2, branch, theme);
         if sp.selected {
             buf.set_style(line, theme.cursor());
+            chosen = Some(y);
         }
         hits.spaces.push((line, sp.index));
         y += 1;
+        used = y;
 
         if let Some(p) = solo {
             if p.open && !p.subagents.is_empty() {
-                y = rows.subagents(buf, x, y, p, None, &mut hits, theme);
+                y = rows.subagents(buf, x, y, p, None, hits, theme);
+                used = y;
                 y += 1;
             }
             continue;
@@ -291,21 +360,23 @@ pub fn draw(buf: &mut Buffer, area: Rect, waiting: &[Waiting], mail: &[MailRow],
                 buf.set_string(x + 2, y, TERMINAL, Style::new().fg(theme.faint));
             }
             let end = rows.text(buf, x + 4, y, &p.name, 0, name_style(p.focused, theme));
-            let end = rows.count(buf, end + 1, y, p, &mut hits, theme);
+            let end = rows.count(buf, end + 1, y, p, hits, theme);
             rows.right_label(buf, y, end + 2, p.tab.as_deref().unwrap_or(""), theme);
             if p.selected {
                 buf.set_style(line, theme.cursor());
+                chosen = Some(y);
             }
             hits.panes.push((line, p.pane));
             y += 1;
             if p.open && !p.subagents.is_empty() {
-                y = rows.subagents(buf, x + 2, y, p, (!last).then_some(x), &mut hits, theme);
+                y = rows.subagents(buf, x + 2, y, p, (!last).then_some(x), hits, theme);
             }
+            used = y;
         }
         // an opened space is a group of its own: a blank row keeps it apart from the next
         y += 1;
     }
-    hits
+    (used, chosen)
 }
 
 /// The collapsed sidebar: one mark per waiting agent and per space, each still a click away; » expands it.
@@ -358,6 +429,7 @@ pub fn draw_rail(buf: &mut Buffer, area: Rect, waiting: &[Waiting], mail: &[Mail
 }
 
 /// The text area of the block and how to put things on its lines.
+#[derive(Clone, Copy)]
 struct Rows {
     x: u16,
     right: u16,
@@ -561,12 +633,86 @@ mod tests {
     fn render(waits: &[Waiting], spaces: &[SpaceNode]) -> (Buffer, Hits) {
         let area = Rect::new(0, 0, W, H);
         let mut buf = Buffer::empty(area);
-        let hits = draw(&mut buf, area, waits, &[], spaces, true, &Theme::dark());
+        let hits = draw(&mut buf, area, waits, &[], spaces, true, 0, false, &Theme::dark());
         (buf, hits)
     }
 
     fn line(buf: &Buffer, y: u16) -> String {
         (0..W).map(|x| buf[(x, y)].symbol()).collect()
+    }
+
+    /// Ten spaces of two panes each with a blank row between: 39 rows of list for 15 rows of room.
+    fn many() -> Vec<SpaceNode> {
+        (0..10)
+            .map(|i| SpaceNode { panes: vec![pane(100 + i as PaneId, true, "claude", None, AgentState::Idle), pane(200 + i as PaneId, false, "zsh", None, AgentState::Idle)], ..space(i, &format!("space{i}"), "main", AgentState::Idle) })
+            .collect()
+    }
+
+    fn scrolled(spaces: &[SpaceNode], scroll: u16, reveal: bool) -> (Buffer, Hits) {
+        let area = Rect::new(0, 0, W, H);
+        let mut buf = Buffer::empty(area);
+        let hits = draw(&mut buf, area, &[], &[], spaces, true, scroll, reveal, &Theme::dark());
+        (buf, hits)
+    }
+
+    #[test]
+    fn a_list_taller_than_its_room_scrolls_and_marks_what_is_out_of_view() {
+        let spaces = many();
+        let (buf, hits) = scrolled(&spaces, 0, false);
+        assert!(line(&buf, FIRST).contains("space0"));
+        assert!(line(&buf, H - 1).contains('\u{2193}') && !line(&buf, FIRST - 2).contains('\u{2191}'), "more below, none above");
+        assert_eq!(hits.order.len(), 30, "the keys walk every row, in view or not");
+        assert!(hits.spaces.iter().all(|(r, _)| r.y >= FIRST && r.y < H - 1));
+        assert!(!hits.spaces.iter().any(|(_, i)| *i == 9), "a row out of view takes no click");
+
+        let (buf, hits) = scrolled(&spaces, 8, false);
+        assert_eq!(hits.scroll, 8);
+        assert!(line(&buf, FIRST).contains("space2"), "{}", line(&buf, FIRST));
+        assert!(line(&buf, FIRST - 2).contains('\u{2191}') && line(&buf, H - 1).contains('\u{2193}'));
+        let (r, _) = hits.spaces.iter().find(|(_, i)| *i == 2).unwrap();
+        assert_eq!(r.y, FIRST, "a click lands on the row as drawn");
+        assert_eq!(line(&buf, 0).matches("needs you").count(), 1, "the blocks above stay where they are");
+
+        let (buf, hits) = scrolled(&spaces, 500, false);
+        assert_eq!(hits.scroll, 39 - (H - 1 - FIRST), "never past the list's end");
+        assert!(line(&buf, H - 2).contains("zsh") && !line(&buf, H - 1).contains('\u{2193}'));
+        assert!(hits.panes.iter().any(|(_, id)| *id == 209));
+
+        let few = [space(0, "nerd", "master", AgentState::Idle)];
+        let (buf, hits) = scrolled(&few, 5, false);
+        assert_eq!(hits.scroll, 0, "a list that fits does not scroll");
+        assert!(line(&buf, FIRST).contains("nerd"));
+    }
+
+    #[test]
+    fn a_scrolled_list_keeps_the_frames_ground() {
+        let area = Rect::new(0, 0, W, H);
+        let theme = Theme::dark();
+        let mut buf = Buffer::empty(area);
+        buf.set_style(area, Style::new().bg(theme.ground).fg(theme.text));
+        draw(&mut buf, area, &[], &[], &many(), true, 8, false, &theme);
+        for y in FIRST..H - 1 {
+            for x in 1..W - 1 {
+                assert_eq!(buf[(x, y)].bg, theme.ground, "cell {x},{y}");
+            }
+        }
+        assert!(line(&buf, FIRST).contains("space2"));
+    }
+
+    #[test]
+    fn the_selected_row_is_brought_into_view_when_asked() {
+        let mut spaces = many();
+        spaces[9].panes[1].selected = true;
+        let (buf, hits) = scrolled(&spaces, 0, true);
+        assert!(hits.panes.iter().any(|(r, id)| *id == 209 && r.y == H - 2), "the last row sits on the last line");
+        assert!(line(&buf, H - 2).contains("zsh"));
+        let (_, kept) = scrolled(&spaces, 0, false);
+        assert_eq!(kept.scroll, 0, "the wheel's place is kept until the keys move");
+        spaces[9].panes[1].selected = false;
+        spaces[0].selected = true;
+        let (buf, hits) = scrolled(&spaces, 14, true);
+        assert_eq!(hits.scroll, 0);
+        assert!(line(&buf, FIRST).contains("space0"));
     }
 
     #[test]
@@ -799,7 +945,7 @@ mod tests {
         let mail = [MailRow { id: "m1".into(), text: "coder → vault · held".into(), waited: std::time::Duration::from_secs(5) }];
         let area = Rect::new(0, 0, W, H);
         let mut buf = Buffer::empty(area);
-        let hits = draw(&mut buf, area, &[waiting(7, "shop", AgentState::Done)], &mail, &spaces, true, &Theme::dark());
+        let hits = draw(&mut buf, area, &[waiting(7, "shop", AgentState::Done)], &mail, &spaces, true, 0, false, &Theme::dark());
         assert!(line(&buf, 3).starts_with("│ ● coder → vault · held") && line(&buf, 3).trim_end_matches(['│', ' ']).ends_with("5s"), "{:?}", line(&buf, 3));
         assert_eq!(buf[(2, 3)].fg, Theme::dark().wait);
         assert_eq!(hits.mail, vec![(Rect::new(1, 3, W - 2, 1), "m1".to_string())]);
@@ -879,7 +1025,7 @@ mod tests {
         for keys in [true, false] {
             let area = Rect::new(0, 0, W, H);
             let mut buf = Buffer::empty(area);
-            draw(&mut buf, area, &[], &[], std::slice::from_ref(&s), keys, &theme);
+            draw(&mut buf, area, &[], &[], std::slice::from_ref(&s), keys, 0, false, &theme);
             assert!((1..W - 1).all(|x| buf[(x, FIRST)].bg == want.bg.unwrap() && buf[(x, FIRST)].fg == want.fg.unwrap()),
                 "keys {keys}: the whole row, the state mark and the branch included");
             assert_ne!(buf[(0, FIRST)].bg, want.bg.unwrap(), "the border stays the border");
