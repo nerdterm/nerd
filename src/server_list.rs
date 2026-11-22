@@ -421,7 +421,7 @@ impl ServerList {
                 (Ok(()), Machine::Failed(e)) => clean(e),
                 (Ok(()), Machine::Needs(said, window)) => {
                     let n = clean(&r.name);
-                    let how = if *window { format!("Open {n} again and take the terminal it offers, or run nerd --remote {n}.") } else { format!("Run nerd --remote {n} in a terminal on this Mac.") };
+                    let how = if *window { format!("Collapse {n} and open it again to get the terminal it offers, or run nerd --remote {n}.") } else { format!("Run nerd --remote {n} in a terminal on this Mac.") };
                     format!("ssh asks for a password or a host key, and this window cannot answer ({}). {how} With ssh keys set up for {n}, its servers are listed here.", clean(said))
                 }
                 (Ok(()), _) => format!("{} at {}: its servers are listed over ssh when you open it, and one opens in a terminal window of its own.", clean(&r.name), clean(&r.host)),
@@ -657,7 +657,7 @@ pub(crate) mod tests {
         w.listed("studio", Machine::Needs("Host key verification failed".into(), true));
         assert_eq!(
             w.details("m:studio"),
-            ["ssh asks for a password or a host key, and this window cannot answer (Host key verification failed). Open studio again and take the terminal it offers, or run nerd --remote studio. With ssh keys set up for studio, its servers are listed here."],
+            ["ssh asks for a password or a host key, and this window cannot answer (Host key verification failed). Collapse studio and open it again to get the terminal it offers, or run nerd --remote studio. With ssh keys set up for studio, its servers are listed here."],
             "a question ssh could not ask is not a failure of the machine"
         );
         w.listed("studio", Machine::Needs("Permission denied (publickey,password)".into(), false));
