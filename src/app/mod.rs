@@ -4022,6 +4022,26 @@ mod tests {
         app.remote_listed("studio".into(), Err("no route".into()), true, true);
         let Overlay::Confirm(c, _) = &app.overlay else { panic!("an error window") };
         assert_eq!(c.title, "Can't reach studio");
+        for window in [true, false] {
+            app.remote_ask = Some(("studio".into(), Instant::now() + std::time::Duration::from_secs(9)));
+            app.remote_listed("studio".into(), Err("ssh to studio failed: Host key verification failed.".into()), window, true);
+            let Overlay::Confirm(c, _) = &app.overlay else { panic!("an error window") };
+            assert!(c.body.contains("Host key verification failed. ") && !c.body.contains(".."), "one full stop after what ssh said: {}", c.body);
+        }
+        app.key(crossterm::event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        if let Some(w) = app.servers_window() {
+            w.choose("m:studio");
+            w.key(crossterm::event::KeyEvent::from(KeyCode::Enter), Rect::new(0, 0, 160, 30));
+        }
+        app.remote_ask = Some(("studio".into(), Instant::now() + std::time::Duration::from_secs(9)));
+        app.remote_listed("studio".into(), Err("ssh to studio failed: Host key verification failed.".into()), true, true);
+        app.key(crossterm::event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        let (text, _) = frame(&mut app);
+        assert!(text.contains("needs a terminal: ssh asks for a password or a host key"), "the machine's row says what ssh needs: {text}");
+        assert!(!text.contains("ssh to studio failed"), "and does not call it a failure: {text}");
+        assert!(text.contains("failed).") && !text.contains("failed.)"), "ssh's own full stop is not kept inside the brackets: {text}");
+        let Overlay::Confirm(c, _) = app.open_remote("studio", Some("1"), false) else { panic!("the command to copy") };
+        assert_eq!(c.title, "Open a server", "the machine was reached; only the window cannot be opened");
         app.update_available = true;
         let Overlay::Confirm(c, _) = app.update_overlay() else { panic!("a question") };
         assert_eq!(c.title, "Update nerd");

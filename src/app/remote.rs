@@ -177,12 +177,15 @@ impl App {
                 let e = printable(&e);
                 crate::log::error(&format!("connect: {name} did not list: {e}"));
                 if let Some(w) = self.servers_window() {
-                    w.listed(&name, Machine::Failed(e.clone()));
+                    let said = e.strip_prefix(&format!("ssh to {name} failed: ")).unwrap_or(&e).trim_end_matches('.');
+                    w.listed(&name, if ssh_failed { Machine::Needs(said.into(), window) } else { Machine::Failed(e.clone()) });
                 }
                 // Only a prompt ssh refused is answered by a terminal; the rest show in the machine's section.
                 if !ssh_failed {
                     return;
                 }
+                // ssh ends some of its messages with a full stop, and the sentence here adds its own.
+                let e = e.trim_end_matches('.');
                 let (body, button, what) = if window {
                     (
                         format!("ssh could not list the servers without asking: {e}. A terminal of its own can ask for a password or a host key."),
@@ -258,7 +261,7 @@ impl App {
         let cmd = format!("nerd --remote {name}{}", id.map(|i| format!(" {i}")).unwrap_or_default());
         if !window {
             let body = format!("nerd cannot open a terminal window from here. Run `{cmd}` in a terminal on this Mac; the button copies it.");
-            let dialog = crate::menu::Confirm::new(format!("Can't reach {name}"), body).labels(" [Enter] copy the command ", " [Esc] close ");
+            let dialog = crate::menu::Confirm::new("Open a server", body).labels(" [Enter] copy the command ", " [Esc] close ");
             return Overlay::Confirm(dialog, Pending::CopyCommand(cmd));
         }
         crate::log::info(&format!("connect: asked client {} to open {cmd}", self.client));
