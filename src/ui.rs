@@ -281,8 +281,8 @@ pub fn draw(f: &mut Frame, app: &App, view: &mut ViewState, geometry: &[crate::a
         view.sidebar_mail = hits.mail;
         view.hits.sidebar_spaces = hits.spaces;
         view.hits.sidebar_toggle = hits.toggle;
-        // the whole rail width is the target here: the rail is narrow and the strokes sit alone on it
         view.sidebar_order.clear();
+        // the whole rail width is the target here: the rail is narrow and the strokes sit alone on it
         view.hits.sidebar_menu = Some(Rect { x: rail.x, width: w.max(button.width), ..button });
         view.hits.menu_at = Some((rail.x, top.y));
     } else {
