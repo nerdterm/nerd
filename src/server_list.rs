@@ -42,6 +42,8 @@ pub enum Machine {
     /// `window`: the client can open a terminal for one of them.
     Listed(Vec<RemoteInstance>, bool),
     Failed(String),
+    /// ssh has to ask for a password or a host key: what it said, and whether the client can open a terminal for it.
+    Needs(String, bool),
 }
 
 pub enum Out {
@@ -377,6 +379,7 @@ impl ServerList {
                 Machine::Closed => {}
                 Machine::Asking => rows.push(line(NOTE, format!("  asking {} for its servers…", clean(&r.name)), faint)),
                 Machine::Failed(e) => rows.push(line(NOTE, format!("  {}", fit(&clean(e), w.saturating_sub(2))), warn)),
+                Machine::Needs(..) => rows.push(line(NOTE, format!("  {}", fit("needs a terminal: ssh asks for a password or a host key", w.saturating_sub(2))), warn)),
                 Machine::Listed(list, _) if list.is_empty() => rows.push(line(NOTE, "  no servers; start one there with nerd".into(), faint)),
                 Machine::Listed(..) => take(&mut rows, &format!("r:{}:", r.name)),
             }
@@ -416,6 +419,11 @@ impl ServerList {
             out.push(match (r.check(), m) {
                 // the row under the machine is cut to the window's width; here it is whole
                 (Ok(()), Machine::Failed(e)) => clean(e),
+                (Ok(()), Machine::Needs(said, window)) => {
+                    let n = clean(&r.name);
+                    let how = if *window { format!("Open {n} again and take the terminal it offers, or run nerd --remote {n}.") } else { format!("Run nerd --remote {n} in a terminal on this Mac.") };
+                    format!("ssh asks for a password or a host key, and this window cannot answer ({}). {how} With ssh keys set up for {n}, its servers are listed here.", clean(said))
+                }
                 (Ok(()), _) => format!("{} at {}: its servers are listed over ssh when you open it, and one opens in a terminal window of its own.", clean(&r.name), clean(&r.host)),
                 (Err(e), _) => format!("{} cannot be used: {e}. Fix it in \"remotes\" in config.json (nerd --config prints its path).", clean(&r.name)),
             });
@@ -646,6 +654,14 @@ pub(crate) mod tests {
         w.act("m:studio", 0);
         w.listed("studio", Machine::Failed("ssh to studio failed: ssh: Could not resolve hostname studio.local".into()));
         assert_eq!(w.details("m:studio"), ["ssh to studio failed: ssh: Could not resolve hostname studio.local"], "the whole failure, under the machine");
+        w.listed("studio", Machine::Needs("Host key verification failed".into(), true));
+        assert_eq!(
+            w.details("m:studio"),
+            ["ssh asks for a password or a host key, and this window cannot answer (Host key verification failed). Open studio again and take the terminal it offers, or run nerd --remote studio. With ssh keys set up for studio, its servers are listed here."],
+            "a question ssh could not ask is not a failure of the machine"
+        );
+        w.listed("studio", Machine::Needs("Permission denied (publickey,password)".into(), false));
+        assert!(w.details("m:studio")[0].contains("(Permission denied (publickey,password)). Run nerd --remote studio in a terminal on this Mac. With"), "{:?}", w.details("m:studio"));
         let mut bad = ServerList::new("1".into(), vec![RemoteEntry { name: "x".into(), host: "-oProxyCommand=x".into() }], true, false);
         assert!(offered(&bad, "m:x").is_empty(), "nothing to list on a bad entry");
         assert!(matches!(bad.act("m:x", 0), Out::None), "a bad entry never reaches the client");
