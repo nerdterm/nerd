@@ -759,7 +759,7 @@
      │ Build: nerd 0.15.0.                                                │     
      │ Open in another session: opening it here asks before taking it     │     
      │ over.                                                              │     
-     │ lines 1–6 of 8                                                     │     
+     │ lines 1–6 of 7                                                     │     
      │      [Enter] rename…   [u] update…   [s] stop…   [Esc] close       │     
      └────────────────────────────────────────────────────────────────────┘     
                                                                                 

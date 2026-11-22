@@ -384,7 +384,10 @@ impl ServerList {
                 Machine::Listed(..) => take(&mut rows, &format!("r:{}:", r.name)),
             }
         }
-        rows.push(line(CONFIG, "Connect to another computer…".into(), text));
+        // A session from another Mac shows that Mac's servers: no machines are listed here, and its config.json is not this one.
+        if !self.elsewhere {
+            rows.push(line(CONFIG, "Connect to another computer…".into(), text));
+        }
 
         let details = |id: &str| -> Vec<String> { self.details(id).iter().flat_map(|l| wrap(l)).collect() };
         // Sized for every row's details and buttons at once, so choosing another row neither moves nor resizes the window.
@@ -629,7 +632,9 @@ pub(crate) mod tests {
     #[test]
     fn a_session_from_another_mac_sees_this_macs_servers_and_opens_none() {
         let w = fixture(false);
-        assert_eq!(ids(&w), ["mac", "s:1", "s:2", "s:3", "s:4", "stopped", "p:4242", "config"], "no machines, no New server…");
+        assert_eq!(ids(&w), ["mac", "s:1", "s:2", "s:3", "s:4", "stopped", "p:4242"], "no machines, no New server…, no row to add a machine");
+        let old = ServerList::new("1".into(), Vec::new(), false, false);
+        assert!(ids(&old).contains(&CONFIG.to_string()), "a window from before an update is of this Mac and keeps the row");
         assert!(w.machines.is_empty());
         for id in ["s:2", "s:3", "s:4"] {
             assert!(!offered(&w, id).iter().any(|a| matches!(a, Act::Open | Act::OpenNew)), "{id}");

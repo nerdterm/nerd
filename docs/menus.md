@@ -141,8 +141,9 @@ from (turning a plugin on, removing, installing, updating).
   what goes (the layout, pane text, messages, routes, logs and saved agent session ids) and what stays (config.json,
   plugins and the agents' own sessions); a folder whose server never started goes without asking. Every dialog
   comes back to the window once answered.
-- A session from another Mac sees only the server's own Mac, with no machines, no New server… and no Open. A session
-  attached from inside a pane only reads: every action but Open on a machine's server is refused with a notice.
+- A session from another Mac sees only the server's own Mac, with no machines, no New server…, no Connect to
+  another computer… and no Open. A session attached from inside a pane only reads: every action but Open on a
+  machine's server is refused with a notice.
 - With the sidebar collapsed, the top row names the server this session shows at the right, beside the machine
   badge, cut short when narrow.
 
