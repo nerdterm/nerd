@@ -1358,7 +1358,8 @@ mod tests {
             let _ = w.write_all(&vec![b'x'; 8 << 20]);
             let _ = w.write_all(b"{\"ReportState\":{\"pane\":1,\"state\":\"idle\"}}\n");
         });
-        let end = Instant::now() + std::time::Duration::from_secs(1);
+        // It ends in tens of milliseconds; the bound only has to outlast a loaded machine's stall, as a loop that reads on never ends.
+        let end = Instant::now() + std::time::Duration::from_secs(30);
         while !t.is_finished() {
             assert!(Instant::now() < end, "the loop still reads with its writer open");
             std::thread::sleep(std::time::Duration::from_millis(10));

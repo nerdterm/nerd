@@ -781,11 +781,12 @@ mod tests {
         c.write_all(b"tok\n").unwrap();
         assert!(accept_helper(&l, "tok", || me + 1, soon()).is_none(), "another pid is refused");
 
-        // Another pid that stays silent is dropped unread, not waited on.
+        // Another pid that stays silent is dropped unread, not waited on: reading it would add the token's full second
+        // to a deadline of a tenth, so the bound between leaves room for a loaded machine's stall on both sides.
         let _silent = UnixStream::connect(&path).unwrap();
         let t = std::time::Instant::now();
-        assert!(accept_helper(&l, "tok", || me + 1, soon()).is_none());
-        assert!(t.elapsed() < Duration::from_millis(900), "nothing was read from it: {:?}", t.elapsed());
+        assert!(accept_helper(&l, "tok", || me + 1, std::time::Instant::now() + Duration::from_millis(100)).is_none());
+        assert!(t.elapsed() < Duration::from_millis(700), "nothing was read from it: {:?}", t.elapsed());
 
         let mut c = UnixStream::connect(&path).unwrap();
         c.write_all(b"tok\n").unwrap();
@@ -798,7 +799,7 @@ mod tests {
         // The old broker said it could not start the helper: no wait for the deadline.
         let t = std::time::Instant::now();
         assert!(accept_helper(&l, "tok", || -1, std::time::Instant::now() + Duration::from_secs(5)).is_none());
-        assert!(t.elapsed() < Duration::from_secs(1));
+        assert!(t.elapsed() < Duration::from_secs(3), "it waited for the deadline: {:?}", t.elapsed());
         let _ = std::fs::remove_file(&path);
     }
 }

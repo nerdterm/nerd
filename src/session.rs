@@ -659,8 +659,9 @@ pub(crate) mod tests {
     // Per thread, so a test names its server without touching the process environment.
     thread_local! { pub(crate) static INSTANCE: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) }; }
 
-    // NERD_STATE_DIR is process-wide, so tests serialize on this lock.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    // NERD_STATE_DIR is process-wide, so tests serialize on this lock; so do those with a root of their own, which still
+    // share the process's caches of what is under a root (agents' LOADED).
+    pub(crate) static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     pub(crate) fn with_temp_state_dir<R>(test: &str, f: impl FnOnce() -> R) -> R {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());

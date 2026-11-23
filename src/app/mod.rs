@@ -529,6 +529,8 @@ mod tests {
         app.caps.terminal = Some(std::path::PathBuf::from("/Applications/Ghostty.app"));
         // A test server may be told to live elsewhere; the offer itself is what is under test.
         app.default_state_root = true;
+        // A server of its own to name, not the NERD_INSTANCE a test run inherits from a nerd pane and lacks elsewhere.
+        crate::session::tests::INSTANCE.set(Some("1".into()));
         app
     }
 

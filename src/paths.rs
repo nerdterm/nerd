@@ -8,6 +8,23 @@ use std::path::{Path, PathBuf};
 #[cfg(test)]
 thread_local! { pub(crate) static TEST_HOME: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) }; }
 
+// Per thread too: `NERD_STATE_DIR` is one for the whole process, so a test that sets it lends its folder to every test running beside it.
+#[cfg(test)]
+thread_local! { static TEST_STATE: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) }; }
+
+/// Runs `f` with a state root of its own that only this thread sees; threads it spawns see the process's. It holds the
+/// lock `with_temp_state_dir` holds, as both may fill the process's caches of what is under a root.
+#[cfg(test)]
+pub(crate) fn with_own_state_root<R>(tag: &str, f: impl FnOnce(&Path) -> R) -> R {
+    let _guard = crate::session::tests::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = test_dir(tag);
+    TEST_STATE.with(|s| *s.borrow_mut() = Some(dir.clone()));
+    let r = f(&dir);
+    TEST_STATE.with(|s| *s.borrow_mut() = None);
+    let _ = std::fs::remove_dir_all(&dir);
+    r
+}
+
 /// A fresh folder under temp_dir for one test; a counter, not the clock, keeps two tests from sharing it.
 #[cfg(test)]
 pub(crate) fn test_dir(tag: &str) -> PathBuf {
@@ -69,6 +86,10 @@ pub fn resolve(base: &Path, s: &str) -> PathBuf {
 
 /// The env var lets tests override the state root without touching process-wide $HOME.
 pub fn state_root() -> PathBuf {
+    #[cfg(test)]
+    if let Some(p) = TEST_STATE.with(|s| s.borrow().clone()) {
+        return p;
+    }
     if let Some(p) = std::env::var_os("NERD_STATE_DIR") {
         return PathBuf::from(p);
     }

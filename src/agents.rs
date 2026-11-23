@@ -443,6 +443,11 @@ pub fn all() -> Arc<Vec<Manifest>> {
     if let Some(ms) = LOADED.read().unwrap_or_else(|e| e.into_inner()).as_ref() {
         return ms.clone();
     }
+    first_load()
+}
+
+/// What a server's first `all()` loads, and stores.
+fn first_load() -> Arc<Vec<Manifest>> {
     // The first start that keeps the file: every folder loaded before stays let in.
     admit(if crate::paths::state_root().join(ADMITTED).exists() { BTreeSet::new() } else { admitted() }, false);
     let a = admitted();
@@ -1444,16 +1449,17 @@ mod tests {
     /// A server start is the first `all()` of a process: a folder put in by hand since waits, across starts too.
     #[test]
     fn a_folder_put_in_by_hand_is_let_in_only_by_reload_and_stays_so_across_starts() {
-        crate::session::tests::with_temp_state_dir("admitted", || {
-            let root = crate::paths::state_root();
+        // A root of this thread's own and the load itself, not `all()`'s cache: both are shared with every test beside it.
+        crate::paths::with_own_state_root("admitted", |root| {
             let put = |n: &str| {
                 std::fs::create_dir_all(root.join("plugins").join(n)).unwrap();
                 std::fs::write(root.join("plugins").join(n).join("plugin.json"), serde_json::json!({ "name": n, "title": "T", "agent": { "names": [n] } }).to_string()).unwrap();
             };
-            let start = || {
-                *LOADED.write().unwrap() = None;
-                all().iter().filter(|m| !m.builtin).map(|m| m.name.clone()).collect::<Vec<_>>()
-            };
+            let start = || first_load().iter().filter(|m| !m.builtin).map(|m| m.name.clone()).collect::<Vec<_>>();
+            // another test's thread may load the plugins at any moment: it must not write this test's folder
+            *LOADED.write().unwrap() = None;
+            std::thread::spawn(all).join().unwrap();
+            assert!(!root.join(ADMITTED).exists(), "another thread's load reached this test's folder");
             for n in ["had", "pin", "rest"] {
                 put(n);
             }
