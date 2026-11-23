@@ -20,6 +20,8 @@ themes, every listed size.
 | `nerd-appicon-{light,dark}.icns` | macOS icon file, 16→1024 including @2x. **Built from the Icon Composer artwork**, not from the tiles above — `node scripts/dock-icns.mjs` | The dock icon of a terminal, see below; Finder's *Get Info* |
 | `icon-composer/nerd-icon-{light,dark}-1024.png` | The approved app icon, authored in Icon Composer: shape, shadow and glass already in the file | The source the two `.icns` are built from |
 | `icon-composer/nerd-layer-{light,dark}.svg` | The drawing on its own, no ground and no shape | What goes back into Icon Composer to author it again |
+| `icon-composer/nerd-layer-{light,dark}-2048.png` | The same drawing rastered at 2048 px, transparent | Where the layer is needed as a raster |
+| `nerd-demo.gif` | A recording of nerd running an agent | The top of `README.md` |
 
 No `.ico`: that is a Windows format and nerd is macOS only.
 

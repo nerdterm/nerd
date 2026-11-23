@@ -23,9 +23,9 @@
 nerd runs your shells and coding agents side by side in panes and tabs, inside the terminal you already use. Its sidebar shows which agent is working, which is waiting for you and which has finished.
 
 - **See which agent needs you.** nerd recognises Claude Code, Codex, Gemini CLI, Copilot CLI, Cursor, OpenCode, Qwen Code, pi and 13 other agents by their process name. With nerd's hook, those eight report their exact state, and most name the tool they ask to run; the others are read from what they print. nerd shows that an agent is asking; the answer stays yours, in the agent.
-- **Decide what each pane can reach.** A pane runs as you, with your files and your network, until you narrow it. **Isolation…** keeps a pane to its folder, to the hosts of the agents you choose, or to another macOS account. Messages between agents pass through nerd, under fixed limits and routes that only you change. A plugin shows what it can do before you install it.
+- **Decide what each pane can reach.** A pane runs as you, with your files and your network, until you narrow it. **Isolation…** keeps what a pane writes to its folder, the temp folders, caches and the agents' session folders, and closes your ssh, gpg and cloud keys, your mail and nerd's own state to it (not the macOS keychain); it keeps a pane to the hosts of the agents you choose, or runs it under another macOS account. Messages between agents pass through nerd, under fixed limits and routes that only nerd's own windows change while it runs. A plugin shows what it can do before you install it.
 - **See every way out of nerd's own code.** No telemetry; nerd checks for updates only if you allowed it, and logs every check. The server runs in a macOS sandbox with networking denied. Every way out of nerd's own code is listed in [What leaves nerd](docs/privacy-and-security.md#what-leaves-nerd), starts from something you do or approved, and writes a line to the log.
-- **A file tree beside the panes.** It shows git changes, searches file contents, and previews files with highlighting and images; an SVG shows its picture, and a click on **source** in the preview's header its text; a PDF shows its first page and its page count.
+- **A file tree beside the panes.** It shows git changes, searches file contents, and previews files with highlighting and images; an SVG shows its picture, and a click on **source** in the preview's header its text; a PDF shows its first page and, where the file says it, its page count.
 - **One search for everything.** `⌥`+`O` finds a pane, a command, a setting, a plugin, a file, a help section or a line a pane printed earlier. Plain switches and installed plugins turn on and off in the result; anything that changes what a pane can reach opens its own window or Settings, never changes in place.
 
 Panes live in a background server. Close the window or restart the Mac, and the layout, folders and pane text come back; agents that support it resume their sessions. Every action is in a right-click menu; keys only repeat them.
@@ -36,7 +36,7 @@ Panes live in a background server. Close the window or restart the Mac, and the 
 curl -fsSL https://nerdterm.dev/install.sh | sh
 ```
 
-The script downloads the latest release, checks that nerd's release key signed its checksum and that the archive matches it, installs `nerd` into `~/.local/bin` and, if that folder is not on your `PATH`, adds it in `~/.zshrc`. It refuses a release older than the nerd already installed. Run it again to upgrade. `NERD_BINDIR` installs somewhere else. To install an archive you already have, run `sh install.sh nerd-….tar.gz` with its `.sha256` and `.sha256.sig` beside it; without them the script refuses unless `NERD_INSTALL_UNVERIFIED=1` is set, and a signature that does not check is refused either way. An older archive given this way installs: that is how to go back to a release.
+The script downloads the latest release, checks that nerd's release key signed its checksum and that the archive matches it, installs `nerd` into `~/.local/bin` and, if that folder is not on your `PATH`, adds it in `~/.zshrc`. It refuses a release older than the nerd already installed. Run it again to upgrade. `NERD_BINDIR` installs somewhere else and leaves your `PATH` to you. To install an archive you already have, run `sh install.sh nerd-….tar.gz` with its `.sha256` and `.sha256.sig` beside it; without them the script refuses unless `NERD_INSTALL_UNVERIFIED=1` is set, and a signature that does not check is refused either way. An older archive given this way installs: that is how to go back to a release.
 
 Or with Homebrew, upgraded with `brew update && brew upgrade nerd` or with the release window's **upgrade with Homebrew** button (until the next `brew update`, `brew info` shows the older version and `brew reinstall nerd` would reinstall it):
 
@@ -103,7 +103,7 @@ Each agent is described by a manifest, `plugins/<name>/plugin.json` in the sourc
 - **Apple Silicon** for the prebuilt binary. Intel Macs can build from source; this is not tested.
 - Any terminal with mouse support and 24-bit colour.
 - Full-quality image previews need a terminal with the Kitty graphics protocol (Ghostty, Kitty, WezTerm, iTerm2). Elsewhere they are drawn in coloured blocks, and nerd says so under the image.
-- To build from source: Rust 1.88 or newer.
+- To build from source: Rust 1.92 or newer.
 
 ## Terminals
 <!-- summary: The terminals nerd is checked in, the preset for Option keys and its look, and what nerd asks the terminal. -->
@@ -118,7 +118,6 @@ nerd is checked in Ghostty, Kitty, WezTerm and iTerm2.
 
 ## Limitations
 
-- nerd is early software (0.x). Configuration and behaviour may change between releases.
 - The binary is not notarized by Apple. The installer removes the download quarantine and Homebrew sets none; for an archive downloaded by hand, run `xattr -d com.apple.quarantine nerd`.
 - The installer adds `~/.local/bin` to `PATH` in `~/.zshrc` only. With another shell, add it yourself.
 - Inside tmux or screen, image previews fall back to coloured blocks: neither passes a graphics protocol on. In Ghostty, Kitty and WezTerm, nerd offers to open itself in a new window of the same terminal instead.

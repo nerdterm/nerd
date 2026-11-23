@@ -17,8 +17,8 @@ the terminal apps its attach lines name (`== crash <file>`), then macOS's memory
 `Export logs…` writes the same file and offers to show it in Finder. A report a user sends is this format too.
 
 Redacted in the report: the home folder (`~`), any other user folder (`/Users/user`), the host name
-(`host`), remote machines (`remote`), other Macs that connected (`machine`), IPv4 addresses and long
-token-shaped strings (`[redacted]`; not in crash summaries, where Rust symbols look like tokens).
+(`host`), remote machines (`remote`), other Macs that connected (`machine`), the host of a link nerd
+opened (`<scheme>://[host]`), IPv4 addresses and long token-shaped strings (`[redacted]`; not in crash summaries, where Rust symbols look like tokens).
 Folder and file names are not redacted.
 
 ## Where the logs live
@@ -40,7 +40,7 @@ Folder and file names are not redacted.
 - Time: RFC 3339 in local time with milliseconds and the UTC offset, so it lines up with `log show`.
 - Level, padded to five: `ERROR` something failed; `WARN` degraded but running; `INFO` lifecycle;
   `DEBUG` tracing only (`NERD_TRACE=1`).
-- Role and pid: `server`, `broker`, `client` (a window, `--remote`) or `cli` (commands such as `--export-logs`).
+- Role and pid: `server`, `broker`, `client` (a window, `--remote`), `cli` (commands such as `--export-logs`) or `proxy` (the proxy of a plugin or of a pane set to Only these providers).
 - Control characters in the text are escaped, so one line is one event.
 - An older build writes `<unix seconds> <text>` into the same file (an update in place leaves both);
   every reader accepts both. `date -r <seconds>` turns one into local time. In a report such a line
@@ -65,7 +65,7 @@ ERROR:
 - `server pid P did not start: <e>` - a server that never ran (`server already running` is a second one started by mistake; the pid tells it from the running one).
 - `screens: directory failed: ...`, `screens: write failed for pane ...`, `sandbox status file failed: ...`.
 - `plugin <name>: 5 crashes within 180 s, disabled until Reload plugins and agents` - it stays off (the menu says so) until Reload plugins and agents.
-- `plugin socket failed: ..., plugins cannot connect` - `nerd.psock` next to the main socket could not be bound.
+- `plugin socket failed: ...; plugins do not start` - `nerd.psock` next to the main socket could not be bound.
 - `pane N: reading it failed`, `pane N: writing to it failed`, `pane N: the shell would not start ...`.
 - `connect: <machine> did not list: ...`, `open outside tmux failed: ...`, `open outside tmux: ... started no client ...`.
 - `worker <name> failed: ...` / `worker <name> did not start: ...` - a background worker panicked or never ran.
@@ -80,8 +80,8 @@ WARN:
 - `client backlog passed N MiB` - a window is not reading; its frames wait.
 - `refused a connection from uid ...` - another user tried the socket.
 - `refused <stop|update|disconnect|attach> from pid P, inside a pane` - a program in one of this server's panes (an agent's
-  tool shell) asked for it; nothing happened. `allow_from_panes` in config.json lets it through.
-- `refused nerd <--stop|--update|--disconnect> with no name, inside a pane` (role cli) - the no-name form was run in some nerd's pane and acted on nothing. A pane inherits `NERD_INSTANCE`, so the line lands in that server's `daemon.log`; `allow_from_panes` lets it through.
+  tool shell) asked for it; nothing happened. **Programs in panes may stop or update nerd** in Settings (`allow_from_panes` in policy.json) lets it through.
+- `refused nerd <--stop|--update|--disconnect> with no name, inside a pane` (role cli) - the no-name form was run in some nerd's pane and acted on nothing. A pane inherits `NERD_INSTANCE`, so the line lands in that server's `daemon.log`; the same switch lets it through.
 - `client N: unrecognized message: ...` - a client from another build, or not a nerd client.
 - `pane N: not reading its input, replies dropped`, `terminal reply swallowed: N chars`.
 - `pane N: <agent> session <id> held by another process, so not resumed; typed: <line>` - a restored pane started its agent fresh.
@@ -124,20 +124,21 @@ INFO:
 - No `stopped by` line after a server's last lines: SIGKILL, a crash, or power loss. Check crash reports and `log show`.
 - `handover: N panes, exec <path>` (old build) then `handover: client N carried over, ...` (new build).
 - `agent manifest loaded: <name> from <path>` - a user's agent manifest, at start and on Reload plugins and agents.
-- `plugin <name>: starting <program>`, `plugin <name>: started, pid P`, `plugin <name>: connected, events <list>` - a lazy start,
+- `plugin <name> started: runs <program>, network <hosts>`, `plugin <name>: started, pid P`, `plugin <name>: connected, events <list>` - a lazy start,
   on its menu command or a subscribed event. `plugin <name>: stopped` - nerd stopped it (Reload plugins and agents, handshake timeout).
   Before an update in place every plugin is stopped and no line follows; the new build starts them again on first use.
 - `pane N: <agent> session <id> resumed; typed: <line>` (or `not resumable`: the id is not of that agent's kind, or it does not resume) - what a restored pane typed.
 - `first hook install confirmed: ...` / `first hook install declined: ...` - the Install the hook dialog, naming each config and resume line it showed;
   `first hook install from the command line confirmed|declined: ...` (role cli) - the same asked by `nerd --install-hook`.
-- `key file rewritten for this build`, `screens: N restored, M removed`, `report saved: N hours`.
+- `presets: Ghostty's file rewritten for this build`, `screens: N restored, M removed`, `report saved: N hours`.
 - Messages between panes (never the text): `message <id> <from>(<pane>,uid <u>) -> <to>(<pane>,uid <u>) <n> B hop <h> via <via>: <state>`
   is one transition of one message; `<state>` is `queued`, `delivered`, `read`, `answered`, `dropped`, `held (<why>)`, `refused (<why>)` or `expired`,
   and `via` is `inbox`, `hook`, `extension` or `typed`. `held (...)` and `refused (...)` lines are written at most once a second each, with
   `(and N more like it before)`: a flood shows as that count. The full records are in `messages.jsonl`.
+  The lines below, and the `held (...)` and `refused (...)` ones, are WARN, and `policy.json does not parse` is ERROR: a search by level finds them.
   `policy.json changed outside nerd; ignored` - the file was edited by something other than nerd's own window; the running copy stays.
   `policy.json does not parse: …` - messaging is off until the owner fixes it in the Messages window.
-  `pane N: a typed message was not submitted` - nerd typed a message into an idle agent and the frame line is still the last line on screen after the check delay (written once per pane).
+  `pane N: a typed message was not submitted` - nerd typed a message into an idle agent and either the frame line is still the last line on screen after the check delay (written once per pane), or a question or a missing prompt held the Enter and the text was left in the input.
   `pane N: its recorded inbox is not its own; delivering by hook` - Claude Code's reported inbox socket has no listener among that pane's processes (written once per pane).
   `pane N: socket mode reports no agent` - the pi or OpenCode extension, in socket mode, asked for mail in a pane where no agent has reported (no state file).
   `refused a message connection from uid N` (or `from pid P, uid N: <why>`, `from pane N: it holds 8`, `: N are open …`) - a stranger, or a pane over its cap.
@@ -169,7 +170,7 @@ INFO:
   A client of this build writes exactly one `left` line. A `started` with no `left` from the same pid: SIGKILL, or an older
   build; the server's `detached` line still says how its socket ended and whether its terminal was gone.
 - Role client on the far Mac of a remote window, in that server's log: `started as a relay over ssh` (`nerd --relay`), then one
-  `left: the server closed the connection` (the server's line says why), `left: ssh's input ended (the client left or the link dropped), then the server closed`,
+  `left: the server closed the connection` (the server's line says why), `left: ssh's input ended (the client left or the link dropped)`,
   `left: ssh stopped taking the output (...)`, `left: socket error: ...`, `left: the server is not running`, or a signal as above.
   A relay given a bad or unknown server name writes nothing: it exits 5 or 4, and the `--remote` client says why.
 - `connect: ...`, `open outside tmux: ...`, `inside a multiplexer: ...`.
@@ -221,7 +222,7 @@ memory. A terminal app among them explains a window that vanished with no crash 
 Use a test server, never the user's own:
 
 ```sh
-HOME=/tmp/nt NERD_SOCKET=/tmp/nt/s.sock nerd
+tmux -L nt new-session -d -e HOME=/tmp/nt <nerd> --new
 ```
 
 Its log is under `/tmp/nt/Library/Application Support/nerd/`. Stop it by its socket only, never by

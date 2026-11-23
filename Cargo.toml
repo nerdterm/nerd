@@ -3,6 +3,10 @@ name = "nerd"
 version = "0.23.0"
 license = "MIT"
 edition = "2024"
+rust-version = "1.92"
+description = "Terminal multiplexer for AI agents"
+repository = "https://github.com/nerdterm/nerd"
+homepage = "https://nerdterm.dev"
 
 [dependencies]
 # The pane emulator: it reflows lines when a pane is resized.

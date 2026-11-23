@@ -3,6 +3,10 @@
 The maintainer runs a release; nothing here is done by an agent. Each push to `master` makes release-please keep one open
 pull request, `chore(master): release X.Y.Z`. Replace `N` and `X.Y.Z` below with its number and version.
 
+release-please takes the version from the commits since the last release. Below 1.0.0 a breaking change raises only
+the minor (`bump-minor-pre-major` in `release-please-config.json`), so it never proposes 1.0.0 by itself: a commit on
+`master` whose message ends with the footer `Release-As: 1.0.0` makes it do so.
+
 1. Find the release pull request:
 
    ```sh
@@ -149,8 +153,8 @@ holds two P-256 keys. nerdterm/nerd-plugins pins the same two in `.github/nerd-r
 install a release only after checking its signature against them.
 
 - **Making them**, once: generate a passphrase of at least 24 random characters in your password manager, then run
-  `scripts/release-key.sh` from a plain terminal. It writes `~/.config/nerd-release/release.pem` and `backup.pem`,
-  encrypted with that passphrase, and prints both public keys for the block.
+  `scripts/release-key.sh` from a plain terminal. It writes `~/.config/nerd-release/release.pem` and `backup.pem`
+  (`NERD_RELEASE_DIR` names another folder), encrypted with that passphrase, and prints both public keys for the block.
 - **Keeping them**: store `backup.pem` in the password manager with its passphrase and delete it from the Mac. Never
   sync `~/.config/nerd-release`; Time Machine copies only the encrypted file. `NERD_RELEASE_KEY` points
   `scripts/sign-release.sh` at another key file.

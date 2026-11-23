@@ -32,11 +32,12 @@ Public events: `connected`, `agent_state`, `pane_opened`, `pane_closed`, `file_c
 
 **From GitHub or the catalog.** **Plugins…** in the main menu lists the installed plugins and the catalog's;
 **Add from GitHub…** takes a public repository, `https://github.com/<owner>/<repo>`, with `@<tag>` or `@<commit>`
-after it when you want one release. In a terminal: `nerd --plugin-add <address>[@tag]`. No other host, no ssh and no
+after it when you want one release. In a terminal: `nerd --plugin-add <address>[@tag|@commit]`. No other host, no ssh and no
 private repository: nerd runs `git` with none of your or the system's git config, no home folder (so no netrc) and
-without proxy, certificate or askpass variables, so nothing redirects, proxies or signs in to a fetch. A terminal also takes a local folder,
-`nerd --plugin-add ./my-plugin`: for developing or debugging a plugin, or for installing code you checked yourself.
-nerd fetches it with the system `git` into a staging folder, reads its files before anything is checked out (no
+without proxy, certificate or askpass variables, so nothing redirects, proxies or signs in to a fetch. A terminal also takes a local git repository,
+`nerd --plugin-add ./my-plugin`: for developing or debugging a plugin, or for installing code you checked yourself. It
+installs a committed release tag, as from GitHub, never uncommitted files.
+nerd fetches it with `git` 2.45.1 or newer (the first on `PATH`, then Homebrew's, then Apple's) into a staging folder, reads its files before anything is checked out (no
 submodules, no link out of the folder, no file over 10 MB), checks it out with no filter or hook of yours, runs the
 rules below, and shows what it can do. Nothing is placed in `plugins/` until you say yes. Without a tag nerd takes
 the newest release tag (`v1.2.3` or `1.2.3`, pre-releases only when named) whose `min_nerd` it meets, and the
@@ -66,7 +67,7 @@ names it let in, the lock's included, in `plugins-admitted.json` in the state ro
 keeps the file lets in every folder already there, and a missing `plugins-admitted.json` lets every folder in, as the
 first start did; `daemon.log` says so. A file that does not parse lets in only the lock's plugins and is left as it
 is until your next Reload. The file holds names, not contents: a plugin let in whose manifest is edited by hand later
-loads as edited, with no question. Such a plugin is never updated. A
+loads as edited, with no question. A plugin put in by hand has no lock line and is never updated. A
 manifest that breaks a rule is skipped, and `daemon.log` says why (`agent manifest skipped: <path>: <why>`).
 
 **The lock.** `plugins.lock` in the state root records each plugin installed from git: its name, address, tag and
@@ -81,9 +82,11 @@ tag the catalog has not seen. Nothing is updated on its own.
 **Turning off and removing.** `nerd --plugin-off <name>` (or **Turn <name> off**) keeps it installed but never loads
 it, and takes nerd's hooks out of its agent's config; `--plugin-on` brings both back. Which plugins are off is in
 `plugins-off.json`, per Mac, never in the lock; when that file does not parse, no plugin of yours loads. `nerd
---plugin-remove <name>` deletes the folder and its lock line, and with `--data` its data folder too. From inside a pane,
+--plugin-remove <name>` takes nerd's hooks out of its agent, deletes the folder and its lock line, and asks about its
+data folder: `--data` deletes it and `--keep-data` keeps it without asking. From inside a pane,
 `--plugin-on` and `--plugin-remove` are refused like `--yes`: turning a plugin back on or removing it is the Plugins
-window's to do there.
+window's to do there. **Programs in panes may stop or update nerd**, in **Settings… → Messages**, lifts these refusals
+and the one on `--yes`: with it on, a program in a pane installs, turns on and removes plugins as a terminal does.
 
 **The catalog.** `nerd --plugin-catalog`, or **Refresh catalog**, fetches the catalog from
 `https://github.com/nerdterm/nerd-plugins` into the state root's `catalog/`; nothing else ever fetches it. The catalog
@@ -147,7 +150,7 @@ changes its entry to the new tag and commit.
   "exec": { "command": "sh", "args": ["plugin.sh"] },
   "permissions": { "network": false, "write": [] },
   "commands": [{ "id": "hello", "title": "Say hello", "where": "global" }],
-  "events": ["command", "pane_opened", "pane_closed"],
+  "events": ["command", "pane_opened", "pane_closed", "preview_request"],
   "badges": ["tree", "tab"],
   "segments": [{ "id": "status" }],
   "previews": [{ "extensions": ["log"] }],
@@ -158,14 +161,14 @@ changes its entry to the new tag and commit.
 
 | Field | Meaning |
 |---|---|
-| `name` | Lowercase letters, digits and dashes, not starting with a dash; the folder's name. A built-in's or another plugin's name is refused. |
+| `name` | Lowercase letters, digits and dashes, at most 64, not starting with a dash; the folder's name, and one of `agent.names` when the manifest has them. A built-in's or another plugin's name is refused. |
 | `title` | One line. |
 | `min_nerd` | Optional `x.y.z`: an older nerd skips the manifest. |
-| `version` | Optional `x.y.z`, with an optional pre-release (`1.2.0-rc.1`); no build metadata. |
+| `version` | `x.y.z`, with an optional pre-release (`1.2.0-rc.1`); no build metadata. Needed for an install from git, where it is the tag's; optional only for a folder put in by hand. |
 | `platforms` | Optional: `macos`, `linux`, `windows`, each once. None listed means macOS only; a manifest that does not list `macos` is skipped here. |
 | `exec.command` | What runs. A path with `/` inside the folder (`bin/run`), an absolute path, or a bare name found on `PATH` (then `/usr/local/bin`, `/opt/homebrew/bin`, `/usr/bin`, `/bin`). It is resolved once, when the manifest is read. `open`, `osascript` and `launchctl` are refused. A script's interpreter is the command: `"command": "node", "args": ["main.js"]`. |
 | `exec.args` | Fixed words, one line each. It runs in its own folder. |
-| `permissions.network` | How far it reaches. Absent or `false`: nowhere. `"localhost"`: services on this Mac only (IPv4 and IPv6), no name lookups. `{"hosts": ["wttr.in"], "ports": [443]}`: only those hosts on those ports (1 to 16 hosts, 1 to 8 ports), through nerd's proxy (see [Network](#network)); the program must honour `HTTPS_PROXY`. A host is a lowercase domain name whose last label starts with a letter, or an IP address in standard form (`192.168.1.5`, `2001:db8::1`; not `010.0.0.1`, `2130706433` or `[::1]`), never an unspecified, multicast or broadcast one. Outbound only: a plugin never listens, and reaches no unix socket but nerd's plugin socket (not the system's name lookup service, not an ssh agent's, not Docker's). `true` is refused, and nerd releases before these forms refuse them as a manifest that does not parse. Official nerdterm plugins use no network, or `"localhost"` at most. |
+| `permissions.network` | How far it reaches. Absent or `false`: nowhere. `"localhost"`: services on this Mac only (IPv4 and IPv6), no name lookups. `{"hosts": ["wttr.in"], "ports": [443]}`: only those hosts on those ports (1 to 16 hosts, 1 to 8 ports), through nerd's proxy (see [Network](#network)); the program must honour `HTTPS_PROXY`. A host is a lowercase domain name of two labels or more whose last label starts with a letter (so not `localhost`), or an IP address in standard form (`192.168.1.5`, `2001:db8::1`; not `010.0.0.1`, `2130706433` or `[::1]`), never an unspecified, multicast or broadcast one. Outbound only: a plugin never listens, and reaches no unix socket but nerd's plugin socket (not the system's name lookup service, not an ssh agent's, not Docker's). `true` is refused, and nerd releases before these forms refuse them as a manifest that does not parse. Official nerdterm plugins use no network, or `"localhost"` at most. |
 | `permissions.write` | Extra folders it may write, `/…` or `~/…`, no `..`, inside the home folder. Refused: the home folder itself, any path through a hidden folder or file (`~/.zshrc`, `~/.config`, `~/p/.git/hooks`, `~/p/.envrc`), `~/Library`, `~/Applications`, any folder on `PATH` or holding one, nerd's state root, a name outside ASCII, and every path when nerd has no home folder; letter case does not matter. Hidden entries below a write path stay unwritable. |
 | `commands` | Up to 16 menu items: `id` (a token), `title` (one short line), `where`: `global`, `pane`, `tree` (on files and folders), `file` or `folder` (the tree's menu on that kind only). They follow a separator in that menu. Commands need `command` in `events`. |
 | `events` | The events this plugin may be sent (below). What it subscribes to on `Connect` is cut down to these. |
@@ -173,7 +176,27 @@ changes its entry to the new tag and commit.
 | `segments` | Up to 4 status segments, each an `id` (a token). |
 | `previews` | File types it previews: `extensions`, lowercase without the dot (`csv`, not `.CSV`), at most 16 in all, each once. Previews need `preview_request` in `events`. |
 | `panels` | Up to 4 panels: `id` (a token), `title` (one short line), `where`: `global`, `pane`, `tree`, `file` or `folder`, the menu that opens it, after the commands. |
-| `agent` | Optional: the agent this plugin describes, as in the built-in manifests under `plugins/`. |
+| `agent` | Optional: the agent this plugin describes, as in the built-in manifests under `plugins/`. Its fields are in [Agent fields](#agent-fields). |
+
+### Agent fields
+
+A manifest with an `agent` teaches nerd a coding agent: how to recognise it, where its hook goes, how it resumes and how a message reaches it. Only `names` is needed. Two fields reach beyond the agent itself, and the install question names both: `data` is writable in every pane set to This folder only, and `network` is what a pane set to Only these providers reaches when it names this agent.
+
+| Field | What it is | Rules for a plugin's manifest |
+| --- | --- | --- |
+| `names` | The agent's program names; the first is the program started when there is no session to resume. | Lowercase letters, digits and dashes, at most 64, and the manifest's `name` is one of them. Refused: `nerd`, a launcher (a shell, `node`, `bun`, `deno`, `python`, `env`), a program that passes what is typed on or acts as someone else (remote shells, database and language prompts, debuggers, `sudo` and `su`, container tools, multiplexers, editors), one of macOS's own programs, and a name a built-in or another plugin has. |
+| `config` | `{"path", "shape"}`: the agent's JSON settings file, into which nerd merges its hook entries. | `path` is under `~/.<name>` or `~/.config/<name>` for one of its names, and no other manifest's. `shape` is `nested` (`hooks: {Event: [{matcher?, hooks: [{type, command}]}]}`) or `flat` (`version: 1, hooks: {event: [{command}]}`); the shapes that write a file of nerd's own are for built-ins. |
+| `arg` | The word nerd's hook is called with for this agent. | Lowercase letters, digits and dashes; needed with `config`, and then no other manifest's. |
+| `events` | `[{"on", "matcher"?, "do"}]`: for the agent's hook event `on`, and its tool or notice `matcher` when given, the word nerd's hook runs. | `do` is one of `working`, `idle`, `blocked`, `fail`, `stop`, `notify`, `task`, `sub-start`, `sub-stop`, `sub-reset`, `tool-start`, `tool-ok`, `tool-fail`, `mail`; `note` is for built-ins. `on` and `matcher` are one line each. |
+| `session` | `{"field", "kind"}`: the field of the hook's payload that holds the session id (`session_id` when left out), and whether the id is a `uuid` (when left out) or a `word`. | `field` is letters, digits and underscores, at most 64. |
+| `resume` | The command a restored pane types, as words with `{id}` once, alone or after `=`: `["qwen", "--resume", "{id}"]`. | Needs `session`; its first word is one of `names`; every other word is fixed. A pane types it only after you confirmed it. |
+| `strip` | `{"value": […], "flag": […]}`: flags dropped from a stored command line so it does not take a session another copy holds; a `value` flag goes with the word after it or its `=value`. | One line each. |
+| `blocked_text` | Screen text that means the agent asks you something, for a pane whose hook says nothing. | One line each. |
+| `idle_text`, `busy_text`, `busy_at`, `placeholder_text`, `hides_cursor` | What the agent's screen shows at its prompt and while it works; described below. | One line each, at most 128 bytes, not blank. |
+| `mail` | `{"via", "form"?, "inbox_env"?}`: how a message from nerd reaches the agent. `via` is `hook`, `extension` or `inbox`; `form` is `block`, `deny` or `followup`, how its hook hands the message over. | `hook` and `inbox` need a `form`. `inbox` needs `inbox_env`, an uppercase variable name; the others take none. |
+| `data` | Paths starting `~/` the agent writes its sessions to. Every agent's `data` is writable in every pane set to This folder only, whichever program runs there. | Under `~/.<name>` or `~/.config/<name>` for one of its names: inside the agent's own folder, never that folder itself. No `..`, quote, backslash or control character; a `*` only in the last name, beside other letters. Refused as code or settings: a path through a folder named `hooks`, `skills`, `agents`, `commands`, `plugins`, `extensions`, `extension-store`, `installed-plugins`, `prompts`, `bin`, `memories`, `rules` or `ide`, and a last name that holds `settings`, `config`, `mcp`, `trust` or `auth` or ends in `.md`, `.toml`, `.js`, `.mjs`, `.cjs`, `.ts`, `.sh`, `.py`, `.yaml` or `.yml`. nerd cannot tell what else the agent runs, so the install question names every path. |
+| `network` | `{"hosts": […], "ports": […]}`: the agent's provider. A pane set to Only these providers that names this agent reaches these hosts on these ports, through nerd's proxy. | 1 to 16 hosts and 1 to 8 ports, written as in `permissions.network`; never `"localhost"`. Grouping hosts as `providers` is for built-ins. |
+| `own_sandbox` | One sentence on how to turn the agent's own sandbox off, shown in **Isolation…**. | One line. |
 
 An agent whose messages may reach it by typing names its own idle input prompt in `agent.idle_text`: how the prompt's row starts while it waits for you, from the first column (Codex's `›`, Gemini's ` >` with its leading space). `agent.busy_text` names text it shows only while it works (`esc to interrupt`), and `agent.busy_at` where it shows it: `"below"` the input, `"above"` (the nearest line with text above the prompt) or `"above_rule"` (the line just above the `─` rule over the input); without `busy_at`, any row from 8 above the prompt to the bottom but the input counts, the conversation's words too. An entry cut with `…` at the pane's edge counts from its first 3 characters at the start of a word; with `below` or `above_rule`, a status line wrapped over rows is read joined; a pane narrower than 30 columns is never typed into. `agent.placeholder_text` names what its empty input shows when that is not drawn dim (Gemini's `Type your message or @path/to/file`); dim text after the mark is never taken for yours. `agent.hides_cursor: true` says the agent hides the terminal's cursor at idle too and draws its own. nerd types a message in only while the nearest row from the cursor's up to a blank one starts with an `idle_text` entry, nothing but dim text or a placeholder follows it up to the cursor, the cursor is shown unless `hides_cursor` says otherwise, and no `busy_text` entry is where `busy_at` says. Pick a mark that stays while you type into the input and is not where the cursor is when the agent asks a question or shows a form, and a `busy_text` for the time it works if its prompt stays drawn then; capture the screens, colours included (`tmux capture-pane -p -e`), to check (`tests/fixtures/prompts` holds the built-in agents'). An agent with no `idle_text` is never typed into; it reads its messages with `nerd inbox`. Each entry is one line of up to 128 bytes with something besides blanks. nerd releases before these fields ignore them.
 
@@ -263,7 +286,7 @@ badge 8 (room for a count and its unit word), a segment 24.
 
 The rules, each refusing the whole message: a slot the manifest does not declare; an unknown role; more than 5000
 items; text over its width; a preview or a panel over its lines or cells, or a panel over its depth or with an empty item `id`; an unknown panel `kind`; a path that is not absolute or holds `..`; a `tree` item without `path` or a `tab` item
-without `pane`; a segment `command` that is not the plugin's. Each connection logs its first over-cap message at
+without `pane`; a segment `command` that is not the plugin's; a preview with more than 4 views, a view without an `id`, or a `mode` that is not one of its `modes`. A line of 8 MiB or more ends the connection, and with it the plugin, as a crash. Each connection logs its first over-cap message at
 WARN, and each plugin its first other refusal; a line that is not a message at all is logged once per connection. nerd keeps the latest message per target, segment, panel or preview, takes at most 20 batches a second from a plugin and
 draws them at most once a frame, so a flood costs nothing but the plugin's own time; the last message always
 counts. Anything else a plugin sends is ignored, a screen message (`Hello`, `Shutdown` and the rest) included.
@@ -329,7 +352,7 @@ the broker reaps the process, so a later process given the same pid proves nothi
 plugin that already connected is refused and closed. Refusals are logged at WARN.
 
 A plugin cannot attach a screen, stop, update or disconnect nerd: its sandbox reaches only the plugin socket, which
-serves nothing but `Connect`, and cannot run the `nerd` binary. Programs in panes may stop or update nerd, in Settings → Messages, never covers a plugin.
+serves nothing but `Connect`. A plugin whose manifest names nerd itself as its command runs it inside that same sandbox, where it reaches no more than the plugin does. **Programs in panes may stop or update nerd**, in **Settings… → Messages**, never covers a plugin.
 This holds for its descendants too, a double-forked one included: the sandbox is inherited and cannot be left.
 
 **Threat model.** The sandbox and the pid proof keep a plugin from acting outside what its manifest declares, and keep
@@ -344,7 +367,9 @@ and nerd's state root (sessions, screens, logs, other plugins and their data); t
 `~/.pypirc`; the shell histories `~/.zsh_history`, `~/.zsh_sessions`, `~/.bash_history`, `~/.bash_sessions`,
 `~/.sh_history`, `~/.history`, `~/.local/share/fish` and `~/.local/share/atuin`; and the histories of python, node,
 psql, mysql, sqlite3, irb and less: `~/.python_history`, `~/.node_repl_history`, `~/.psql_history`, `~/.mysql_history`,
-`~/.sqlite_history`, `~/.irb_history` and `~/.lesshst`. A denied file covers every name that begins with it
+`~/.sqlite_history`, `~/.irb_history` and `~/.lesshst`. What is denied is what a file holds and what a folder lists: a plugin
+cannot list a denied folder, but of a denied file or folder it names it still sees that it exists, its size, dates,
+owner and permissions. A denied file covers every name that begins with it
 (`~/.zsh_history.new`, where zsh writes the history before renaming it). A link inside a denied folder other than
 `~/Library` and nerd's state root, at most four levels down and among its first 2000 entries, denies what it points
 to, and so does a denied file or folder that is a link, even to something not yet there, unless the target is your
@@ -395,7 +420,7 @@ Apple events, submit launchd jobs, reach nerd's main socket, read the denied pat
 
 Seatbelt filters by port, not by name, so a plugin with hosts and ports reaches the network only through a proxy.
 `nerd --plugin-exec` binds a port on both loopbacks, forks the plugin as its child with `HTTPS_PROXY`, `https_proxy`,
-`ALL_PROXY` and `all_proxy` set to `http://127.0.0.1:<port>` (and `NO_PROXY` empty), and stays as its proxy, leading
+`ALL_PROXY` and `all_proxy` set to `http://127.0.0.1:<port>` (and `NO_PROXY` and `no_proxy` empty), and stays as its proxy, leading
 its own process group (or it stops the plugin and exits):
 
 - The plugin's profile reaches that port on this Mac's addresses and nothing else: no other address, no name lookups.
@@ -416,7 +441,7 @@ its own process group (or it stops the plugin and exits):
   within 5 seconds per address and 10 in all; a tunnel closes after 300 seconds with no data in either direction, and
   one side's end of sending is passed on to the other.
 - It runs in a sandbox of its own: it reads what a plugin may read, writes only `daemon.log` and `daemon.log.old`,
-  keeps off every terminal device, accepts only on its port and connects only to the manifest's ports. Each tunnel is
+  keeps off every terminal device, accepts only on its port, connects only to the manifest's ports and looks names up through macOS's own lookup socket. Each tunnel is
   logged when it opens and when it closes, each refusal with its reason (`plugin … proxy: wttr.in:443 allowed (…)`,
   `… closed, N sent, M received`, `… refused: not in the manifest`), and a lookup or connection that fails as
   `… failed: …`; past 5 such lines a second they are counted by kind into the next line, or into one before it ends. Refusals of
@@ -441,7 +466,7 @@ server's plugin under an older binary has no network at all.
 - **Lazy start.** A plugin starts the first time one of its menu commands is chosen or an event it declared happens.
   The start is asynchronous: the server never waits on it.
 - **Slot plugins start with the server.** A plugin that declares `badges`, `segments`, `previews` or `panels` starts when the server does,
-  and again after an update in place or Reload plugins and agents. What it showed goes the moment its connection ends, it
+  and again after an update in place or Reload plugins and agents, and after it exits, until its crashes turn it off. What it showed goes the moment its connection ends, it
   stops or it is turned off; after an update it shows again once it has reconnected and sent it.
 - **Handshake.** It must send `Connect` within 5 s, or it is stopped.
 - **Its socket closes, it exits.** When the connection ends nerd ends it anyway, and that exit is a crash.

@@ -141,7 +141,10 @@ line='export PATH="$HOME/.local/bin:$PATH"'
 case ":$PATH:" in
     *":$bindir:"*) ;;
     *)
-        if ! grep -qsF "$line" "$HOME/.zshrc"; then
+        # The line names ~/.local/bin: an install folder of your choosing is yours to put on PATH.
+        if [ "$bindir" != "$HOME/.local/bin" ]; then
+            say "$bindir is not on PATH: add it yourself"
+        elif ! grep -qsF "$line" "$HOME/.zshrc"; then
             printf '\n# nerd\n%s\n' "$line" >> "$HOME/.zshrc"
             say "added ~/.local/bin to PATH in ~/.zshrc"
         fi
@@ -149,7 +152,8 @@ case ":$PATH:" in
 esac
 
 say "installed $("$bindir/nerd" --version)"
-case ":$PATH:" in
+case ":$PATH:$bindir" in
     *":$bindir:"*) say "run: nerd" ;;
-    *) say "open a new terminal window, then run: nerd" ;;
+    *":$HOME/.local/bin") say "open a new terminal window, then run: nerd" ;;
+    *) say "run: $bindir/nerd" ;;
 esac

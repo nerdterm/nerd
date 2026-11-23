@@ -24,7 +24,7 @@ Out of scope, and closed:
 
 ## Development setup
 
-Requires macOS and Rust 1.88 or newer.
+Requires macOS and Rust 1.92 or newer.
 
 ```sh
 git clone https://github.com/nerdterm/nerd.git

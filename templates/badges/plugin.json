@@ -3,6 +3,6 @@
   "title": "Big files",
   "exec": { "command": "sh", "args": ["plugin.sh"] },
   "permissions": { "network": false, "write": [] },
-  "events": ["pane_opened"],
+  "events": ["pane_opened", "pane_closed"],
   "badges": ["tree", "tab"]
 }
