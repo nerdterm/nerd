@@ -125,6 +125,10 @@ a=$(release "$g/fresh" 0.99.0 main)
 rm -rf "$t/fresh"
 env HOME="$t/home" NERD_BINDIR="$t/fresh/bin" PATH="/usr/bin:/bin:/usr/sbin:/sbin" sh "$t/install.sh" "$a" >"$t/out" 2>&1
 expect "$("$t/fresh/bin/nerd" --version 2>/dev/null | awk '{ print $2 }')" 0.99.0 "a first install, no install folder yet"
+# An install folder of one's own, off PATH: ~/.zshrc is left alone and the folder is named.
+if grep -qsF '.local/bin' "$t/home/.zshrc"; then bad "an install folder of one's own still put ~/.local/bin on PATH in ~/.zshrc"; fi
+grep -qxF "nerd: $t/fresh/bin is not on PATH: add it yourself" "$t/out" || bad "an install folder off PATH is not named: $(cat "$t/out")"
+grep -qxF "nerd: run: $t/fresh/bin/nerd" "$t/out" || bad "the way to run it from that folder is not said: $(cat "$t/out")"
 
 # The download path, through a stand-in curl serving $SERVED by the last part of the url.
 mkdir -p "$t/stub"

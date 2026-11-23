@@ -163,7 +163,7 @@ impl App {
         let (body, yes) = if f.brew {
             (format!("{said} Upgrade downloads it from GitHub, checks it against nerd's release key and has Homebrew install it; Update available then swaps the running servers for it."), " [Enter] upgrade with Homebrew ")
         } else {
-            (format!("{said} Install downloads it from GitHub, checks it against the checksum published with it and puts it in ~/.local/bin; Update available then swaps the running servers for it."), " [Enter] install ")
+            (format!("{said} Install downloads it from GitHub, checks that nerd's release key signed its checksum and that the archive matches it, and puts it in ~/.local/bin; Update available then swaps the running servers for it."), " [Enter] install ")
         };
         let c = Confirm::new(TITLE, body).rows(rows).labels(yes, " [Esc] later ").other(" [s] skip this release ").click_yes();
         Overlay::Confirm(c, Pending::ReleaseInstall(f.tag))

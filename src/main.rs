@@ -298,7 +298,7 @@ fn help(autostart: &str, hook: &str) -> String {
            --disconnect [NAME]  end every connection to a server, or to all; programs keep running\n\
            --daemon          start the server (usually automatic)\n\
            --install         install autostart (LaunchAgent){}\n\
-           --uninstall       remove autostart\n\
+           --uninstall       remove autostart and undo every terminal preset\n\
            --install-hook    status hook in every agent found (Claude Code, Codex, Cursor, ...){}\n\
            --uninstall-hook  remove the hooks\n\
            --preset [T] [--undo]  Option as Alt, a margin and nerd's colours in ghostty, kitty, wezterm or iterm2,\n\

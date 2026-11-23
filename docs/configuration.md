@@ -24,7 +24,7 @@ Settings live in `~/Library/Application Support/nerd/config.json`. **Settings…
 | `battery_low` | `20` | On battery at this percent or less the charge is yellow; `0` turns it off |
 | `battery_critical` | `10` | On battery at this percent or less the charge is red and a notice says so once; `0` turns both off |
 | `restore_screens` | `true` | Keep pane text across restarts |
-| `sandbox` | `true` | Deny networking to the nerd server |
+| `sandbox` | `true` | Deny networking to the nerd server. Read when a server starts: a change takes effect once the server is stopped and started again |
 | `preview` | `true` | Show the file preview next to the tree |
 | `preview_wrap` | `false` | Wrap long lines in the preview; off, they scroll sideways. `w` in the preview switches it |
 | `paths` | `"home"` | `home` writes paths from your home folder (`~/dev/nerd`), `full` writes them whole (`/Users/you/dev/nerd`). Typing `~/` works either way |

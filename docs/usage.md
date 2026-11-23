@@ -76,7 +76,7 @@ Anything that changes what a pane can reach (isolation, routes, providers) opens
 
 ## Review changes
 
-**Review changes…** in the menu of a pane that runs an agent shows what the agent changed in its git repository: every changed file, committed or not, and new files. **since main** compares with where the branch left the default branch (`origin/HEAD`, else `main`, else `master`); **uncommitted** with the last commit.
+**Review changes…** in the menu of a pane that runs an agent shows what the agent changed in its git repository: every changed file, committed or not, and new files. **since main** (the button names the default branch, so `since master` where that is it) compares with where the branch left the default branch (`origin/HEAD`, else `main`, else `master`); **uncommitted** with the last commit.
 
 The files are listed under their folders, each folder with its lines added and removed; a click on a folder folds it. Drag the line between the list and the diff to widen either. The keys move in the list as in a tree (Up and Down, Right unfolds a folder or opens the file's diff, Left folds it or goes up to it); Tab goes between the list and the diff.
 
@@ -97,29 +97,29 @@ Only a named pane receives messages: name it with **Rename pane…** first. Befo
 | Command | What it does |
 |---|---|
 | `nerd` | Reopen the server a session on this Mac attached to last. When another session shows it, nerd asks first: **take it over**, **new server** or **cancel**. With no such server, or from inside a pane, it starts a new one |
-| `nerd --new` | Make a new server, with its own desktop, in the current folder. Also **New server…** in **Servers…**, which moves the session to it. A new server in which nothing was done (one pane, no split, tab, name, isolation or agent) is not kept when its session leaves, unless a program still runs in its pane: a prompt helper the shell keeps running (gitstatusd, direnv) counts as one |
-| `nerd --resume [NAME]` | Return to a server by name or number; by default the one a session on this Mac attached to last. Also **Open** in **Servers…** |
-| `nerd --rename N [NAME]` | Name a server, or clear its name. Also **Rename this server…**, and **Rename…** in **Servers…** |
-| `nerd --remove NAME` | Remove a stopped server: its layout, pane text, messages, routes, logs and saved agent session ids. config.json, plugins and the agents' own sessions stay. A running server, the legacy one and the server a pane belongs to are refused, and so is the command from inside a pane. Also **Remove…** in **Servers…** |
+| `nerd --new` | Make a new server, with its own desktop, in the current folder. Also **New server…** in **Servers…**, which moves the session to it. A new server in which nothing was done (one pane, no split, no tab or space added, nothing named, no isolation, no agent) is not kept when its session leaves, unless a program still runs in its pane: a prompt helper the shell keeps running (gitstatusd, direnv) counts as one |
+| `nerd --resume [NAME]` | Return to a server by name or number; by default the one a session on this Mac attached to last. Also **open** in **Servers…** |
+| `nerd --rename N [NAME]` | Name a server, or clear its name. Also **Rename this server…**, and **rename…** in **Servers…** |
+| `nerd --remove NAME` | Remove a stopped server: its layout, pane text, messages, routes, logs and saved agent session ids. config.json, plugins and the agents' own sessions stay. A running server, the legacy one and the server a pane belongs to are refused, and so is the command from inside a pane. Also **remove…** in **Servers…** |
 | `nerd --remove --stopped` | List every stopped server, ask `y` or `n`, then remove each the same way. Also **Remove all stopped…** in **Servers…** |
 | `nerd --list` | Servers, stopped, running or in a session, with their names, when a session last attached, sandbox and spaces; then any `nerd --daemon` no listed server leads to, as a stray. Also **Servers…** |
-| `nerd --stop [NAME]` | Stop a server, or all of them. Also **Stop this server…**, and **Stop…** in **Servers…**, for a stray too |
-| `nerd --update [NAME]` | Switch running servers to the installed build; panes keep running, and each window reopens itself on the new build (one opened with a build older than **Servers…** keeps its build until it is opened again). Also **Update…**, and **Update…** in **Servers…** |
+| `nerd --stop [NAME]` | Stop a server, or all of them. Also **Stop this server…**, and **stop…** in **Servers…**, for a stray too |
+| `nerd --update [NAME]` | Switch running servers to the installed build; panes keep running, and each window reopens itself on the new build (one opened with a build older than **Servers…** keeps its build until it is opened again). Also **Update…**, and **update…** in **Servers…** |
 | `nerd --check-update` | Ask GitHub for the newest release and show its changelog; from a terminal outside nerd's panes, install it after you answer `y`. Also **Check for a new release…** |
 | `nerd --disconnect [NAME]` | End every connection to a server, or to all; programs keep running. Also **Disconnect everyone…** |
-| `nerd --remote M [NAME]` | Open a server on machine `M` from `remotes` in config.json, over ssh. Also **Servers…**: open the machine's section, then **Open** on a server |
+| `nerd --remote M [NAME]` | Open a server on machine `M` from `remotes` in config.json, over ssh. Also **Servers…**: open the machine's section, then **open** on a server |
 | `nerd --daemon` | Start a server with no window; nerd does this itself when a window needs one |
-| `nerd --install-hook` | Install the hook into every supported agent found; it shows which and asks first. Also **Settings… → Agent hooks** |
+| `nerd --install-hook` | Install the hook into every supported agent found; the first time for an agent, and whenever its resume line changed, it shows which and asks first. Also **Settings… → Agent hooks** |
 | `nerd --uninstall-hook` | Take the hook out of every agent |
 | `nerd --install` | Start nerd at login |
 | `nerd --uninstall` | Stop starting nerd at login, and undo every terminal preset |
 | `nerd --preset [TERMINAL] [--undo]` | Option as Alt, a margin and nerd's colours in `ghostty`, `kitty`, `wezterm` or `iterm2`, after showing every change; `--undo` takes it back; alone, which are applied. Also **Settings… → Terminal preset…**. It replaces `--install-keys` and `--uninstall-keys` |
-| `nerd --plugin-add URL[@TAG]` | Install a plugin from a public GitHub repository or a local folder, after showing what it can do. Also **Plugins…** |
+| `nerd --plugin-add URL[@TAG]` | Install a plugin from a public GitHub repository or a local git repository, after showing what it can do; a commit id works in place of the tag, `--yes` answers the question in advance, and `--plugin-add --lock FILE` installs what a lock names. Also **Plugins…** |
 | `nerd --plugin-update [NAME]` | Install a plugin's newer release, asking again when it can do more |
-| `nerd --plugin-remove NAME` | Remove a plugin; `--data` also deletes its data |
+| `nerd --plugin-remove NAME` | Remove a plugin, asking about its data; `--data` also deletes it, `--keep-data` keeps it |
 | `nerd --plugin-off NAME`, `--plugin-on NAME` | Turn a plugin off or on |
 | `nerd --plugin-catalog` | Fetch the plugin catalog; a release it revokes is turned off |
-| `nerd --plugin-check DIR`, `--plugin-trial DIR` | For plugin authors: what a plugin can do and any problem; one run in its sandbox with no network |
+| `nerd --plugin-check DIR [--catalog] [--json]`, `--plugin-trial DIR` | For plugin authors: what a plugin can do and any problem (`--catalog` adds what the catalog asks for, `--json` prints it as one object); one run in its sandbox with no network |
 | `nerd --sandbox-selftest` | Test the server's sandbox profile on this Mac |
 | `nerd --config` | Print the path of the configuration file |
 | `nerd --export-logs [HOURS]` | Save the logs of the last hours (24) to a file for a bug report; nothing is sent. Also **Export logs…** |

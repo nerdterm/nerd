@@ -1,6 +1,6 @@
 #!/bin/sh
 # Claude Code PreToolUse hook for Bash: denies (exit 2) a command that holds a private Claude link, and a gh or
-# close-issue.sh call whose text fails `privacy.sh command` or whose posted files fail `privacy.sh text`,
+# close-issue.sh call (a maintainer's own script, not in this repository) whose text fails `privacy.sh command` or whose posted files fail `privacy.sh text`,
 # before anything reaches GitHub.
 here=$(dirname "$0")
 input=$(cat)

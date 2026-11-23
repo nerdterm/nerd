@@ -43,5 +43,5 @@ body:
     id: log
     attributes:
       label: Server log
-      description: Relevant lines from ~/Library/Application Support/nerd/instances/1/daemon.log. Remove anything private.
+      description: Relevant lines from your server's daemon.log (~/Library/Application Support/nerd/instances/<number>/daemon.log; nerd --list shows the number), or the file nerd --export-logs writes. Remove anything private.
       render: text

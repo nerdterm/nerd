@@ -9,6 +9,11 @@ nc -U "$NERD_SOCKET" < to-nerd | {
     printf '{"Connect":{"protocol":2,"role":"plugin","plugin":"%s","events":["pane_opened","pane_cwd","panel_opened","panel_item"]}}\n' "$NERD_PLUGIN" >&3
     mkdir -p cwd
     cwd=
+    # Text for a JSON string: no tab or other control character, at most 256 characters (a line over 512 cells
+    # refuses the whole panel), then the two characters JSON escapes.
+    esc() { printf '%s' "$1" | tr '\t' ' ' | tr -d '\000-\037' | LC_ALL=en_US.UTF-8 cut -c1-256 | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+    # A file whose name holds a quote or a backslash is left out: its path is also the item's id, which comes back in an event.
+    plain() { case $1 in *'"'* | *'\'*) return 1 ;; esac; }
     list() {
         [ -n "$cwd" ] || { printf '{"Panel":{"id":"files","kind":"list","title":"Files here","items":[]}}\n' >&3; return; }
         items=
@@ -16,8 +21,9 @@ nc -U "$NERD_SOCKET" < to-nerd | {
         IFS='
 '
         for f in $(find "$cwd" -maxdepth 1 -type f 2>/dev/null | sort); do
+            plain "$f" || continue
             size=$(wc -c < "$f" 2>/dev/null | tr -d ' ')
-            items="$items{\"id\":\"$f\",\"label\":\"$(basename "$f")\",\"detail\":\"${size}B\",\"opens\":true},"
+            items="$items{\"id\":\"$f\",\"label\":\"$(esc "$(basename "$f")")\",\"detail\":\"${size}B\",\"opens\":true},"
         done
         IFS=$oldifs
         printf '{"Panel":{"id":"files","kind":"list","title":"Files here","items":[%s]}}\n' "${items%,}" >&3
@@ -32,7 +38,8 @@ nc -U "$NERD_SOCKET" < to-nerd | {
         for e in $exts; do
             kids=
             for f in $(find "$cwd" -maxdepth 1 -type f -name "*.$e" 2>/dev/null | sort); do
-                kids="$kids{\"id\":\"$f\",\"label\":\"$(basename "$f")\",\"opens\":true},"
+                plain "$f" || continue
+                kids="$kids{\"id\":\"$f\",\"label\":\"$(esc "$(basename "$f")")\",\"opens\":true},"
             done
             top="$top{\"id\":\"ext-$e\",\"label\":\".$e\",\"children\":[${kids%,}]},"
         done
@@ -43,14 +50,13 @@ nc -U "$NERD_SOCKET" < to-nerd | {
     peek() {
         panel=$1
         path=$2
-        name=$(basename "$path")
+        name=$(esc "$(basename "$path")")
         lines=
         oldifs=$IFS
         IFS='
 '
         for l in $(head -n 20 "$path" 2>/dev/null); do
-            esc=$(printf '%s' "$l" | sed 's/\\/\\\\/g; s/"/\\"/g')
-            lines="$lines[{\"text\":\"$esc\"}],"
+            lines="$lines[{\"text\":\"$(esc "$l")\"}],"
         done
         IFS=$oldifs
         printf '{"Panel":{"id":"%s","kind":"detail","title":"%s","items":[{"id":"back","label":"Back to the files","opens":true}],"lines":[%s]}}\n' "$panel" "$name" "${lines%,}" >&3

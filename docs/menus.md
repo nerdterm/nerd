@@ -11,21 +11,28 @@ taste.
 2. **Every action is in a menu.** A key or a button is a second way in, never the only one.
 3. **One action, one name, everywhere:** the menu item, the window it opens, the key list, the docs.
 4. **A name is a verb and its object:** "Close pane", "Rename tab", "Copy path". The object is named even in its
-   own menu. Sentence case, no final period.
+   own menu. Sentence case, no final period. Two exceptions: an item that only opens a window carries the window's
+   name ("Servers…", "Settings…", "Messages…", "Plugins…", "Isolation…"), and in the tree's menu the row under the
+   pointer is the object ("Rename…", "Delete…").
 5. **"…" means a window opens first.** An item that asks for a name, a choice or a confirmation, or opens a
-   screen, ends with the one character "…" (U+2026). An item without it acts at once.
+   screen, ends with the one character "…" (U+2026). An item without it acts at once. A plugin's "Install …" and
+   "Update …" start their fetch at once and end in the window that asks.
 6. **A switch names what it will do:** "Hide file tree" while it shows. Pairs: Show/Hide, Collapse/Expand,
    Wrap/Don't wrap, Full screen/Leave full screen.
 7. **Groups, then order.** Separators split a menu into groups of related items, at most six each: make or open,
-   view, the object's own tools, plugins, rename and move, then what destroys. Destroying is always last.
+   view, the object's own tools, plugins, rename and move, then what destroys. Destroying is always last. Two
+   exceptions: the plugins' group lists every command and panel plugins put in that menu, and the tree's menu ends
+   with its own "Close file tree" after what destroys.
 8. **Menus keep their shape.** An item that belongs to the object stays in its place and is greyed when it cannot
-   act now; it is hidden only when it can never apply here (worktree items outside git). Digits 1–9 count every
-   row but separators, so they always pick the same item. One exception: the items of Messages, Isolation and
-   Accounts stay enabled in a window attached from inside a pane and refuse with a notice when chosen, because a
-   greyed item cannot show the reason.
+   act now; it is hidden when it does not belong to this object as it is: worktree items outside git, Subagents…
+   on a pane with no agent, a group's items outside a group. Digits 1–9 count the rows shown, separators left out.
+   In a window attached from inside a pane nothing is greyed for that reason: a change refuses with a notice when
+   chosen, because a greyed item cannot show the reason.
 9. **Keys are shown where they exist,** right-aligned, as printed on the key: ⌥+T, ⌥+shift+arrow. Menus, the key
    list and docs/usage.md read them from the key tables (`keys::GLOBAL`, `tree::keys`).
 10. **A window is named after its item:** "Export logs…" opens "Export logs", and its result is "Logs exported".
+    A window that asks says what it asks for where the item's name alone would not: "New worktree…" opens "New
+    worktree branch", "Update…" opens "Update nerd".
     Titles, section headers and settings rows are sentence case; values are lowercase words.
 11. **Every window closes the same way:** a clickable `[Esc] close`, Esc, or a click outside. Buttons read
     `[Key] outcome`: `[Enter] close pane`, `[Esc] cancel`. A window that only tells has one button, `[Esc] close`,
@@ -48,12 +55,12 @@ taste.
     columns where an item has both. A line that wraps continues under its item's own text, not under the margin; a
     clause that every item shares is said once, in the heading. A note appears only when it applies to this pane, tab
     or space: not for another agent, another folder or a setting that is off. Faint is information; warn is a risk the
-    person should act on, and at most one warn line per group. The last column is wrapped before the first is cut; a
+    person should act on, and at most one warn line per group (Isolation's Network group has one for each saved entry that no longer applies). The last column is wrapped before the first is cut; a
     window too narrow for two columns stacks them (the how under the what, indented).
 
 ## Windows
 
-Every window except a context menu is drawn through `chrome::dialog`, and `chrome::fit` sizes it.
+Every window, a context menu included, is drawn through `chrome::dialog`, and `chrome::fit` sizes it.
 
 - The routes map and Review changes are the windows that fill the screen, so a wide layout or a diff has room; they
   leave the top row to nerd's logo, an image the terminal draws over any text.
@@ -61,8 +68,8 @@ Every window except a context menu is drawn through `chrome::dialog`, and `chrom
 - Each window type has one width, frame included, whatever it shows:
   - 48 columns: a one-line field (Rename, a space's name, every prompt); the typed text scrolls inside it, a note
     under it wraps and a long title is cut with "…".
-  - 68 columns: Confirm, Search, Settings, Keys and mouse, New space, every picker (Open worktree, Preset terminal,
-    Topology, Report period, a subagent's run), Session history and a plugin's panel.
+  - 68 columns: Confirm, Search, Settings, Keys and mouse, New space, every picker (Open worktree, Terminal preset,
+    Set up a topology, Export logs, Subagents), Session history and a plugin's panel.
   - 80 columns: Servers, Plugins, Messages, Isolation, Choose providers and Accounts.
 
   What does not fit is wrapped or cut, never widened: a body, a hint and a key's description wrap (the description
@@ -121,10 +128,10 @@ from (turning a plugin on, removing, installing, updating).
 ## Servers
 
 - Main menu, server group: Messages…, Routes map…, Rename this server…, **Servers…**, Session history…, and, inside
-  tmux or screen, Open outside tmux…. **Stop this server…** stays last in the menu, with what destroys.
+  tmux or screen, Open outside tmux… (Open outside screen… in screen). **Stop this server…** stays last in the menu, with what destroys.
 - **Servers…** opens the Servers window. A section **this Mac** lists every server of this Mac, the one this session
   shows first (State `current`), then by when a session last attached: name and number, State (`current`, `running`,
-  `open in another session`, `stopped`), Sessions (0 or 1: a server shows one session at a time), Last used,
+  `open in another session`, `stopped`), Sessions (0 or 1: a server shows one session at a time; `?` when a running server did not say), Last used,
   Sandbox and Folders. Under them **New server…** (a new server, and this session moves to it; this server keeps
   running), **Remove all stopped…** (greyed while none is stopped), and a row per stray: a `nerd --daemon` of yours
   no listed server leads to. Then a collapsed section per machine in `remotes`: a click or the right arrow opens it
@@ -132,18 +139,20 @@ from (turning a plugin on, removing, installing, updating).
   section goes up to its head. Last, **Connect to another computer…**: its button opens config.json, where machines
   are added.
 - A click on a row chooses it, and the buttons under the rows act on it; Enter does the first, the letter in a
-  button its own. The current server: **Rename…**, **Update…**, **Stop…** (the same as Rename this server…, Update…
-  and Stop this server…). Another running one: **Open** (this session moves to it), **Open in a new window**,
-  **Rename…**, **Update…**, **Stop…**. A stopped one: **Open** (it starts again), **Rename…**, **Remove…**. A stray:
-  **Stop…**, which checks the pid again before it sends SIGTERM. A server on a machine: **Open**, in a terminal window
-  of its own.
+  button its own. The buttons are lowercase. The current server: **rename…**, **update…**, **stop…** (the same as
+  Rename this server…, Update… and Stop this server…). Another running one: **open** (this session moves to it),
+  **open in a new window**, **rename…**, **update…**, **stop…**. A stopped one: **open** (it starts again),
+  **rename…**, **remove…**. **open…** and **open in a new window…**, with the dots, ask first or give the command to
+  run. A stray: **stop…**, which checks the pid again before it sends SIGTERM; a stray of another home folder has no
+  button. A server on a machine: **open**, in a terminal window of its own.
 - Opening a server another session shows asks first: **take it over**. **Remove…** and **Remove all stopped…** say
   what goes (the layout, pane text, messages, routes, logs and saved agent session ids) and what stays (config.json,
   plugins and the agents' own sessions); a folder whose server never started goes without asking. Every dialog
   comes back to the window once answered.
 - A session from another Mac sees only the server's own Mac, with no machines, no New server…, no Connect to
-  another computer… and no Open. A session attached from inside a pane only reads: every action but Open on a
-  machine's server is refused with a notice.
+  another computer… and no Open. A session attached from inside a pane only reads: every change (a new
+  server, rename, update, stop, remove) and opening a server of this Mac is refused with a notice; listing a
+  machine, opening a machine's server and Connect to another computer… work.
 - With the sidebar collapsed, the top row names the server this session shows at the right, beside the machine
   badge, cut short when narrow.
 
@@ -177,7 +186,8 @@ from (turning a plugin on, removing, installing, updating).
   from it, and closes the map when it was opened from the menu.
 - Pane menu, view group, after Subagents…: **Review changes…**, greyed unless the pane runs an agent in a folder of a
   git repository. It fills the screen: the changed files on the left, the chosen file's diff on the right, and above
-  them **since main** (where this branch left the default branch) and **uncommitted** to compare with. A click on a
+  them **since main** (named after the default branch, so **since master** where that is it: where this branch left
+  it) and **uncommitted** to compare with. A click on a
   diff line, or Enter, asks for a comment on it; the comment shows under its line with **edit** and **delete**.
   **[s] send N comments to** the pane's name sends them as one message from you; **[x] discard** drops them,
   **[r] refresh** reads the repository again. Comments stay until sent or discarded while the pane lives.
@@ -203,9 +213,10 @@ from (turning a plugin on, removing, installing, updating).
   (it also writes nerd's file) and **[Esc] close**. The files are on the server's Mac, so a window from another Mac is
   told to run `nerd --preset` there.
 - Every change these windows make is refused from a window attached from inside a pane; reading them is not.
-- Main menu, after **Update…**: **Check for a new release…** opens "Check for a new release" with the newest release and its
-  changelog, then **install** (a click only), **[Esc] later** and **[s] skip this release**; install is refused from a window inside
-  a pane or from another Mac. Settings → Updates: **Check for new releases**, off or daily, stored per Mac beside config.json
+- Main menu, after **Update…**: **Check for a new release…** asks GitHub, then opens "Check for a new release". For a newer
+  release it shows the changelog, then **install** (**upgrade with Homebrew** for a Homebrew nerd; a click only), **[Esc] later**
+  and **[s] skip this release**; with nothing newer, or the newest already installed, it says so with **[Esc] close**. Install is
+  refused from a window inside a pane or from another Mac. Settings → Updates: **Check for new releases**, off or daily, stored per Mac beside config.json
   and changed only from nerd's own window on that Mac.
 
 ## Words

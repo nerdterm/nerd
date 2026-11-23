@@ -22,7 +22,9 @@ nc -U "$NERD_SOCKET" < to-nerd | {
                 for h in $(grep -E 'ERROR|WARN' "$path" 2>/dev/null | head -n "$rows"); do
                     role=warn
                     case $h in *ERROR*) role=bad ;; esac
-                    esc=$(printf '%s' "$h" | sed 's/\\/\\\\/g; s/"/\\"/g')
+                    # A tab or another control character is not valid inside a JSON string, and a line over 512
+                    # cells refuses the whole preview: both would lose every line, not just this one.
+                    esc=$(printf '%s' "$h" | tr '\t' ' ' | tr -d '\000-\037' | LC_ALL=en_US.UTF-8 cut -c1-256 | sed 's/\\/\\\\/g; s/"/\\"/g')
                     lines="$lines[{\"text\":\"$esc\",\"role\":\"$role\"}],"
                 done
                 IFS=$oldifs
