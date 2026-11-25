@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.0.0](https://github.com/nerdterm/nerd/compare/v0.23.0...v1.0.0) (2026-11-25)
+
+
+### Fixed
+
+* every document checked against the code, and what it found wrong in the installer and the plugin templates ([#220](https://github.com/nerdterm/nerd/issues/220)) ([68ff4d8](https://github.com/nerdterm/nerd/commit/68ff4d8e453f679f5b20bb8d9f70786543b54ffe))
+* Servers… in a session from another Mac has no row to add a machine ([#218](https://github.com/nerdterm/nerd/issues/218)) ([3f2080f](https://github.com/nerdterm/nerd/commit/3f2080f7d488028f5c062ea561cecd5060ee10fa))
+* the windows about another Mac say what ssh needs, in one sentence ([#216](https://github.com/nerdterm/nerd/issues/216)) ([829406e](https://github.com/nerdterm/nerd/commit/829406e7ab6c2023690aa147b2115bc277ce581d))
+
+
+### Tests
+
+* a client that is behind gets time to show the echo, and says what it saw ([#225](https://github.com/nerdterm/nerd/issues/225)) ([d634414](https://github.com/nerdterm/nerd/commit/d634414b086c1470428d27fedeac5633902286fa)), closes [#223](https://github.com/nerdterm/nerd/issues/223)
+
 ## [0.23.0](https://github.com/nerdterm/nerd/compare/v0.22.0...v0.23.0) (2026-11-22)
 
 
