@@ -2020,7 +2020,10 @@ fn a_failed_update_keeps_a_client_that_is_behind() {
     // The flood ends here: on a busy machine the echo would otherwise wait for every line of it to be drawn.
     key(&mut client, KeyCode::Char('c'), KeyModifiers::CONTROL);
     type_line(&mut client, "echo DO''NE-OK");
-    assert!(wait_for(&mut client, "DONE-OK", Duration::from_secs(10)), "the client was lost: {}", daemon_log(&env));
+    // A lost client never shows it; a loaded one may take long, so the bound only has to outlast a stall.
+    let (ok, seen) = wait_text(&mut client, "DONE-OK", Duration::from_secs(30));
+    let tail: String = seen.chars().rev().take(600).collect::<Vec<_>>().into_iter().rev().collect();
+    assert!(ok, "the client was lost; it last saw: {tail:?}\n{}", daemon_log(&env));
     let _ = std::fs::remove_dir_all(&env.dir);
 }
 
