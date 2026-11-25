@@ -2374,7 +2374,8 @@ mod remote_tests {
         }
         assert!(child.try_wait().unwrap().is_some(), "ssh is gone");
         server.join().unwrap();
-        let deadline = Instant::now() + Duration::from_secs(2);
+        // The loop ends as soon as nothing is left; the bound only has to outlast a loaded machine's stall.
+        let deadline = Instant::now() + Duration::from_secs(30);
         while !fake.leftovers().is_empty() && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(20));
         }

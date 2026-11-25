@@ -713,7 +713,8 @@ const BYE: &[u8] = b"\x1b_nerd;bye\x1b\\";
 #[test]
 fn only_a_remote_client_hears_the_markers_and_its_way_back() {
     let env = setup_env("markers");
-    let mut daemon = spawn_daemon(&env);
+    // Server 1 by word: run from a nerd pane the test would hand on that pane's NERD_INSTANCE, and elsewhere none.
+    let mut daemon = spawn_daemon_in(&env, env!("CARGO_BIN_EXE_nerd").as_ref(), "xterm-256color", true, &[], &[("NERD_INSTANCE", "1".into())]);
 
     // An older client: no marker ever, or tmux would show it as a pane title.
     let mut old = connect(&env, 80, 24);
@@ -1233,8 +1234,8 @@ fn esc_at_the_question_starts_nothing() {
     tty.press(b"\x1b");
     let status = tty.exit();
     assert!(status.success(), "{status}");
-    // The pty reader may still be draining the last bytes.
-    let deadline = Instant::now() + Duration::from_secs(2);
+    // The pty reader may still be draining the last bytes; the bound only has to outlast a loaded machine's stall.
+    let deadline = Instant::now() + Duration::from_secs(30);
     while tty.cursor_hidden() {
         assert!(Instant::now() < deadline, "the terminal has its cursor back");
         std::thread::sleep(Duration::from_millis(50));

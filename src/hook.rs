@@ -1799,13 +1799,15 @@ const noted = () => { const o = { sections: {} }; on.before_agent_start?.({ syst
             // `blind`: its first walk cannot run ps; then it asks for the note and reports again
             let script = format!(
                 r#"import {{ copyFileSync, existsSync, mkdirSync, writeFileSync }} from "node:fs"
-const dir = process.env.NERD_STATE, mode = process.argv[2], t0 = Date.now()
-let clock = t0
+const dir = process.env.NERD_STATE, mode = process.argv[2]
+let t0 = Date.now(), clock = t0
 if (mode === "backoff") Date.now = () => clock
 const wait = (ms) => new Promise((r) => setTimeout(r, ms))
 if (mode === "blind") process.env.NERD_TEST_BULK = "x".repeat(4 << 20)
 {setup}
 await first()
+// The extension counts its walks from its first one, made by now: a loaded machine can start it seconds after t0.
+t0 = Date.now()
 if (mode === "blind") {{
   delete process.env.NERD_TEST_BULK
   writeFileSync(dir + "/after", JSON.stringify({{ note: await noted() }}))
@@ -3589,8 +3591,10 @@ console.log("{}")
         std::fs::write(root.join(SESSIONS_FILE), "fake sid word\nbad a.b word\n").unwrap();
         assert_eq!(script_for(&format!("{}/", root.display())), before, "a user's agent changes no installed script");
         let run = |agent: &str, json: &str| {
+            // Inside a pane by word, not by a walk up the test's own ancestors: that holds only when it runs in a nerd pane.
             let mut child = std::process::Command::new("/bin/sh")
                 .args(["-c", &before, "hook", "idle", agent])
+                .env("NERD_HOOK_INSIDE", "1")
                 .env("NERD_PANE", "7")
                 .env("NERD_STATE", root.join("agents"))
                 .stdin(stdin_of(json.as_bytes()))
