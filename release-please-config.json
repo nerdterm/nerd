@@ -54,7 +54,6 @@
     ".": {
       "release-type": "rust",
       "include-component-in-tag": false,
-      "bump-minor-pre-major": true,
       "exclude-paths": [
         "docs",
         ".github",

@@ -48,6 +48,26 @@ If you use Claude Code, the repository's `.claude/settings.json` applies to you:
 
 Pull requests are squash merged. Versions and the changelog are produced by release-please; do not edit the version or `CHANGELOG.md`.
 
+## Versions
+
+nerd follows [Semantic Versioning](https://semver.org). The pull request title becomes the commit on `master`, and its type sets the next version:
+
+| Title | Next version | When |
+|---|---|---|
+| `fix: …`, `perf: …`, `refactor: …`, `revert: …` | patch, 1.0.0 → 1.0.1 | a correction, or a change that undoes one; plugins keep working |
+| `feat: …` | minor, 1.0.0 → 1.1.0 | a new ability; plugins keep working |
+| `feat!: …`, `fix!: …` | major, 1.0.0 → 2.0.0 | the plugin API changed so that a plugin written against it stops working |
+| `docs: …`, `test: …`, `chore: …`, `ci: …`, `build: …` | no release | nothing a user of nerd runs changes |
+
+Major means the plugin API changed without backward compatibility. The plugin API is the socket's messages, events and their fields, the manifest, and the environment a plugin is started with, as [plugins](docs/plugins.md) describes them. Its compatibility contract says they only grow, so a major version should never be needed; if one ever is, a rename or removal is it, as the old name stops working at once, with no alias. Everything else in nerd can change in a `feat` or a `fix`.
+
+The pull request description becomes the rest of the commit, and release-please reads it too:
+
+- A major change ends its description with a line of its own that starts with `BREAKING CHANGE: ` and says what a plugin's author has to do. A footer in your own commits is lost in the squash.
+- Any other line that starts with `BREAKING CHANGE:`, `feat:` or `fix:` is read the same way, wherever it is, so put such words inside backticks.
+- A pull request whose files are all under `docs/`, `.github/` or `.claude/` gives no release, whatever its title.
+- Use `revert: …` to undo a change: a title as GitHub's revert button writes it, `Revert "…"`, is not understood and gives no release and no changelog line.
+
 ## Licence
 
 By contributing you agree that your contribution is licensed under the [MIT License](LICENSE).

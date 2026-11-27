@@ -1,11 +1,18 @@
 # Releasing
 
-The maintainer runs a release; nothing here is done by an agent. Each push to `master` makes release-please keep one open
-pull request, `chore(master): release X.Y.Z`. Replace `N` and `X.Y.Z` below with its number and version.
+The maintainer runs a release; nothing here is done by an agent. Each push to `master` that holds a `feat`, `fix`,
+`perf`, `refactor`, `revert` or breaking change makes release-please keep one open pull request,
+`chore(master): release X.Y.Z`; `docs`, `test`, `chore`, `ci` and `build` commits alone leave none. Replace `N` and
+`X.Y.Z` below with its number and version.
 
-release-please takes the version from the commits since the last release. Below 1.0.0 a breaking change raises only
-the minor (`bump-minor-pre-major` in `release-please-config.json`), so it never proposes 1.0.0 by itself: a commit on
-`master` whose message ends with the footer `Release-As: 1.0.0` makes it do so.
+release-please takes the version from the commits since the last release, by Semantic Versioning: a breaking change
+(`!` after the type, or a `BREAKING CHANGE:` footer), which here means the plugin API changed without backward
+compatibility, raises the major; a `feat` the minor; a `fix`, `perf`, `refactor` or `revert` the patch.
+[Versions](../CONTRIBUTING.md#versions) in CONTRIBUTING.md says what counts as breaking. Before the release pull request
+is merged, read its changelog against that section: a breaking change merged without its `!` shows up there as a plain
+fix or feature. To correct it, add the right message between the lines `BEGIN_COMMIT_OVERRIDE` and
+`END_COMMIT_OVERRIDE` to the description of the merged pull request that brought it, then run the release workflow
+again (`gh workflow run release.yml`): release-please reads that message instead.
 
 1. Find the release pull request:
 
